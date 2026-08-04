@@ -124,7 +124,23 @@ async function main() {
       wsServer.broadcastStats(backendId, true);
     },
   );
-  apiServer.start();
+  const apiFastifyApp = await apiServer.start();
+
+  // Security posture warnings, printed once at boot so they're impossible to
+  // miss in stdout/container logs. See M0 plan Task 8 / design spec 3.5(b, j).
+  if (process.env.FORCE_ACCESS_CONTROL_OFF === 'true') {
+    console.warn(
+      '[SECURITY] FORCE_ACCESS_CONTROL_OFF is set — ALL authentication is bypassed. Remove it except for recovery.',
+    );
+  }
+  if (apiFastifyApp && !apiFastifyApp.authService.isConfigured()) {
+    console.warn(
+      `[SETUP] Authentication is not configured yet.\n` +
+        `  Open  http://<host>:${API_PORT}/  and use this one-time setup token:\n` +
+        `      ${apiFastifyApp.authService.getSetupToken()}\n` +
+        `  It is regenerated on every restart and invalidated once setup completes.`,
+    );
+  }
 
   // Start backend management loop
   console.log('[Main] Starting backend management loop...');

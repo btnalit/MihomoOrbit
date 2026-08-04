@@ -18,6 +18,7 @@ describe("GeoIP config API", () => {
     GEOIP_MMDB_DIR: process.env.GEOIP_MMDB_DIR,
     GEOIP_LOOKUP_PROVIDER: process.env.GEOIP_LOOKUP_PROVIDER,
     GEOIP_ONLINE_API_URL: process.env.GEOIP_ONLINE_API_URL,
+    FORCE_ACCESS_CONTROL_OFF: process.env.FORCE_ACCESS_CONTROL_OFF,
   };
 
   beforeEach(async () => {
@@ -25,6 +26,12 @@ describe("GeoIP config API", () => {
     process.env.GEOIP_MMDB_DIR = mmdbDir;
     delete process.env.GEOIP_LOOKUP_PROVIDER;
     delete process.env.GEOIP_ONLINE_API_URL;
+    // This suite exercises GeoIP config, not auth. Since M0 made auth
+    // mandatory (collector Task 7), /api/db/geoip now 401s by default like
+    // every other non-public route unless auth is configured; bypass via the
+    // rescue-channel env var rather than plumbing a setup token through a
+    // suite that isn't testing auth at all.
+    process.env.FORCE_ACCESS_CONTROL_OFF = "true";
 
     ({ db, cleanup } = createTestDatabase());
     backendId = createTestBackend(db);
@@ -51,6 +58,8 @@ describe("GeoIP config API", () => {
     else process.env.GEOIP_LOOKUP_PROVIDER = originalEnv.GEOIP_LOOKUP_PROVIDER;
     if (originalEnv.GEOIP_ONLINE_API_URL === undefined) delete process.env.GEOIP_ONLINE_API_URL;
     else process.env.GEOIP_ONLINE_API_URL = originalEnv.GEOIP_ONLINE_API_URL;
+    if (originalEnv.FORCE_ACCESS_CONTROL_OFF === undefined) delete process.env.FORCE_ACCESS_CONTROL_OFF;
+    else process.env.FORCE_ACCESS_CONTROL_OFF = originalEnv.FORCE_ACCESS_CONTROL_OFF;
   });
 
   it("GET /api/db/geoip is side-effect-free and reports configured/effective providers", async () => {

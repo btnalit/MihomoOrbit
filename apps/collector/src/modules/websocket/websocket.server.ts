@@ -5,7 +5,6 @@ import type { StatsService } from '../stats/stats.service.js';
 import type { SummaryFieldKey, SummaryFieldMask } from './websocket.types.js';
 import { AuthService } from '../auth/auth.service.js';
 import { IncomingMessage } from 'http';
-import { URL } from 'url';
 
 export interface WebSocketMessage {
   type: 'stats' | 'ping' | 'pong' | 'subscribe';
@@ -224,26 +223,31 @@ export class StatsWebSocketServer {
     this.wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
       // Connection attempt logging removed to reduce noise
 
-      // Verify authentication
+      // Verify authentication. Token is read from the cookie only — a URL
+      // query-string token would land in reverse-proxy access logs. See M0
+      // plan Task 7 / design spec section 3.5(i).
       try {
-        const url = new URL(req.url || '', `http://${req.headers.host}`);
-        let token = url.searchParams.get('token');
-        
-        // Try getting token from cookie if not in URL
-        if (!token && req.headers.cookie) {
+        let token: string | undefined;
+        if (req.headers.cookie) {
           const cookies = req.headers.cookie.split(';').reduce((acc, cookie) => {
             const [key, value] = cookie.trim().split('=');
             acc[key] = value;
             return acc;
           }, {} as Record<string, string>);
-          
+
           if (cookies['orbit-session']) {
             token = cookies['orbit-session'];
           }
         }
-        
-        // Check if auth is required and verify token
-        if (this.authService.isAuthRequired()) {
+
+        if (!this.authService.isForceAccessControlOff()) {
+          if (!this.authService.isConfigured()) {
+            // No bypass branch here: unlike the public HTTP setup routes,
+            // there is no first-run WS use case to exempt.
+            ws.close(4001, 'Authentication setup required');
+            return;
+          }
+
           if (!token) {
             // Missing token rejected (logging removed)
             ws.close(4001, 'Authentication required');

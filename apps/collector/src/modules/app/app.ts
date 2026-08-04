@@ -1313,29 +1313,54 @@ export async function createApp(options: AppOptions) {
     }
   });
 
-  // Auth middleware - protects API routes
+  // Auth middleware - protects API routes.
+  //
+  // Routes are matched by exact pathname (never prefix/startsWith): a prefix
+  // match would silently exempt any future route that merely starts with one
+  // of these strings (e.g. a hypothetical /api/agent/config-editor). See M0
+  // plan Task 7 / design spec section 3.5(d).
+  const PUBLIC_ROUTES = new Set([
+    '/health',
+    '/api/auth/state',
+    '/api/auth/verify',
+    '/api/auth/logout', // Public so we can clear cookies even if invalid
+    // Agent ingest endpoints authenticate independently via parseAgentToken +
+    // backend.token (see isAgentBackendAuthorized below) — the mandatory-auth
+    // hook must not gate them. See design spec section 3.5(e).
+    '/api/agent/heartbeat',
+    '/api/agent/report',
+    '/api/agent/config',
+    '/api/agent/policy-state',
+  ]);
+  // Exempted only while auth has not been configured yet, so the first-run
+  // setup flow (read state, then enable with the one-time setup token) is
+  // reachable. Once configured, both routes fall through to the normal
+  // cookie/Bearer check below like any other route.
+  const SETUP_ROUTES = new Set(['/api/auth/state', '/api/auth/enable']);
+
   app.addHook('onRequest', async (request, reply) => {
-    // Skip auth for public routes
-    const publicRoutes = [
-      '/health',
-      '/api/auth/state',
-      '/api/auth/verify',
-      '/api/auth/logout', // Add logout as public so we can clear cookies even if invalid
-      '/api/agent/heartbeat',
-      '/api/agent/report',
-      '/api/agent/config',
-      '/api/agent/policy-state',
-    ];
-    
-    // Check if route is public
-    if (publicRoutes.some(route => request.url.startsWith(route))) {
+    // request.url includes the query string; strip it before matching.
+    const pathname = request.url.split('?')[0];
+
+    if (PUBLIC_ROUTES.has(pathname)) {
       return;
     }
 
-    // Check if auth is required
-    if (!authService.isAuthRequired()) {
+    // Rescue channel: bypasses all auth. Startup already warns loudly when
+    // this is set — see index.ts.
+    if (authService.isForceAccessControlOff()) {
       return;
     }
+
+    if (!authService.isConfigured()) {
+      if (SETUP_ROUTES.has(pathname)) {
+        return;
+      }
+      return reply.status(401).send({ error: 'Authentication setup required', code: 'AUTH_SETUP_REQUIRED' });
+    }
+
+    // Auth is configured: no further bypass branches past this point:
+    // every remaining route requires a valid cookie or Bearer token.
 
     // Try to get token from Cookie first
     const cookieToken = request.cookies['orbit-session'];

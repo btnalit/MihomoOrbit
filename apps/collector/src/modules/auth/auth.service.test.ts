@@ -28,64 +28,73 @@ describe('AuthService', () => {
 
   describe('enableAuth / verifyToken', () => {
     it('should enable auth and verify correct token', async () => {
-      await authService.enableAuth('test123abc');
+      // Bumped to 17 chars (was 'test123abc', 10 chars) for the M0 Task 8
+      // 16-char minimum.
+      await authService.enableAuth('test123abc-longer');
 
       expect(authService.isAuthRequired()).toBe(true);
 
-      const result = await authService.verifyToken('test123abc');
+      const result = await authService.verifyToken('test123abc-longer');
       expect(result.valid).toBe(true);
     });
 
     it('should reject incorrect token', async () => {
-      await authService.enableAuth('correct1');
+      await authService.enableAuth('correct1-long-token');
 
-      const result = await authService.verifyToken('wrong-token-1');
+      const result = await authService.verifyToken('wrong-token-1-long');
       expect(result.valid).toBe(false);
     });
   });
 
   describe('disableAuth', () => {
-    it('should disable auth and allow all requests', async () => {
-      await authService.enableAuth('myToken1');
+    // Under mandatory auth (M0 Task 7), disabling auth is no longer "allow
+    // all requests" — it puts the service back into the "not yet configured"
+    // state, where verifyToken rejects everything until setup runs again.
+    // This replaces the old assertion that verifyToken('anything') succeeds
+    // once disabled.
+    it('should disable auth and require setup again, not allow all requests', async () => {
+      await authService.enableAuth('myToken1-long-token');
       expect(authService.isAuthRequired()).toBe(true);
 
       authService.disableAuth();
       expect(authService.isAuthRequired()).toBe(false);
+      expect(authService.isConfigured()).toBe(false);
 
-      // Token verification should succeed when auth is disabled
       const result = await authService.verifyToken('anything');
-      expect(result.valid).toBe(true);
+      expect(result.valid).toBe(false);
     });
   });
 
   describe('isValidTokenFormat', () => {
-    it('should reject tokens shorter than 6 characters', () => {
+    it('should reject tokens shorter than 16 characters', () => {
       expect(authService.isValidTokenFormat('ab1')).toBe(false);
+      // 6 chars: passed the old >=6 floor but must fail the new 16-char floor.
+      expect(authService.isValidTokenFormat('abc123')).toBe(false);
     });
 
     it('should reject purely numeric tokens', () => {
-      expect(authService.isValidTokenFormat('123456')).toBe(false);
+      expect(authService.isValidTokenFormat('12345678901234567')).toBe(false);
     });
 
     it('should reject purely alphabetic tokens', () => {
-      expect(authService.isValidTokenFormat('abcdef')).toBe(false);
+      expect(authService.isValidTokenFormat('abcdefghijklmnopqr')).toBe(false);
     });
 
-    it('should accept valid mixed tokens', () => {
-      expect(authService.isValidTokenFormat('abc123')).toBe(true);
-      expect(authService.isValidTokenFormat('MyP4ssw0rd')).toBe(true);
+    it('should accept valid mixed tokens of at least 16 characters', () => {
+      expect(authService.isValidTokenFormat('abc123-long-token')).toBe(true);
+      expect(authService.isValidTokenFormat('MyP4ssw0rd-longer')).toBe(true);
     });
   });
 
   describe('updateToken', () => {
     it('should update token and verify new one', async () => {
-      await authService.enableAuth('oldToken1');
-      await authService.updateToken('newToken2');
+      await authService.enableAuth('oldToken1-long-tok');
+      await authService.updateToken('newToken2-long-tok');
 
-      const oldResult = await authService.verifyToken('oldToken1');
+      const oldResult = await authService.verifyToken('oldToken1-long-tok');
       expect(oldResult.valid).toBe(false);
 
-      const newResult = await authService.verifyToken('newToken2');
+      const newResult = await authService.verifyToken('newToken2-long-tok');
       expect(newResult.valid).toBe(true);
     });
   });
