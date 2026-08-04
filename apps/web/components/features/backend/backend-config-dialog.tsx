@@ -339,7 +339,7 @@ interface BackendFormState {
 
 const DEFAULT_BACKEND_PORT = "9090";
 const DEFAULT_AGENT_GATEWAY_HOST = "127.0.0.1";
-const AGENT_BOOTSTRAP_CONFIG_STORAGE_KEY = "neko-agent-bootstrap-config-v1";
+const AGENT_BOOTSTRAP_CONFIG_STORAGE_KEY = "orbit-agent-bootstrap-config-v1";
 
 interface AgentGatewayConfig {
   gatewayHost: string;

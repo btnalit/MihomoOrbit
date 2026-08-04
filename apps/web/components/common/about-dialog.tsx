@@ -49,14 +49,14 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
             <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center overflow-hidden shrink-0">
               <Image
                 src="/logo.png"
-                alt="Neko Master"
+                alt="MihomoOrbit"
                 width={64}
                 height={64}
                 className="w-full h-full object-cover"
               />
             </div>
             <div>
-              <h3 className="text-xl font-bold">Neko Master</h3>
+              <h3 className="text-xl font-bold">MihomoOrbit</h3>
               <p className="text-sm text-muted-foreground mt-1">
                 {aboutT("description")}
               </p>

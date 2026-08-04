@@ -1,5 +1,5 @@
 /**
- * Data Retention Policy for Neko Master
+ * Data Retention Policy for MihomoOrbit
  * 
  * Tiered storage strategy:
  * - Raw data (connection_logs): 7 days for detailed analysis

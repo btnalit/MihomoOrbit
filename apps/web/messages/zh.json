@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "title": "Neko Master - 流量分析",
+    "title": "MihomoOrbit - 流量分析",
     "description": "现代网关流量分析工具"
   },
   "nav": {
@@ -16,7 +16,7 @@
     "showcaseMode": "演示模式"
   },
   "header": {
-    "title": "Neko Master",
+    "title": "MihomoOrbit",
     "subtitle": "现代网关流量分析工具"
   },
   "dashboard": {
@@ -293,10 +293,10 @@
   "about": {
     "title": "关于",
     "version": "版本",
-    "projectName": "Neko Master",
+    "projectName": "MihomoOrbit",
     "description": "现代网关流量分析工具",
     "github": "GitHub",
-    "openSource": "Neko Master",
+    "openSource": "MihomoOrbit",
     "license": "MIT 许可证",
     "currentVersion": "当前版本",
     "latestVersion": "最新版本",

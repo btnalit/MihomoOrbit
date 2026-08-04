@@ -237,8 +237,8 @@ export class StatsWebSocketServer {
             return acc;
           }, {} as Record<string, string>);
           
-          if (cookies['neko-session']) {
-            token = cookies['neko-session'];
+          if (cookies['orbit-session']) {
+            token = cookies['orbit-session'];
           }
         }
         

@@ -1338,7 +1338,7 @@ export async function createApp(options: AppOptions) {
     }
 
     // Try to get token from Cookie first
-    const cookieToken = request.cookies['neko-session'];
+    const cookieToken = request.cookies['orbit-session'];
     if (cookieToken) {
       const verifyResult = await authService.verifyToken(cookieToken);
       if (verifyResult.valid) {

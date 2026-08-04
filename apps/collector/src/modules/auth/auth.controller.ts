@@ -46,7 +46,7 @@ export async function authController(app: FastifyInstance) {
       // Set valid token as HttpOnly cookie
       // Only use secure if the connection is actually HTTPS
       const isSecure = request.protocol === 'https';
-      reply.setCookie('neko-session', token, {
+      reply.setCookie('orbit-session', token, {
         path: '/',
         httpOnly: true,
         secure: isSecure, // Only use secure on HTTPS connections
@@ -63,7 +63,7 @@ export async function authController(app: FastifyInstance) {
    * Clear session cookie
    */
   app.post('/logout', async (request, reply) => {
-    reply.clearCookie('neko-session', { path: '/' });
+    reply.clearCookie('orbit-session', { path: '/' });
     return { success: true };
   });
 
@@ -115,7 +115,7 @@ export async function authController(app: FastifyInstance) {
     if (authService.isAuthRequired() && !authService.isForceAccessControlOff()) {
       // Check cookie first
       let valid = false;
-      const cookieToken = request.cookies?.['neko-session'];
+      const cookieToken = request.cookies?.['orbit-session'];
       
       if (cookieToken) {
         const verifyResult = await authService.verifyToken(cookieToken);
@@ -164,7 +164,7 @@ export async function authController(app: FastifyInstance) {
     if (authService.isAuthRequired() && !authService.isForceAccessControlOff()) {
       // Check cookie first
       let valid = false;
-      const cookieToken = request.cookies?.['neko-session'];
+      const cookieToken = request.cookies?.['orbit-session'];
       
       if (cookieToken) {
         const verifyResult = await authService.verifyToken(cookieToken);

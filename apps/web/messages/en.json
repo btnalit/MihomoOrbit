@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "title": "Neko Master - Network Visualization",
+    "title": "MihomoOrbit - Network Visualization",
     "description": "Modern traffic analytics for edge gateways"
   },
   "nav": {
@@ -16,7 +16,7 @@
     "showcaseMode": "Showcase Mode"
   },
   "header": {
-    "title": "Neko Master",
+    "title": "MihomoOrbit",
     "subtitle": "Modern traffic analytics for edge gateways"
   },
   "dashboard": {
@@ -122,7 +122,6 @@
   },
   "topDomains": {
     "title": "Top Domains",
-    "topDomains": "Top Domains",
     "sortByTraffic": "Sort by traffic",
     "sortByConnections": "Sort by connections",
     "viewAll": "View all",
@@ -170,7 +169,6 @@
     "ipCount": "IPs",
     "proxy": "Proxy",
     "proxyTraffic": "Proxy Traffic Breakdown",
-
     "domainsCount": "domains",
     "showing": "Showing",
     "of": "of",
@@ -294,10 +292,10 @@
   "about": {
     "title": "About",
     "version": "Version",
-    "projectName": "Neko Master",
+    "projectName": "MihomoOrbit",
     "description": "Modern traffic analytics for edge gateways",
     "github": "GitHub",
-    "openSource": "Neko Master",
+    "openSource": "MihomoOrbit",
     "license": "MIT License",
     "currentVersion": "Current Version",
     "latestVersion": "Latest Version",

@@ -112,7 +112,7 @@ export function Navigation({
           <div className="w-14 h-14 rounded-xl shrink-0 flex items-center justify-center overflow-hidden hover:opacity-80">
             <Image
               src="/logo.png"
-              alt="Neko Master"
+              alt="MihomoOrbit"
               width={40}
               height={40}
               className="w-full h-full object-cover"
@@ -338,7 +338,7 @@ export function Navigation({
                 <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center overflow-hidden shrink-0">
                   <Image
                     src="/logo.png"
-                    alt="Neko Master"
+                    alt="MihomoOrbit"
                     width={64}
                     height={64}
                     className="w-full h-full object-cover"
