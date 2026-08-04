@@ -134,18 +134,17 @@ export class AuthService {
   }
 
   /**
-   * Validates `token` against the current setup token with a timing-safe
-   * comparison. On success, invalidates the setup token (single use).
+   * Timing-safe comparison against the current setup token. Deliberately
+   * side-effect free: the token is invalidated by enableAuth() once setup
+   * actually succeeds, not merely because it was presented. Consuming it here
+   * would mean a single rejected token (e.g. too short) burns the one-time
+   * setup token and forces a collector restart to get a new one.
    */
-  consumeSetupToken(token: string): boolean {
+  verifySetupToken(token: string): boolean {
     if (!this.setupToken || !token) {
       return false;
     }
-    if (!timingSafeStringEqual(token, this.setupToken)) {
-      return false;
-    }
-    this.setupToken = null;
-    return true;
+    return timingSafeStringEqual(token, this.setupToken);
   }
 
   /**

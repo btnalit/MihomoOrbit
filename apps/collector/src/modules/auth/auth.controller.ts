@@ -22,37 +22,39 @@ declare module 'fastify' {
 // design spec section 3.5(c).
 const FAILURE_LIMIT = 5;
 const LOCKOUT_MS = 15 * 60 * 1000;
-const failuresByIp = new Map<string, { count: number; lockedUntil: number }>();
-
-function isLockedOut(ip: string): boolean {
-  const entry = failuresByIp.get(ip);
-  if (!entry) return false;
-  // Not locked yet (still under the failure threshold) — leave the counter
-  // alone so it keeps accumulating across requests.
-  if (entry.lockedUntil === 0) return false;
-  if (entry.lockedUntil > Date.now()) return true;
-  // Lockout window has elapsed; drop the stale entry so failures start fresh.
-  failuresByIp.delete(ip);
-  return false;
-}
-
-function recordFailure(ip: string): void {
-  const entry = failuresByIp.get(ip) ?? { count: 0, lockedUntil: 0 };
-  entry.count += 1;
-  if (entry.count >= FAILURE_LIMIT) {
-    entry.lockedUntil = Date.now() + LOCKOUT_MS;
-  }
-  failuresByIp.set(ip, entry);
-}
-
-function recordSuccess(ip: string): void {
-  failuresByIp.delete(ip);
-}
-
 const RATE_LIMITED_RESPONSE = { error: 'Too many failed attempts. Try again later.' };
 
 export async function authController(app: FastifyInstance) {
   const authService = app.authService;
+
+  // 限速器状态随插件注册创建,而非模块级:模块级 Map 会让同一进程内
+  // 多个 createApp() 实例(以及相邻测试用例)共享锁定计数。
+  const failuresByIp = new Map<string, { count: number; lockedUntil: number }>();
+
+  function isLockedOut(ip: string): boolean {
+    const entry = failuresByIp.get(ip);
+    if (!entry) return false;
+    // Not locked yet (still under the failure threshold) — leave the counter
+    // alone so it keeps accumulating across requests.
+    if (entry.lockedUntil === 0) return false;
+    if (entry.lockedUntil > Date.now()) return true;
+    // Lockout window has elapsed; drop the stale entry so failures start fresh.
+    failuresByIp.delete(ip);
+    return false;
+  }
+
+  function recordFailure(ip: string): void {
+    const entry = failuresByIp.get(ip) ?? { count: 0, lockedUntil: 0 };
+    entry.count += 1;
+    if (entry.count >= FAILURE_LIMIT) {
+      entry.lockedUntil = Date.now() + LOCKOUT_MS;
+    }
+    failuresByIp.set(ip, entry);
+  }
+
+  function recordSuccess(ip: string): void {
+    failuresByIp.delete(ip);
+  }
 
   /**
    * GET /api/auth/state
@@ -131,7 +133,7 @@ export async function authController(app: FastifyInstance) {
 
     if (!authService.isConfigured()) {
       const setupToken = request.headers['x-setup-token'];
-      if (typeof setupToken !== 'string' || !authService.consumeSetupToken(setupToken)) {
+      if (typeof setupToken !== 'string' || !authService.verifySetupToken(setupToken)) {
         recordFailure(request.ip);
         return reply.status(401).send({
           error: 'A valid X-Setup-Token header is required to complete first-run setup',
@@ -156,7 +158,8 @@ export async function authController(app: FastifyInstance) {
         message: 'Authentication enabled successfully'
       };
     } catch (error: unknown) {
-      recordFailure(request.ip);
+      // 令牌格式不合规不是凭据猜测,不计入每 IP 锁定计数——否则管理员
+      // 连试几次弱令牌就会把自己锁在首次设置流程之外。
       const message = error instanceof Error ? error.message : 'Failed to enable authentication';
       return reply.status(400).send({ error: message });
     }

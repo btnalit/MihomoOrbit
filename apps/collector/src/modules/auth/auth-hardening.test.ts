@@ -138,4 +138,32 @@ describe('auth hardening', () => {
     await expect(authService.verifyToken('b-16-char-token-2')).resolves.toMatchObject({ valid: true });
   });
 
+
+  it('does not burn the setup token when the chosen token is rejected', async () => {
+    const setupToken = authService.getSetupToken()!;
+
+    // 首次设置时输入了不合规的令牌:应返回 400,但 setup token 必须仍然有效,
+    // 否则用户要重启 collector 才能再拿到一个(端到端验收发现的缺陷)。
+    const rejected = await app.inject({
+      method: 'POST',
+      url: '/api/auth/enable',
+      headers: { 'x-setup-token': setupToken },
+      payload: { token: 'short1' },
+    });
+    expect(rejected.statusCode).toBe(400);
+    expect(authService.getSetupToken()).toBe(setupToken);
+
+    // 同一个 setup token 必须还能完成设置
+    const accepted = await app.inject({
+      method: 'POST',
+      url: '/api/auth/enable',
+      headers: { 'x-setup-token': setupToken },
+      payload: { token: 'orbit-admin-token-2026' },
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(authService.isConfigured()).toBe(true);
+    // 设置成功后才失效
+    expect(authService.getSetupToken()).toBeNull();
+  });
+
 });
