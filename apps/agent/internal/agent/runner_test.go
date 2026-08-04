@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/foru17/neko-master/apps/agent/internal/config"
-	"github.com/foru17/neko-master/apps/agent/internal/domain"
+	"github.com/btnalit/MihomoOrbit/apps/agent/internal/config"
+	"github.com/btnalit/MihomoOrbit/apps/agent/internal/domain"
 )
 
 func TestIngestSnapshotsDeltaCalculation(t *testing.T) {

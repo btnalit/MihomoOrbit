@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"sort"
 
-	"github.com/foru17/neko-master/apps/agent/internal/domain"
+	"github.com/btnalit/MihomoOrbit/apps/agent/internal/domain"
 )
 
 func (c *Client) GetConfigSnapshot(ctx context.Context) (*domain.GatewayConfigSnapshot, error) {

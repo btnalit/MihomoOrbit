@@ -28,10 +28,10 @@ Neko Master is a centralized traffic analytics panel.
 Agent runs near your local gateway and reports data securely to the panel.
 
 Project:
-  https://github.com/foru17/neko-master
+  https://github.com/btnalit/MihomoOrbit
 
 Agent docs:
-  https://github.com/foru17/neko-master/tree/main/docs/agent
+  https://github.com/btnalit/MihomoOrbit/tree/main/docs/agent
 
 EOF
 }
