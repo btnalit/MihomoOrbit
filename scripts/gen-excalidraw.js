@@ -249,7 +249,7 @@ e(label("ag-arr-lbl", 960, AG_HOST_Y - 50, "HTTP  (token 鉴权)", 11, "#868e96"
 // Remote Host
 e(rect("ag-host-r", 300, AG_HOST_Y, 1300, 500, "#ebfbee", "#2f9e44", 2));
 e(text("ag-host-t", 320, AG_HOST_Y + 10,
-  "网关旁边的主机 (Remote Host)\n\nnekoagent  (CLI 管理器, Shell 脚本)\n  /etc/neko-agent/<instance>.env     配置文件\n  /var/run/neko-agent/<instance>.pid  PID 文件\n\nneko-agent  (守护进程, Go)\n  1. 拉取网关数据\n       Clash/Mihomo: WS /connections (实时推送)\n       Surge:        HTTP GET /v1/requests/recent (2s 轮询)\n  2. 增量计算 (Delta)\n       识别新/更新连接 → 计算 upload/download 增量 → 聚合\n  3. 批量上报 (每 2s)  POST /api/agent/report\n       最多 1000 条/批, 积压上限 50000 条\n  4. 心跳 (每 30s)  POST /api/agent/heartbeat\n  5. 配置同步 (每 2min, MD5 去重)  POST /api/agent/config-sync\n  6. 策略同步 (每 30s, 变化时)  POST /api/agent/policy-state\n\nPID 锁: 同一 backendId 同时只允许一个进程运行",
+  "网关旁边的主机 (Remote Host)\n\norbitagent  (CLI 管理器, Shell 脚本)\n  /etc/orbit-agent/<instance>.env     配置文件\n  /var/run/orbit-agent/<instance>.pid  PID 文件\n\norbit-agent  (守护进程, Go)\n  1. 拉取网关数据\n       Clash/Mihomo: WS /connections (实时推送)\n       Surge:        HTTP GET /v1/requests/recent (2s 轮询)\n  2. 增量计算 (Delta)\n       识别新/更新连接 → 计算 upload/download 增量 → 聚合\n  3. 批量上报 (每 2s)  POST /api/agent/report\n       最多 1000 条/批, 积压上限 50000 条\n  4. 心跳 (每 30s)  POST /api/agent/heartbeat\n  5. 配置同步 (每 2min, MD5 去重)  POST /api/agent/config-sync\n  6. 策略同步 (每 30s, 变化时)  POST /api/agent/policy-state\n\nPID 锁: 同一 backendId 同时只允许一个进程运行",
   12, "#1b5e20"));
 
 // Gateway below agent host

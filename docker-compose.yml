@@ -1,7 +1,7 @@
 services:
-  neko-master:
-    image: foru17/neko-master:latest
-    container_name: neko-master
+  mihomo-orbit:
+    image: ghcr.io/btnalit/mihomo-orbit:latest
+    container_name: mihomo-orbit
     restart: unless-stopped
     ports:
       # 外部端口 : 内部端口
@@ -30,9 +30,9 @@ services:
       - CH_SECURE=${CH_SECURE:-0}
       - CH_HOST=${CH_HOST:-clickhouse}
       - CH_PORT=${CH_PORT:-8123}
-      - CH_DATABASE=${CH_DATABASE:-neko_master}
-      - CH_USER=${CH_USER:-neko}
-      - CH_PASSWORD=${CH_PASSWORD:-neko_master}
+      - CH_DATABASE=${CH_DATABASE:-mihomo_orbit}
+      - CH_USER=${CH_USER:-orbit}
+      - CH_PASSWORD=${CH_PASSWORD:-mihomo_orbit}
       - CH_WRITE_ENABLED=${CH_WRITE_ENABLED:-0}
       - CH_WRITE_MAX_PENDING_BATCHES=${CH_WRITE_MAX_PENDING_BATCHES:-200}
       - CH_AUTO_CREATE_TABLES=${CH_AUTO_CREATE_TABLES:-1}
@@ -48,7 +48,7 @@ services:
       - CH_CONNECT_MAX_RETRIES=${CH_CONNECT_MAX_RETRIES:-5}
       - CH_CONNECT_RETRY_DELAY_MS=${CH_CONNECT_RETRY_DELAY_MS:-2000}
     networks:
-      - neko-master-network
+      - mihomo-orbit-network
     # 健康检查
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:${API_PORT:-3001}/health || exit 1"]
@@ -59,7 +59,7 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
-    container_name: neko-master-clickhouse
+    container_name: mihomo-orbit-clickhouse
     restart: unless-stopped
     profiles: ["clickhouse"]
     ports:
@@ -68,12 +68,12 @@ services:
     volumes:
       - ./data/clickhouse:/var/lib/clickhouse
     environment:
-      - CLICKHOUSE_DB=${CH_DATABASE:-neko_master}
-      - CLICKHOUSE_USER=${CH_USER:-neko}
-      - CLICKHOUSE_PASSWORD=${CH_PASSWORD:-neko_master}
+      - CLICKHOUSE_DB=${CH_DATABASE:-mihomo_orbit}
+      - CLICKHOUSE_USER=${CH_USER:-orbit}
+      - CLICKHOUSE_PASSWORD=${CH_PASSWORD:-mihomo_orbit}
       - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
     networks:
-      - neko-master-network
+      - mihomo-orbit-network
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8123/ping || exit 1"]
       interval: 30s
@@ -82,5 +82,5 @@ services:
       start_period: 40s
 
 networks:
-  neko-master-network:
+  mihomo-orbit-network:
     driver: bridge

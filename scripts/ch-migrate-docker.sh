@@ -62,7 +62,7 @@ docker compose --profile clickhouse up -d
 echo "[2/4] Migrating SQLite -> ClickHouse..."
 docker compose exec -T \
 	-e CH_ENABLED=1 \
-	neko-master \
+	mihomo-orbit \
 	node /app/apps/collector/dist/scripts/migrate-sqlite-to-clickhouse.js \
 	--sqlite "$SQLITE_PATH" \
 	$TRUNCATE_FLAG \
@@ -72,7 +72,7 @@ docker compose exec -T \
 echo "[3/4] Verifying SQLite vs ClickHouse..."
 docker compose exec -T \
 	-e CH_ENABLED=1 \
-	neko-master \
+	mihomo-orbit \
 	node /app/apps/collector/dist/scripts/verify-sqlite-clickhouse.js \
 	--sqlite "$SQLITE_PATH" \
 	--max-delta "$MAX_DELTA" \

@@ -9,9 +9,8 @@ on:
   workflow_dispatch:
 
 env:
-  DOCKERHUB_IMAGE_OLD: foru17/clash-master
-  DOCKERHUB_IMAGE_NEW: foru17/neko-master
-  GHCR_IMAGE: ghcr.io/${{ github.repository }}
+  # 必须写死小写:GHCR 拒绝大写镜像名,而 ${{ github.repository }} 会给出 btnalit/MihomoOrbit
+  GHCR_IMAGE: ghcr.io/btnalit/mihomo-orbit
 
 jobs:
   build:
@@ -48,13 +47,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -68,8 +60,6 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ env.DOCKERHUB_IMAGE_OLD }}
-            ${{ env.DOCKERHUB_IMAGE_NEW }}
             ${{ env.GHCR_IMAGE }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
@@ -93,13 +83,3 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
-
-      - name: Update Docker Hub description
-        if: github.event_name != 'pull_request' && github.ref_name == 'main'
-        uses: peter-evans/dockerhub-description@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: foru17/neko-master
-          readme-filepath: ./README.md
-          short-description: "Modern traffic analytics for edge gateways"

@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Neko Master 启动脚本
+# MihomoOrbit 启动脚本
 
 set -e
 
 echo "╔════════════════════════════════════════════════════════╗"
-echo "║     Neko Master Traffic Statistics System              ║"
+echo "║     MihomoOrbit Traffic Statistics System              ║"
 echo "╚════════════════════════════════════════════════════════╝"
 echo
 

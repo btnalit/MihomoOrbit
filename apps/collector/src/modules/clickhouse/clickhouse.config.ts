@@ -24,7 +24,7 @@ export function loadClickHouseConfig(): ClickHouseConfig {
     protocol: secure ? 'https' : 'http',
     host: process.env.CH_HOST || 'clickhouse',
     port: parsePositiveInt(process.env.CH_PORT, 8123),
-    database: process.env.CH_DATABASE || 'neko_master',
+    database: process.env.CH_DATABASE || 'mihomo_orbit',
     user: process.env.CH_USER || 'default',
     password: process.env.CH_PASSWORD || '',
     timeoutMs: parsePositiveInt(process.env.CH_CONNECT_TIMEOUT_MS, 5000),

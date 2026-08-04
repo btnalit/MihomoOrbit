@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Neko Master One-Click Setup Script
+# MihomoOrbit One-Click Setup Script
 # Automatically detects port conflicts and provides solutions
 
 set -e
@@ -79,7 +79,7 @@ prompt_if_empty() {
 }
 
 run_agent_installer() {
-	local script_url="https://raw.githubusercontent.com/foru17/neko-master/main/apps/agent/install.sh"
+	local script_url="https://raw.githubusercontent.com/btnalit/MihomoOrbit/main/apps/agent/install.sh"
 
 	echo ""
 	echo "╔════════════════════════════════════════════════════════╗"
@@ -90,21 +90,21 @@ run_agent_installer() {
 	print_info "Prepare required variables for agent install"
 	print_info "Tip: you can pre-export env vars to run non-interactively"
 
-	prompt_if_empty "NEKO_SERVER" "Neko server URL (e.g. http://10.0.0.2:3000)"
-	prompt_if_empty "NEKO_BACKEND_ID" "Backend ID"
-	prompt_if_empty "NEKO_BACKEND_TOKEN" "Backend token" true
-	prompt_if_empty "NEKO_GATEWAY_TYPE" "Gateway type (clash/surge)"
-	prompt_if_empty "NEKO_GATEWAY_URL" "Gateway URL (e.g. http://127.0.0.1:9090)"
+	prompt_if_empty "ORBIT_SERVER" "Neko server URL (e.g. http://10.0.0.2:3000)"
+	prompt_if_empty "ORBIT_BACKEND_ID" "Backend ID"
+	prompt_if_empty "ORBIT_BACKEND_TOKEN" "Backend token" true
+	prompt_if_empty "ORBIT_GATEWAY_TYPE" "Gateway type (clash/surge)"
+	prompt_if_empty "ORBIT_GATEWAY_URL" "Gateway URL (e.g. http://127.0.0.1:9090)"
 
-	if [ -z "${NEKO_GATEWAY_TOKEN:-}" ]; then
-		read -s -p "Gateway token (optional, press Enter to skip): " NEKO_GATEWAY_TOKEN
+	if [ -z "${ORBIT_GATEWAY_TOKEN:-}" ]; then
+		read -s -p "Gateway token (optional, press Enter to skip): " ORBIT_GATEWAY_TOKEN
 		echo ""
-		export NEKO_GATEWAY_TOKEN
+		export ORBIT_GATEWAY_TOKEN
 	fi
 
-	if [ -z "${NEKO_AGENT_VERSION:-}" ]; then
-		read -p "Agent version [latest]: " NEKO_AGENT_VERSION
-		export NEKO_AGENT_VERSION="${NEKO_AGENT_VERSION:-latest}"
+	if [ -z "${ORBIT_AGENT_VERSION:-}" ]; then
+		read -p "Agent version [latest]: " ORBIT_AGENT_VERSION
+		export ORBIT_AGENT_VERSION="${ORBIT_AGENT_VERSION:-latest}"
 	fi
 
 	print_info "Downloading installer..."
@@ -119,13 +119,13 @@ run_agent_installer() {
 
 	print_info "Running agent installer..."
 	env \
-		NEKO_SERVER="$NEKO_SERVER" \
-		NEKO_BACKEND_ID="$NEKO_BACKEND_ID" \
-		NEKO_BACKEND_TOKEN="$NEKO_BACKEND_TOKEN" \
-		NEKO_GATEWAY_TYPE="$NEKO_GATEWAY_TYPE" \
-		NEKO_GATEWAY_URL="$NEKO_GATEWAY_URL" \
-		NEKO_GATEWAY_TOKEN="${NEKO_GATEWAY_TOKEN:-}" \
-		NEKO_AGENT_VERSION="${NEKO_AGENT_VERSION:-latest}" \
+		ORBIT_SERVER="$ORBIT_SERVER" \
+		ORBIT_BACKEND_ID="$ORBIT_BACKEND_ID" \
+		ORBIT_BACKEND_TOKEN="$ORBIT_BACKEND_TOKEN" \
+		ORBIT_GATEWAY_TYPE="$ORBIT_GATEWAY_TYPE" \
+		ORBIT_GATEWAY_URL="$ORBIT_GATEWAY_URL" \
+		ORBIT_GATEWAY_TOKEN="${ORBIT_GATEWAY_TOKEN:-}" \
+		ORBIT_AGENT_VERSION="${ORBIT_AGENT_VERSION:-latest}" \
 		sh "$tmp_script"
 
 	print_success "Agent install flow finished"
@@ -157,10 +157,10 @@ find_available_port() {
 show_welcome() {
 	echo ""
 	echo "╔════════════════════════════════════════════════════════╗"
-	echo "║          Neko Master - One-Click Setup                 ║"
+	echo "║          MihomoOrbit - One-Click Setup                 ║"
 	echo "╚════════════════════════════════════════════════════════╝"
 	echo ""
-	print_info "This script will help you quickly configure Neko Master"
+	print_info "This script will help you quickly configure MihomoOrbit"
 	echo ""
 }
 
@@ -250,7 +250,7 @@ create_env_file() {
 
 	cat >.env <<EOF
 # =============================================================================
-# Neko Master Environment Configuration
+# MihomoOrbit Environment Configuration
 # =============================================================================
 # Generated at: $(date)
 
@@ -328,7 +328,7 @@ ask_start() {
 
 	if [[ $start_now =~ ^[Yy]$ ]]; then
 		echo ""
-		print_info "Starting Neko Master..."
+		print_info "Starting MihomoOrbit..."
 		echo ""
 
 		if command -v docker-compose &>/dev/null; then
@@ -344,7 +344,7 @@ ask_start() {
 		echo "  Then access: http://localhost:$WEB_PORT"
 		echo ""
 		echo "  Common commands:"
-		echo "    View logs:  docker logs -f neko-master"
+		echo "    View logs:  docker logs -f mihomo-orbit"
 		echo "    Stop:       docker compose down"
 		echo "    Restart:    docker compose restart"
 		echo ""
@@ -361,9 +361,9 @@ download_compose_file() {
 	if [ ! -f "docker-compose.yml" ]; then
 		print_info "Downloading docker-compose.yml..."
 		if command -v curl &>/dev/null; then
-			curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/foru17/neko-master/main/docker-compose.yml
+			curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/btnalit/MihomoOrbit/main/docker-compose.yml
 		elif command -v wget &>/dev/null; then
-			wget -qO docker-compose.yml https://raw.githubusercontent.com/foru17/neko-master/main/docker-compose.yml
+			wget -qO docker-compose.yml https://raw.githubusercontent.com/btnalit/MihomoOrbit/main/docker-compose.yml
 		else
 			print_error "Neither curl nor wget is available"
 			exit 1
@@ -431,7 +431,7 @@ agent | agent-install)
 *)
 	print_error "Unknown command: $1"
 	echo "Usage:"
-	echo "  ./setup.sh                # setup Neko Master service"
+	echo "  ./setup.sh                # setup MihomoOrbit service"
 	echo "  ./setup.sh agent-install  # install and run Neko Agent"
 	exit 1
 	;;
