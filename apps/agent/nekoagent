@@ -1,0 +1,1322 @@
+#!/usr/bin/env sh
+set -eu
+
+PROG="nekoagent"
+INSTALL_DIR_DEFAULT="${HOME}/.local/bin"
+INSTALL_DIR="${NEKO_INSTALL_DIR:-$INSTALL_DIR_DEFAULT}"
+AGENT_BIN="${NEKO_AGENT_BIN:-$INSTALL_DIR/neko-agent}"
+CONFIG_DIR="${NEKO_AGENT_CONFIG_DIR:-/etc/neko-agent}"
+STATE_DIR="${NEKO_AGENT_STATE_DIR:-/var/run/neko-agent}"
+AGENT_REPO="${NEKO_AGENT_REPO:-foru17/neko-master}"
+VERSION="0.2.4"
+
+log() {
+  printf '[%s] %s\n' "$PROG" "$1"
+}
+
+err() {
+  printf '[%s] error: %s\n' "$PROG" "$1" >&2
+}
+
+ensure_dirs() {
+  mkdir -p "$CONFIG_DIR" "$STATE_DIR"
+}
+
+config_file() {
+  name="$1"
+  printf '%s/%s.env\n' "$CONFIG_DIR" "$name"
+}
+
+pid_file() {
+  name="$1"
+  printf '%s/%s.pid\n' "$STATE_DIR" "$name"
+}
+
+log_file() {
+  name="$1"
+  printf '%s/%s.log\n' "$STATE_DIR" "$name"
+}
+
+is_running() {
+  name="$1"
+  # When a service manager owns this instance, the pidfile is never written
+  # (cmd_start delegates to systemctl/launchctl/init.d). Ask the service
+  # manager directly so list/status/restart-all/upgrade reflect reality.
+  if is_service_managed "$name"; then
+    manager="$(detect_service_manager)"
+    service="$(service_name_for_instance "$name")"
+    case "$manager" in
+      systemd)
+        systemctl is-active --quiet "$service"
+        return $?
+        ;;
+      launchd)
+        label="io.neko-master.agent.${name}"
+        if launchctl list 2>/dev/null | awk -v lbl="$label" 'NR>1 && $3==lbl {found=1} END {exit !found}'; then
+          return 0
+        fi
+        return 1
+        ;;
+      openwrt)
+        init_path="/etc/init.d/${service}"
+        if [ -x "$init_path" ]; then
+          "$init_path" status >/dev/null 2>&1
+          return $?
+        fi
+        ;;
+    esac
+  fi
+  pf="$(pid_file "$name")"
+  if [ ! -f "$pf" ]; then
+    return 1
+  fi
+  pid="$(cat "$pf" 2>/dev/null || true)"
+  if [ -z "$pid" ]; then
+    return 1
+  fi
+  kill -0 "$pid" >/dev/null 2>&1
+}
+
+# ── Download helpers ────────────────────────────────────────────────────────
+
+download_file() {
+  url="$1"
+  output="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$output"
+    return 0
+  fi
+  if command -v wget >/dev/null 2>&1; then
+    wget -qO "$output" "$url"
+    return 0
+  fi
+  err "curl or wget is required"
+  exit 1
+}
+
+compute_sha256() {
+  file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+    return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$file" | awk '{print $2}'
+    return 0
+  fi
+  echo ""
+}
+
+normalize_os() {
+  raw="$(uname -s | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz')"
+  case "$raw" in
+    linux)  echo "linux" ;;
+    darwin) echo "darwin" ;;
+    *)
+      err "unsupported OS: $raw"
+      exit 1
+      ;;
+  esac
+}
+
+normalize_arch() {
+  raw="$(uname -m | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz')"
+  case "$raw" in
+    x86_64|amd64)       echo "amd64" ;;
+    aarch64|arm64)      echo "arm64" ;;
+    armv7l|armv7|armhf) echo "armv7" ;;
+    mips)               echo "mips" ;;
+    mipsle)             echo "mipsle" ;;
+    *)
+      err "unsupported architecture: $raw"
+      exit 1
+      ;;
+  esac
+}
+
+detect_service_manager() {
+  os="$(normalize_os)"
+  if [ "$os" = "linux" ] && [ -f "/etc/openwrt_release" ] && [ -f "/etc/rc.common" ]; then
+    echo "openwrt"
+    return 0
+  fi
+
+  if [ "$os" = "linux" ] && command -v systemctl >/dev/null 2>&1 && [ -d "/etc/systemd/system" ]; then
+    echo "systemd"
+    return 0
+  fi
+
+  if [ "$os" = "darwin" ] && command -v launchctl >/dev/null 2>&1; then
+    echo "launchd"
+    return 0
+  fi
+
+  if command -v crontab >/dev/null 2>&1; then
+    echo "cron"
+    return 0
+  fi
+
+  echo "none"
+}
+
+service_name_for_instance() {
+  name="$1"
+  printf 'neko-agent-%s\n' "$name"
+}
+
+# Check if instance is managed by a service manager (systemd/launchd/openwrt)
+# Returns 0 if managed, 1 if not
+is_service_managed() {
+  name="$1"
+  manager="$(detect_service_manager)"
+  service="$(service_name_for_instance "$name")"
+  case "$manager" in
+    systemd)
+      systemctl is-enabled "$service" >/dev/null 2>&1 && return 0
+      ;;
+    launchd)
+      label="io.neko-master.agent.${name}"
+      plist_path="${HOME}/Library/LaunchAgents/${label}.plist"
+      [ -f "$plist_path" ] && return 0
+      ;;
+    openwrt)
+      init_path="/etc/init.d/${service}"
+      [ -x "$init_path" ] && return 0
+      ;;
+  esac
+  return 1
+}
+
+runner_file() {
+  name="$1"
+  printf '%s/%s.run.sh\n' "$CONFIG_DIR" "$name"
+}
+
+require_linux_root() {
+  manager="$1"
+  if [ "$manager" = "systemd" ] || [ "$manager" = "openwrt" ]; then
+    if [ "$(id -u)" -ne 0 ]; then
+      err "$manager autostart requires root privileges"
+      exit 1
+    fi
+  fi
+}
+
+generate_runner_script() {
+  name="$1"
+  rf="$(runner_file "$name")"
+  cf="$(config_file "$name")"
+  ensure_dirs
+
+  cat > "$rf" <<EOF
+#!/usr/bin/env sh
+set -eu
+
+AGENT_BIN='$AGENT_BIN'
+CONF='$cf'
+
+[ -f "\$CONF" ] || {
+  echo "[nekoagent] error: config not found: \$CONF" >&2
+  exit 1
+}
+
+. "\$CONF"
+
+: "\${NEKO_SERVER:?missing NEKO_SERVER}"
+: "\${NEKO_BACKEND_ID:?missing NEKO_BACKEND_ID}"
+: "\${NEKO_BACKEND_TOKEN:?missing NEKO_BACKEND_TOKEN}"
+: "\${NEKO_GATEWAY_TYPE:?missing NEKO_GATEWAY_TYPE}"
+: "\${NEKO_GATEWAY_URL:?missing NEKO_GATEWAY_URL}"
+
+set -- "\$AGENT_BIN" \
+  --server-url "\$NEKO_SERVER" \
+  --backend-id "\$NEKO_BACKEND_ID" \
+  --backend-token "\$NEKO_BACKEND_TOKEN" \
+  --gateway-type "\$NEKO_GATEWAY_TYPE" \
+  --gateway-url "\$NEKO_GATEWAY_URL"
+
+[ -n "\${NEKO_GATEWAY_TOKEN:-}" ] && set -- "\$@" --gateway-token "\$NEKO_GATEWAY_TOKEN"
+[ -n "\${NEKO_AGENT_ID:-}" ] && set -- "\$@" --agent-id "\$NEKO_AGENT_ID"
+[ -n "\${NEKO_REPORT_INTERVAL:-}" ] && set -- "\$@" --report-interval "\$NEKO_REPORT_INTERVAL"
+[ -n "\${NEKO_HEARTBEAT_INTERVAL:-}" ] && set -- "\$@" --heartbeat-interval "\$NEKO_HEARTBEAT_INTERVAL"
+[ -n "\${NEKO_GATEWAY_POLL_INTERVAL:-}" ] && set -- "\$@" --gateway-poll-interval "\$NEKO_GATEWAY_POLL_INTERVAL"
+[ -n "\${NEKO_REQUEST_TIMEOUT:-}" ] && set -- "\$@" --request-timeout "\$NEKO_REQUEST_TIMEOUT"
+[ -n "\${NEKO_REPORT_BATCH_SIZE:-}" ] && set -- "\$@" --report-batch-size "\$NEKO_REPORT_BATCH_SIZE"
+[ -n "\${NEKO_MAX_PENDING_UPDATES:-}" ] && set -- "\$@" --max-pending-updates "\$NEKO_MAX_PENDING_UPDATES"
+[ -n "\${NEKO_STALE_FLOW_TIMEOUT:-}" ] && set -- "\$@" --stale-flow-timeout "\$NEKO_STALE_FLOW_TIMEOUT"
+
+set -- "\$@" --log="\${NEKO_LOG:-true}"
+exec "\$@"
+EOF
+
+  chmod +x "$rf"
+  printf '%s\n' "$rf"
+}
+
+write_systemd_unit() {
+  name="$1"
+  runner="$2"
+  service="$(service_name_for_instance "$name")"
+  unit_path="/etc/systemd/system/${service}.service"
+  cat > "$unit_path" <<EOF
+[Unit]
+Description=Neko Agent (${name})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${runner}
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=10
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  printf '%s\n' "$unit_path"
+}
+
+write_openwrt_init() {
+  name="$1"
+  runner="$2"
+  service="$(service_name_for_instance "$name")"
+  init_path="/etc/init.d/${service}"
+  cat > "$init_path" <<EOF
+#!/bin/sh /etc/rc.common
+
+USE_PROCD=1
+START=95
+STOP=10
+
+start_service() {
+  procd_open_instance
+  procd_set_param command "${runner}"
+  procd_set_param respawn 3600 5 5
+  procd_set_param stdout 1
+  procd_set_param stderr 1
+  procd_close_instance
+}
+EOF
+  chmod +x "$init_path"
+  printf '%s\n' "$init_path"
+}
+
+write_launchd_plist() {
+  name="$1"
+  runner="$2"
+  launch_dir="${HOME}/Library/LaunchAgents"
+  label="io.neko-master.agent.${name}"
+  plist_path="${launch_dir}/${label}.plist"
+  mkdir -p "$launch_dir"
+  cat > "$plist_path" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${label}</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>${runner}</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>$(log_file "$name")</string>
+  <key>StandardErrorPath</key>
+  <string>$(log_file "$name")</string>
+</dict>
+</plist>
+EOF
+  printf '%s\n' "$plist_path"
+}
+
+enable_autostart_systemd() {
+  name="$1"
+  runner="$2"
+  service="$(service_name_for_instance "$name")"
+  write_systemd_unit "$name" "$runner" >/dev/null
+  systemctl daemon-reload
+  systemctl enable "$service" >/dev/null
+  systemctl restart "$service"
+}
+
+enable_autostart_openwrt() {
+  name="$1"
+  runner="$2"
+  service="$(service_name_for_instance "$name")"
+  init_path="$(write_openwrt_init "$name" "$runner")"
+  "$init_path" enable
+  "$init_path" restart
+}
+
+enable_autostart_launchd() {
+  name="$1"
+  runner="$2"
+  plist_path="$(write_launchd_plist "$name" "$runner")"
+  launchctl unload "$plist_path" >/dev/null 2>&1 || true
+  launchctl load "$plist_path"
+}
+
+enable_autostart_cron() {
+  name="$1"
+  runner="$2"
+  marker="# nekoagent-autostart-${name}"
+  line="@reboot ${runner} >/dev/null 2>&1 ${marker}"
+  old_cron="$(crontab -l 2>/dev/null || true)"
+  {
+    printf '%s\n' "$old_cron" | grep -v "$marker" || true
+    printf '%s\n' "$line"
+  } | crontab -
+}
+
+disable_autostart_systemd() {
+  name="$1"
+  service="$(service_name_for_instance "$name")"
+  unit_path="/etc/systemd/system/${service}.service"
+  systemctl disable "$service" >/dev/null 2>&1 || true
+  systemctl stop "$service" >/dev/null 2>&1 || true
+  rm -f "$unit_path"
+  systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+disable_autostart_openwrt() {
+  name="$1"
+  service="$(service_name_for_instance "$name")"
+  init_path="/etc/init.d/${service}"
+  if [ -x "$init_path" ]; then
+    "$init_path" disable >/dev/null 2>&1 || true
+    "$init_path" stop >/dev/null 2>&1 || true
+  fi
+  rm -f "$init_path"
+}
+
+disable_autostart_launchd() {
+  name="$1"
+  label="io.neko-master.agent.${name}"
+  plist_path="${HOME}/Library/LaunchAgents/${label}.plist"
+  launchctl unload "$plist_path" >/dev/null 2>&1 || true
+  rm -f "$plist_path"
+}
+
+disable_autostart_cron() {
+  name="$1"
+  marker="# nekoagent-autostart-${name}"
+  old_cron="$(crontab -l 2>/dev/null || true)"
+  printf '%s\n' "$old_cron" | grep -v "$marker" | crontab -
+}
+
+cmd_enable_autostart() {
+  name="$1"
+  ensure_dirs
+  load_config "$name"
+  runner="$(generate_runner_script "$name")"
+  manager="$(detect_service_manager)"
+  require_linux_root "$manager"
+
+  if is_running "$name"; then
+    cmd_stop "$name" || true
+  fi
+
+  case "$manager" in
+    openwrt)
+      enable_autostart_openwrt "$name" "$runner"
+      ;;
+    systemd)
+      enable_autostart_systemd "$name" "$runner"
+      ;;
+    launchd)
+      enable_autostart_launchd "$name" "$runner"
+      ;;
+    cron)
+      enable_autostart_cron "$name" "$runner"
+      cmd_start "$name"
+      ;;
+    *)
+      err "autostart is not supported on this system"
+      exit 1
+      ;;
+  esac
+
+  log "autostart enabled for '$name' via $manager"
+}
+
+cmd_disable_autostart() {
+  name="$1"
+  manager="$(detect_service_manager)"
+  require_linux_root "$manager"
+  case "$manager" in
+    openwrt)
+      disable_autostart_openwrt "$name"
+      ;;
+    systemd)
+      disable_autostart_systemd "$name"
+      ;;
+    launchd)
+      disable_autostart_launchd "$name"
+      ;;
+    cron)
+      disable_autostart_cron "$name"
+      ;;
+    *)
+      ;;
+  esac
+  rm -f "$(runner_file "$name")"
+  log "autostart disabled for '$name'"
+}
+
+# Query GitHub releases API for the latest agent tag (e.g. "agent-v0.2.0").
+# Returns empty string on failure — callers must handle this gracefully.
+#
+# The repo publishes BOTH main-app (v*) and agent (agent-v*) releases into the
+# same namespace, and either may be marked "latest". So we must NOT use the
+# releases/latest endpoint — it can resolve to a main-app release that carries
+# no agent binaries. Instead list recent releases and pick the newest agent-v*.
+get_latest_remote_tag() {
+  repo="${1:-$AGENT_REPO}"
+  api_url="https://api.github.com/repos/${repo}/releases?per_page=100"
+  tag=""
+  if command -v curl >/dev/null 2>&1; then
+    tag="$(curl -fsSL "$api_url" 2>/dev/null | awk -F'"' '/"tag_name"/{print $4}' | grep '^agent-v' | head -1)"
+  elif command -v wget >/dev/null 2>&1; then
+    tag="$(wget -qO- "$api_url" 2>/dev/null | awk -F'"' '/"tag_name"/{print $4}' | grep '^agent-v' | head -1)"
+  fi
+  printf '%s\n' "$tag"
+}
+
+# Return the version string reported by the local neko-agent binary, or "".
+get_local_binary_version() {
+  if [ -x "$AGENT_BIN" ]; then
+    "$AGENT_BIN" --version 2>/dev/null | head -1 || true
+  fi
+}
+
+is_version_arg() {
+  v="${1:-}"
+  case "$v" in
+    ""|latest|agent-v*|v[0-9]*|[0-9]*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+normalize_version_tag() {
+  version_arg="${1:-latest}"
+  if [ "$version_arg" = "latest" ]; then
+    printf 'latest\n'
+    return 0
+  fi
+  case "$version_arg" in
+    agent-v*)
+      printf '%s\n' "$version_arg"
+      ;;
+    v*)
+      printf 'agent-%s\n' "$version_arg"
+      ;;
+    *)
+      printf 'agent-v%s\n' "$version_arg"
+      ;;
+  esac
+}
+
+target_plain_from_tag() {
+  tag="$1"
+  printf '%s\n' "${tag#agent-v}"
+}
+
+# ── Update / download binary ────────────────────────────────────────────────
+
+# Download, verify, and install a new neko-agent binary.
+# Usage: do_download_binary <version_arg> <os> <arch>
+#   version_arg: "latest" or "agent-v0.2.0" style tag
+do_download_binary() {
+  version_arg="$1"
+  os="$2"
+  arch="$3"
+
+  if [ "$version_arg" = "latest" ]; then
+    # Resolve to a concrete agent-v* tag; releases/latest may be a main-app
+    # release with no agent binaries (→ 404).
+    tag="$(get_latest_remote_tag "$AGENT_REPO")"
+    if [ -z "$tag" ]; then
+      err "could not determine latest agent version from GitHub API"
+      return 1
+    fi
+    release_path="releases/download/${tag}"
+    asset="neko-agent_${os}_${arch}.tar.gz"
+  else
+    # normalise: accept bare "0.2.0" or full "agent-v0.2.0"
+    case "$version_arg" in
+      agent-v*) tag="$version_arg" ;;
+      v*)       tag="agent-${version_arg}" ;;
+      *)        tag="agent-v${version_arg}" ;;
+    esac
+    release_path="releases/download/${tag}"
+    asset="neko-agent_${tag}_${os}_${arch}.tar.gz"
+  fi
+
+  package_url="https://github.com/${AGENT_REPO}/${release_path}/${asset}"
+  checksums_url="https://github.com/${AGENT_REPO}/${release_path}/checksums.txt"
+
+  tmp_dir="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp_dir'" EXIT INT TERM
+
+  archive_path="$tmp_dir/neko-agent.tar.gz"
+  checksums_path="$tmp_dir/checksums.txt"
+
+  log "downloading $package_url"
+  download_file "$package_url" "$archive_path"
+
+  log "verifying checksum..."
+  download_file "$checksums_url" "$checksums_path"
+  expected_hash="$(awk -v a="$asset" '$2 == a {print $1}' "$checksums_path" | head -n 1)"
+  if [ -z "$expected_hash" ]; then
+    err "cannot find checksum for $asset in checksums.txt"
+    exit 1
+  fi
+  actual_hash="$(compute_sha256 "$archive_path")"
+  if [ -z "$actual_hash" ]; then
+    err "no sha256 tooling found (sha256sum / shasum / openssl)"
+    exit 1
+  fi
+  if [ "$expected_hash" != "$actual_hash" ]; then
+    err "checksum mismatch for $asset"
+    err "  expected: $expected_hash"
+    err "  actual:   $actual_hash"
+    exit 1
+  fi
+
+  mkdir -p "$tmp_dir/extract"
+  tar -xzf "$archive_path" -C "$tmp_dir/extract"
+
+  new_binary="$tmp_dir/extract/neko-agent"
+  if [ ! -f "$new_binary" ]; then
+    err "extracted archive does not contain neko-agent"
+    exit 1
+  fi
+
+  chmod +x "$new_binary"
+  install_dir="$(dirname "$AGENT_BIN")"
+  mkdir -p "$install_dir"
+  mv "$new_binary" "$AGENT_BIN"
+  log "binary installed: $AGENT_BIN"
+}
+
+# Download and install the manager script itself.
+# Usage: do_download_manager <agent-tag>
+#   agent-tag: e.g. "agent-v0.2.0"
+do_download_manager() {
+  tag="$1"
+  manager_url="https://raw.githubusercontent.com/${AGENT_REPO}/${tag}/apps/agent/nekoagent"
+
+  tmp_dir="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp_dir'" EXIT INT TERM
+  new_manager="$tmp_dir/nekoagent"
+
+  log "downloading manager script: $manager_url"
+  download_file "$manager_url" "$new_manager"
+  chmod +x "$new_manager"
+
+  mkdir -p "$INSTALL_DIR"
+  manager_target="$INSTALL_DIR/nekoagent"
+  mv "$new_manager" "$manager_target"
+  log "manager installed: $manager_target"
+
+  current_path="$(command -v "$PROG" 2>/dev/null || true)"
+  if [ -n "$current_path" ] && [ "$current_path" != "$manager_target" ] && [ -w "$current_path" ]; then
+    if [ -e "$current_path" ] && [ -e "$manager_target" ] && [ "$current_path" -ef "$manager_target" ]; then
+      log "manager path already points to installed target: $current_path"
+    else
+      cp "$manager_target" "$current_path"
+      chmod +x "$current_path" || true
+      log "manager synced to: $current_path"
+    fi
+  fi
+}
+
+# ── Commands ────────────────────────────────────────────────────────────────
+
+version() {
+  manager_ver="$VERSION"
+  binary_ver="$(get_local_binary_version)"
+  if [ -z "$binary_ver" ]; then
+    binary_ver="(binary not found)"
+  fi
+  printf 'nekoagent  %s\n' "$manager_ver"
+  printf 'neko-agent %s\n' "$binary_ver"
+}
+
+usage() {
+  cat <<EOF
+Neko Agent Manager v${VERSION}
+
+Usage:
+  $PROG init <name> [KEY=VALUE ...]          Create/overwrite config file
+  $PROG add <name> [flags/options]           Quick add new backend instance
+  $PROG start <name>                         Start agent instance
+  $PROG stop <name>                          Stop agent instance
+  $PROG restart <name>                       Restart agent instance
+  $PROG status <name>                        Show instance status
+  $PROG logs <name>                          Tail logs
+  $PROG enable-autostart <name>              Register boot autostart and start via service manager
+  $PROG disable-autostart <name>             Remove boot autostart registration
+  $PROG list                                 List configured instances
+  $PROG restart-all                          Restart all running instances
+  $PROG upgrade [version]                    Upgrade manager+binary and restart running instances
+  $PROG remove <name>                        Remove instance config/runtime
+  $PROG delete <name>                        Alias of remove
+  $PROG uninstall                            Uninstall nekoagent + binaries
+  $PROG version                              Show manager and binary version
+  $PROG help                                 Show this help
+
+Quick add with flags (auto-starts by default):
+  $PROG add <name> \
+    --server-url <url> \
+    --backend-id <id> \
+    --backend-token <token> \
+    --gateway-type <clash|surge> \
+    --gateway-url <url> \
+    [--gateway-token <token>] \
+    [--no-start]        # skip auto-start after add
+
+Upgrade examples:
+  $PROG upgrade                        # upgrade to latest release
+  $PROG upgrade agent-v0.2.0           # upgrade to specific version
+
+Config and runtime paths:
+  CONFIG_DIR=$CONFIG_DIR
+  STATE_DIR=$STATE_DIR
+  AGENT_BIN=$AGENT_BIN
+
+Required config keys:
+  NEKO_SERVER, NEKO_BACKEND_ID, NEKO_BACKEND_TOKEN, NEKO_GATEWAY_TYPE, NEKO_GATEWAY_URL
+Optional keys:
+  NEKO_GATEWAY_TOKEN, NEKO_LOG, NEKO_AGENT_ID, NEKO_REPORT_INTERVAL,
+  NEKO_HEARTBEAT_INTERVAL, NEKO_GATEWAY_POLL_INTERVAL, NEKO_REQUEST_TIMEOUT,
+  NEKO_REPORT_BATCH_SIZE, NEKO_MAX_PENDING_UPDATES, NEKO_STALE_FLOW_TIMEOUT
+
+Examples:
+  # Add and start a new backend
+  $PROG add home-surge --server-url http://10.0.0.210:3000 --backend-id 3 \\
+    --backend-token ag_xxx --gateway-type surge --gateway-url http://10.0.0.210:9091 \\
+    --gateway-token xxx
+
+  # List all instances
+  $PROG list
+
+  # Check status
+  $PROG status home-surge
+
+  # Register startup persistence
+  $PROG enable-autostart home-surge
+
+  # View logs
+  $PROG logs home-surge
+
+  # Global upgrade (recommended)
+  $PROG upgrade
+  $PROG upgrade agent-v0.2.0
+
+  # Remove instance
+  $PROG remove home-surge
+EOF
+}
+
+require_config_key() {
+  key="$1"
+  eval "val=\${$key:-}"
+  if [ -z "$val" ]; then
+    err "missing required key in config: $key"
+    exit 1
+  fi
+}
+
+load_config() {
+  name="$1"
+  cf="$(config_file "$name")"
+  if [ ! -f "$cf" ]; then
+    err "config not found: $cf"
+    exit 1
+  fi
+  # shellcheck disable=SC1090
+  . "$cf"
+  require_config_key "NEKO_SERVER"
+  require_config_key "NEKO_BACKEND_ID"
+  require_config_key "NEKO_BACKEND_TOKEN"
+  require_config_key "NEKO_GATEWAY_TYPE"
+  require_config_key "NEKO_GATEWAY_URL"
+}
+
+build_agent_args() {
+  set -- \
+    --server-url "$NEKO_SERVER" \
+    --backend-id "$NEKO_BACKEND_ID" \
+    --backend-token "$NEKO_BACKEND_TOKEN" \
+    --gateway-type "$NEKO_GATEWAY_TYPE" \
+    --gateway-url "$NEKO_GATEWAY_URL"
+
+  if [ -n "${NEKO_GATEWAY_TOKEN:-}" ]; then
+    set -- "$@" --gateway-token "$NEKO_GATEWAY_TOKEN"
+  fi
+  if [ -n "${NEKO_AGENT_ID:-}" ]; then
+    set -- "$@" --agent-id "$NEKO_AGENT_ID"
+  fi
+  if [ -n "${NEKO_REPORT_INTERVAL:-}" ]; then
+    set -- "$@" --report-interval "$NEKO_REPORT_INTERVAL"
+  fi
+  if [ -n "${NEKO_HEARTBEAT_INTERVAL:-}" ]; then
+    set -- "$@" --heartbeat-interval "$NEKO_HEARTBEAT_INTERVAL"
+  fi
+  if [ -n "${NEKO_GATEWAY_POLL_INTERVAL:-}" ]; then
+    set -- "$@" --gateway-poll-interval "$NEKO_GATEWAY_POLL_INTERVAL"
+  fi
+  if [ -n "${NEKO_REQUEST_TIMEOUT:-}" ]; then
+    set -- "$@" --request-timeout "$NEKO_REQUEST_TIMEOUT"
+  fi
+  if [ -n "${NEKO_REPORT_BATCH_SIZE:-}" ]; then
+    set -- "$@" --report-batch-size "$NEKO_REPORT_BATCH_SIZE"
+  fi
+  if [ -n "${NEKO_MAX_PENDING_UPDATES:-}" ]; then
+    set -- "$@" --max-pending-updates "$NEKO_MAX_PENDING_UPDATES"
+  fi
+  if [ -n "${NEKO_STALE_FLOW_TIMEOUT:-}" ]; then
+    set -- "$@" --stale-flow-timeout "$NEKO_STALE_FLOW_TIMEOUT"
+  fi
+
+  log_enabled="${NEKO_LOG:-true}"
+  set -- "$@" --log="$log_enabled"
+
+  printf '%s\n' "$*"
+}
+
+cmd_init() {
+  name="$1"
+  shift
+  ensure_dirs
+  cf="$(config_file "$name")"
+  umask 077
+  : > "$cf"
+  for kv in "$@"; do
+    case "$kv" in
+      *=*) printf '%s\n' "$kv" >> "$cf" ;;
+      *)
+        err "invalid key=value pair: $kv"
+        exit 1
+        ;;
+    esac
+  done
+  log "config written: $cf"
+}
+
+# Quick add with flags instead of KEY=VALUE pairs
+cmd_add() {
+  if [ "$#" -lt 6 ]; then
+    err "add requires: <name> --server-url <url> --backend-id <id> --backend-token <token> --gateway-type <type> --gateway-url <url>"
+    echo ""
+    echo "Usage: $PROG add <name> --server-url <url> --backend-id <id> --backend-token <token> --gateway-type <clash|surge> --gateway-url <url> [--gateway-token <token>] [--auto-start]"
+    exit 1
+  fi
+
+  name="$1"
+  shift
+
+  # Parse flags
+  server_url=""
+  backend_id=""
+  backend_token=""
+  gateway_type=""
+  gateway_url=""
+  gateway_token=""
+  auto_start="true"   # default: start immediately after add
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --server-url)
+        server_url="$2"
+        shift 2
+        ;;
+      --backend-id)
+        backend_id="$2"
+        shift 2
+        ;;
+      --backend-token)
+        backend_token="$2"
+        shift 2
+        ;;
+      --gateway-type)
+        gateway_type="$2"
+        shift 2
+        ;;
+      --gateway-url)
+        gateway_url="$2"
+        shift 2
+        ;;
+      --gateway-token)
+        gateway_token="$2"
+        shift 2
+        ;;
+      --auto-start)
+        auto_start="true"
+        shift
+        ;;
+      --no-start)
+        auto_start="false"
+        shift
+        ;;
+      *)
+        err "unknown flag: $1"
+        exit 1
+        ;;
+    esac
+  done
+
+  # Validate required fields
+  if [ -z "$server_url" ] || [ -z "$backend_id" ] || [ -z "$backend_token" ] || [ -z "$gateway_type" ] || [ -z "$gateway_url" ]; then
+    err "missing required flags"
+    echo "Required: --server-url, --backend-id, --backend-token, --gateway-type, --gateway-url"
+    exit 1
+  fi
+
+  # Build config
+  config_vars=""
+  config_vars="$config_vars NEKO_SERVER=$server_url"
+  config_vars="$config_vars NEKO_BACKEND_ID=$backend_id"
+  config_vars="$config_vars NEKO_BACKEND_TOKEN=$backend_token"
+  config_vars="$config_vars NEKO_GATEWAY_TYPE=$gateway_type"
+  config_vars="$config_vars NEKO_GATEWAY_URL=$gateway_url"
+  if [ -n "$gateway_token" ]; then
+    config_vars="$config_vars NEKO_GATEWAY_TOKEN=$gateway_token"
+  fi
+
+  # Initialize config
+  cf="$(config_file "$name")"
+  if [ -f "$cf" ]; then
+    log "updating existing instance '$name' config"
+    if is_running "$name"; then
+      log "stopping existing instance '$name' before reconfiguring..."
+      cmd_stop "$name" || true
+    fi
+  fi
+  # shellcheck disable=SC2086
+  cmd_init "$name" $config_vars
+
+  log "instance '$name' added successfully"
+
+  # Auto-start if requested
+  if [ "$auto_start" = "true" ]; then
+    cmd_start "$name"
+  fi
+}
+
+cmd_start() {
+  name="$1"
+  ensure_dirs
+
+  # If managed by service manager, delegate to it
+  if is_service_managed "$name"; then
+    manager="$(detect_service_manager)"
+    service="$(service_name_for_instance "$name")"
+    case "$manager" in
+      systemd)  systemctl start "$service" ;;
+      launchd)
+        label="io.neko-master.agent.${name}"
+        plist_path="${HOME}/Library/LaunchAgents/${label}.plist"
+        launchctl load "$plist_path" 2>/dev/null || true
+        ;;
+      openwrt)  "/etc/init.d/${service}" start ;;
+    esac
+    log "instance '$name' started via $manager"
+    return 0
+  fi
+
+  if [ ! -x "$AGENT_BIN" ]; then
+    err "agent binary not found/executable: $AGENT_BIN"
+    exit 1
+  fi
+  if is_running "$name"; then
+    log "instance '$name' already running (pid $(cat "$(pid_file "$name")"))"
+    return 0
+  fi
+
+  load_config "$name"
+  args="$(build_agent_args)"
+  lf="$(log_file "$name")"
+  pf="$(pid_file "$name")"
+
+  # shellcheck disable=SC2086
+  nohup "$AGENT_BIN" $args >> "$lf" 2>&1 &
+  pid=$!
+  printf '%s\n' "$pid" > "$pf"
+  log "instance '$name' started, pid=$pid, log=$lf"
+}
+
+cmd_stop() {
+  name="$1"
+
+  # If managed by service manager, delegate to it
+  if is_service_managed "$name"; then
+    manager="$(detect_service_manager)"
+    service="$(service_name_for_instance "$name")"
+    case "$manager" in
+      systemd)  systemctl stop "$service" ;;
+      launchd)
+        label="io.neko-master.agent.${name}"
+        plist_path="${HOME}/Library/LaunchAgents/${label}.plist"
+        launchctl unload "$plist_path" 2>/dev/null || true
+        ;;
+      openwrt)  "/etc/init.d/${service}" stop ;;
+    esac
+    rm -f "$(pid_file "$name")"
+    log "instance '$name' stopped via $manager"
+    return 0
+  fi
+
+  pf="$(pid_file "$name")"
+  if ! is_running "$name"; then
+    rm -f "$pf"
+    log "instance '$name' is not running"
+    return 0
+  fi
+  pid="$(cat "$pf")"
+  kill "$pid" >/dev/null 2>&1 || true
+  # Wait up to 12s for graceful shutdown (agent needs up to 10s for final flush)
+  i=0
+  while [ "$i" -lt 12 ] && kill -0 "$pid" >/dev/null 2>&1; do
+    sleep 1
+    i=$((i + 1))
+  done
+  if kill -0 "$pid" >/dev/null 2>&1; then
+    kill -9 "$pid" >/dev/null 2>&1 || true
+  fi
+  rm -f "$pf"
+  log "instance '$name' stopped"
+}
+
+cmd_status() {
+  name="$1"
+  managed=""
+  if is_service_managed "$name"; then
+    managed=" (managed by $(detect_service_manager))"
+  fi
+  if is_running "$name"; then
+    pid=""
+    if is_service_managed "$name"; then
+      manager="$(detect_service_manager)"
+      service="$(service_name_for_instance "$name")"
+      case "$manager" in
+        systemd)
+          pid="$(systemctl show -p MainPID --value "$service" 2>/dev/null || true)"
+          ;;
+      esac
+    fi
+    if [ -z "$pid" ] || [ "$pid" = "0" ]; then
+      pf="$(pid_file "$name")"
+      [ -f "$pf" ] && pid="$(cat "$pf" 2>/dev/null || true)"
+    fi
+    if [ -n "$pid" ] && [ "$pid" != "0" ]; then
+      log "instance '$name' is running (pid $pid)${managed}"
+    else
+      log "instance '$name' is running${managed}"
+    fi
+    exit 0
+  fi
+  log "instance '$name' is stopped${managed}"
+  exit 1
+}
+
+cmd_logs() {
+  name="$1"
+
+  # Service-managed instances don't write the wrapper's $lf; route to the
+  # appropriate native log source instead.
+  if is_service_managed "$name"; then
+    manager="$(detect_service_manager)"
+    service="$(service_name_for_instance "$name")"
+    case "$manager" in
+      systemd)
+        journalctl -u "$service" -f --no-pager
+        return 0
+        ;;
+      openwrt)
+        # procd_set_param stdout/stderr 1 routes to syslog → logread
+        if command -v logread >/dev/null 2>&1; then
+          logread -e "$service" -f
+          return 0
+        fi
+        ;;
+      launchd)
+        # launchd plist writes to $lf directly, fall through to tail
+        ;;
+    esac
+  fi
+
+  lf="$(log_file "$name")"
+  if [ ! -f "$lf" ]; then
+    err "log file not found: $lf"
+    exit 1
+  fi
+  tail -f "$lf"
+}
+
+cmd_list() {
+  ensure_dirs
+  found=false
+  for f in "$CONFIG_DIR"/*.env; do
+    if [ ! -e "$f" ]; then
+      continue
+    fi
+    found=true
+    name="$(basename "$f" .env)"
+    if is_running "$name"; then
+      status="running"
+    else
+      status="stopped"
+    fi
+    managed=""
+    if is_service_managed "$name"; then
+      managed=" [$(detect_service_manager)]"
+    fi
+    # Load config to show backend info
+    # shellcheck disable=SC1090
+    . "$f"
+    printf '%-20s %-10s backend-id=%s gateway=%s%s\n' "$name" "$status" "${NEKO_BACKEND_ID:-?}" "${NEKO_GATEWAY_TYPE:-?}" "$managed"
+  done
+  if [ "$found" = false ]; then
+    log "no instances configured"
+  fi
+}
+
+cmd_restart_all() {
+  ensure_dirs
+  restarted_any=false
+  for f in "$CONFIG_DIR"/*.env; do
+    if [ ! -e "$f" ]; then
+      continue
+    fi
+    name="$(basename "$f" .env)"
+    if is_running "$name"; then
+      log "restarting '$name'..."
+      cmd_stop "$name" || true
+      cmd_start "$name"
+      restarted_any=true
+    fi
+  done
+  if [ "$restarted_any" = false ]; then
+    log "no running instances found"
+  fi
+}
+
+cmd_upgrade_global() {
+  version_arg="${1:-latest}"
+  os="$(normalize_os)"
+  arch="$(normalize_arch)"
+
+  if [ "$version_arg" = "latest" ]; then
+    log "querying GitHub for latest release..."
+    target_tag="$(get_latest_remote_tag "$AGENT_REPO")"
+    if [ -z "$target_tag" ]; then
+      err "failed to determine latest version from GitHub API"
+      err "hint: check network access or specify a version: $PROG upgrade agent-v0.2.0"
+      exit 1
+    fi
+  else
+    target_tag="$(normalize_version_tag "$version_arg")"
+  fi
+  target_plain="$(target_plain_from_tag "$target_tag")"
+
+  local_version="$(get_local_binary_version)"
+  binary_changed=false
+  if [ -n "$local_version" ] && [ "$local_version" = "$target_plain" ]; then
+    log "binary already at $local_version, no binary download needed"
+  else
+    log "upgrading binary: ${local_version:-not installed} -> $target_plain"
+    do_download_binary "$target_tag" "$os" "$arch"
+    binary_changed=true
+  fi
+
+  do_download_manager "$target_tag"
+
+  restarted_any=false
+  for f in "$CONFIG_DIR"/*.env; do
+    if [ ! -e "$f" ]; then
+      continue
+    fi
+    name="$(basename "$f" .env)"
+    if is_running "$name"; then
+      log "restarting running instance '$name'..."
+      if is_service_managed "$name"; then
+        # Re-generate runner script and update service unit for managed instances
+        load_config "$name"
+        runner="$(generate_runner_script "$name")"
+        manager="$(detect_service_manager)"
+        service="$(service_name_for_instance "$name")"
+        case "$manager" in
+          systemd)
+            write_systemd_unit "$name" "$runner" >/dev/null
+            systemctl daemon-reload
+            systemctl restart "$service"
+            ;;
+          launchd)
+            plist_path="$(write_launchd_plist "$name" "$runner")"
+            launchctl unload "$plist_path" >/dev/null 2>&1 || true
+            launchctl load "$plist_path"
+            ;;
+          openwrt)
+            write_openwrt_init "$name" "$runner" >/dev/null
+            "/etc/init.d/${service}" restart
+            ;;
+        esac
+      else
+        cmd_stop "$name" || true
+        cmd_start "$name"
+      fi
+      restarted_any=true
+    fi
+  done
+
+  if [ "$restarted_any" = false ]; then
+    log "no running instances found; binary upgraded globally"
+  fi
+
+  log "upgrade complete: manager + binary at version $target_plain"
+}
+
+cmd_remove() {
+  name="$1"
+
+  cmd_disable_autostart "$name" >/dev/null 2>&1 || true
+
+  if is_running "$name"; then
+    cmd_stop "$name"
+  fi
+
+  rm -f "$(pid_file "$name")"
+  rm -f "$(log_file "$name")"
+  rm -f "$(runner_file "$name")"
+
+  cf="$(config_file "$name")"
+  if [ -f "$cf" ]; then
+    rm -f "$cf"
+  fi
+
+  log "instance '$name' removed"
+}
+
+cmd_uninstall() {
+  rm -f "$AGENT_BIN"
+  rm -f "$INSTALL_DIR/nekoagent"
+  rm -f "/usr/local/bin/neko-agent" "/usr/local/bin/nekoagent"
+  log "binaries removed"
+  log "note: instance config files remain in $CONFIG_DIR (use '$PROG remove <name>' if needed)"
+}
+
+main() {
+  if [ "$#" -lt 1 ]; then
+    usage
+    exit 1
+  fi
+
+  cmd="$1"
+  shift
+
+  case "$cmd" in
+    init)
+      if [ "$#" -lt 2 ]; then
+        usage
+        exit 1
+      fi
+      cmd_init "$@"
+      ;;
+    add)
+      if [ "$#" -lt 6 ]; then
+        usage
+        exit 1
+      fi
+      cmd_add "$@"
+      ;;
+    start|stop|restart|status|logs|enable-autostart|disable-autostart)
+      if [ "$#" -ne 1 ]; then
+        usage
+        exit 1
+      fi
+      case "$cmd" in
+        start)   cmd_start "$1" ;;
+        stop)    cmd_stop "$1" ;;
+        restart) cmd_stop "$1" || true; cmd_start "$1" ;;
+        status)  cmd_status "$1" ;;
+        logs)    cmd_logs "$1" ;;
+        enable-autostart) cmd_enable_autostart "$1" ;;
+        disable-autostart) cmd_disable_autostart "$1" ;;
+      esac
+      ;;
+    upgrade)
+      if [ "$#" -gt 1 ]; then
+        usage
+        exit 1
+      fi
+      if [ "$#" -eq 1 ] && ! is_version_arg "$1"; then
+        err "upgrade only accepts an optional version (e.g. agent-v0.2.0), not instance name"
+        exit 1
+      fi
+      cmd_upgrade_global "${1:-latest}"
+      ;;
+    update)
+      err "'update' command has been removed; use '$PROG upgrade [version]'"
+      exit 1
+      ;;
+    remove|delete)
+      if [ "$#" -ne 1 ]; then
+        usage
+        exit 1
+      fi
+      cmd_remove "$1"
+      ;;
+    uninstall)
+      if [ "$#" -ne 0 ]; then
+        err "uninstall does not accept instance name; use '$PROG remove <name>'"
+        usage
+        exit 1
+      fi
+      cmd_uninstall
+      ;;
+    list)
+      cmd_list
+      ;;
+    restart-all)
+      cmd_restart_all
+      ;;
+    version|-v|--version)
+      version
+      ;;
+    help|-h|--help)
+      usage
+      ;;
+    *)
+      err "unknown command: $cmd"
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

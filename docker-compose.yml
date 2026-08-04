@@ -1,0 +1,86 @@
+services:
+  neko-master:
+    image: foru17/neko-master:latest
+    container_name: neko-master
+    restart: unless-stopped
+    ports:
+      # 外部端口 : 内部端口
+      # 如果端口被占用，修改 .env 文件或环境变量即可
+      - "${WEB_EXTERNAL_PORT:-3000}:3000"   # Web UI
+      - "${API_EXTERNAL_PORT:-3001}:3001"   # API
+      - "${WS_EXTERNAL_PORT:-3002}:3002"    # WebSocket
+    volumes:
+      - ./data:/app/data
+      - ./geoip:/app/data/geoip:ro
+    environment:
+      - NODE_ENV=production
+      - WEB_PORT=3000
+      - API_PORT=3001
+      - COLLECTOR_WS_PORT=3002
+      # 将外部端口传入容器，用于运行时前端配置
+      - WEB_EXTERNAL_PORT=${WEB_EXTERNAL_PORT:-3000}
+      - API_EXTERNAL_PORT=${API_EXTERNAL_PORT:-3001}
+      - WS_EXTERNAL_PORT=${WS_EXTERNAL_PORT:-3002}
+      - DB_PATH=/app/data/stats.db
+      - COOKIE_SECRET=${COOKIE_SECRET:-}
+      - GEOIP_LOOKUP_PROVIDER=${GEOIP_LOOKUP_PROVIDER:-}
+      - GEOIP_ONLINE_API_URL=${GEOIP_ONLINE_API_URL:-}
+      - CH_ENABLED=${CH_ENABLED:-0}
+      - CH_REQUIRED=${CH_REQUIRED:-0}
+      - CH_SECURE=${CH_SECURE:-0}
+      - CH_HOST=${CH_HOST:-clickhouse}
+      - CH_PORT=${CH_PORT:-8123}
+      - CH_DATABASE=${CH_DATABASE:-neko_master}
+      - CH_USER=${CH_USER:-neko}
+      - CH_PASSWORD=${CH_PASSWORD:-neko_master}
+      - CH_WRITE_ENABLED=${CH_WRITE_ENABLED:-0}
+      - CH_WRITE_MAX_PENDING_BATCHES=${CH_WRITE_MAX_PENDING_BATCHES:-200}
+      - CH_AUTO_CREATE_TABLES=${CH_AUTO_CREATE_TABLES:-1}
+      - CH_METRICS_LOG_INTERVAL_MS=${CH_METRICS_LOG_INTERVAL_MS:-60000}
+      - CH_COMPARE_ENABLED=${CH_COMPARE_ENABLED:-0}
+      - CH_COMPARE_INTERVAL_MS=${CH_COMPARE_INTERVAL_MS:-120000}
+      - CH_COMPARE_WINDOW_MINUTES=${CH_COMPARE_WINDOW_MINUTES:-10}
+      - CH_COMPARE_TIMEOUT_MS=${CH_COMPARE_TIMEOUT_MS:-8000}
+      - CH_COMPARE_START_DELAY_MS=${CH_COMPARE_START_DELAY_MS:-120000}
+      - STATS_QUERY_SOURCE=${STATS_QUERY_SOURCE:-sqlite}
+      - STATS_ROUTE_METRICS_LOG_INTERVAL_MS=${STATS_ROUTE_METRICS_LOG_INTERVAL_MS:-60000}
+      - CH_CONNECT_TIMEOUT_MS=${CH_CONNECT_TIMEOUT_MS:-5000}
+      - CH_CONNECT_MAX_RETRIES=${CH_CONNECT_MAX_RETRIES:-5}
+      - CH_CONNECT_RETRY_DELAY_MS=${CH_CONNECT_RETRY_DELAY_MS:-2000}
+    networks:
+      - neko-master-network
+    # 健康检查
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:${API_PORT:-3001}/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: neko-master-clickhouse
+    restart: unless-stopped
+    profiles: ["clickhouse"]
+    ports:
+      - "${CH_EXTERNAL_HTTP_PORT:-8123}:8123"
+      - "${CH_EXTERNAL_NATIVE_PORT:-9000}:9000"
+    volumes:
+      - ./data/clickhouse:/var/lib/clickhouse
+    environment:
+      - CLICKHOUSE_DB=${CH_DATABASE:-neko_master}
+      - CLICKHOUSE_USER=${CH_USER:-neko}
+      - CLICKHOUSE_PASSWORD=${CH_PASSWORD:-neko_master}
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    networks:
+      - neko-master-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8123/ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  neko-master-network:
+    driver: bridge

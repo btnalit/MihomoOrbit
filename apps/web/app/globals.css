@@ -1,0 +1,365 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+@font-face {
+  font-family: "CMTwemojiFlags";
+  src: url("/fonts/TwemojiMozilla-flags.woff2") format("woff2");
+  font-display: swap;
+  unicode-range: U+1F1E6-1F1FF, U+1F3F4, U+E0020-E007F;
+}
+
+@font-face {
+  font-family: "CMNotoEmojiFlags";
+  src: url("/fonts/NotoColorEmoji-flagsonly.ttf") format("truetype");
+  font-display: swap;
+  unicode-range: U+1F1E6-1F1FF;
+}
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+
+  /* UniFi Style Colors */
+  --color-unifi-blue: #0063ff;
+  --color-unifi-purple: #7b61ff;
+  --color-unifi-cyan: #00c7ff;
+  --color-unifi-green: #00d084;
+  --color-unifi-orange: #ff8c42;
+  --color-unifi-pink: #ff6b9d;
+}
+
+:root {
+  --radius: 0.75rem;
+  /* Light Mode - Clean white background */
+  --background: #f5f7fa;
+  --foreground: #1a1d29;
+  --card: #ffffff;
+  --card-foreground: #1a1d29;
+  --popover: #ffffff;
+  --popover-foreground: #1a1d29;
+  --primary: #0063ff;
+  --primary-foreground: #ffffff;
+  --secondary: #e8ecf2;
+  --secondary-foreground: #1a1d29;
+  --muted: #e8ecf2;
+  --muted-foreground: #6b7280;
+  --accent: #e8ecf2;
+  --accent-foreground: #1a1d29;
+  --destructive: #ef4444;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #0063ff;
+  --chart-1: #0063ff;
+  --chart-2: #7b61ff;
+  --chart-3: #00c7ff;
+  --chart-4: #00d084;
+  --chart-5: #ff8c42;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1a1d29;
+  --sidebar-primary: #0063ff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e8ecf2;
+  --sidebar-accent-foreground: #1a1d29;
+  --sidebar-border: #e2e8f0;
+  --sidebar-ring: #0063ff;
+}
+
+.dark {
+  /* Dark Mode - UniFi Dark Theme */
+  --background: #0b0f19;
+  --foreground: #f8fafc;
+  --card: rgba(23, 28, 43, 0.8);
+  --card-foreground: #f8fafc;
+  --popover: #171c2b;
+  --popover-foreground: #f8fafc;
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --secondary: rgba(59, 130, 246, 0.15);
+  --secondary-foreground: #f8fafc;
+  --muted: #1e2538;
+  --muted-foreground: #94a3b8;
+  --accent: rgba(59, 130, 246, 0.15);
+  --accent-foreground: #f8fafc;
+  --destructive: #ef4444;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.08);
+  --ring: #3b82f6;
+  --chart-1: #3b82f6;
+  --chart-2: #8b5cf6;
+  --chart-3: #06b6d4;
+  --chart-4: #10b981;
+  --chart-5: #f59e0b;
+  --sidebar: #0f1420;
+  --sidebar-foreground: #f8fafc;
+  --sidebar-primary: #3b82f6;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: rgba(59, 130, 246, 0.15);
+  --sidebar-accent-foreground: #f8fafc;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #3b82f6;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+    background-image:
+      radial-gradient(
+        ellipse at 0% 0%,
+        rgba(59, 130, 246, 0.08) 0%,
+        transparent 50%
+      ),
+      radial-gradient(
+        ellipse at 100% 0%,
+        rgba(139, 92, 246, 0.05) 0%,
+        transparent 50%
+      ),
+      radial-gradient(
+        ellipse at 100% 100%,
+        rgba(6, 182, 212, 0.05) 0%,
+        transparent 50%
+      );
+    background-attachment: fixed;
+  }
+
+  /* Desktop only: prevent layout shift from classic (non-overlay) scrollbar */
+  /* Mobile/tablet uses overlay scrollbars that don't affect layout, so skip */
+  @media (pointer: fine) {
+    html {
+      overflow-y: scroll;
+      scrollbar-gutter: stable;
+    }
+
+    /* Override Radix scroll-lock compensation — scrollbar space is already reserved */
+    html[data-scroll-locked] {
+      overflow-y: scroll !important;
+      margin-right: 0 !important;
+    }
+
+    body[data-scroll-locked] {
+      padding-right: 0 !important;
+      margin-right: 0 !important;
+    }
+  }
+}
+
+/* Glass Card Effect */
+.glass-card {
+  background: rgba(23, 28, 43, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -2px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+}
+
+.light .glass-card {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.05),
+    0 2px 4px -2px rgba(0, 0, 0, 0.05),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.8);
+}
+
+/* Gradient Text */
+.gradient-text {
+  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 50%, #06b6d4 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Glow Effects */
+.glow-blue {
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+}
+
+.glow-purple {
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+/* Animations */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(59, 130, 246, 0.5);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s ease-out forwards;
+}
+
+.emoji-flag-font {
+  font-family: "CMTwemojiFlags", "CMNotoEmojiFlags", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", var(--font-geist-sans), system-ui;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.1) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+
+/* Number font */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Status indicators */
+.status-dot {
+  @apply w-2 h-2 rounded-full;
+}
+
+.status-online {
+  @apply bg-emerald-500;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+}
+
+.status-offline {
+  @apply bg-slate-500;
+}
+
+/* Card hover effects */
+.hover-lift {
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.2);
+}
+
+/* Chain flow graph - smooth node position animation on rule switch */
+.chain-flow-graph .react-flow__node {
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Custom Gradient Animation */
+@keyframes gradient-x {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-gradient-x {
+  background-size: 200% 200%;
+  animation: gradient-x 3s linear infinite;
+}
+
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.animate-progress-indeterminate {
+  animation: progress-indeterminate 1.5s ease-in-out infinite;
+}

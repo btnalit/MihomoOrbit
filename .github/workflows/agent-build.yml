@@ -1,0 +1,81 @@
+name: Agent Build
+
+on:
+  pull_request:
+    paths:
+      - "apps/agent/**"
+      - ".github/workflows/agent-build.yml"
+      - ".github/workflows/agent-release.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/agent/**"
+      - ".github/workflows/agent-build.yml"
+
+jobs:
+  test:
+    name: Test Agent
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/agent
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/agent/go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+  cross-build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/agent
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: linux
+            arch: armv7
+            goarch: arm
+            goarm: "7"
+          - os: linux
+            arch: mips
+            gomips: softfloat
+          - os: linux
+            arch: mipsle
+            gomips: softfloat
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/agent/go.mod
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.goarch || matrix.arch }}
+          GOARM: ${{ matrix.goarm || '' }}
+          GOMIPS: ${{ matrix.gomips || '' }}
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w" -o "dist/neko-agent-${{ matrix.os }}-${{ matrix.arch }}" .

@@ -1,0 +1,35 @@
+name: Ensure Dev Is Synced With Main
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-dev-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Verify dev contains latest main
+      shell: bash
+      run: |
+        git fetch --no-tags origin main dev
+
+        if git merge-base --is-ancestor origin/main origin/dev; then
+          echo "OK: dev already includes latest main."
+          exit 0
+        fi
+
+        echo "::error::Branch 'dev' is behind 'main'. Merge 'main' into 'dev' before merging this PR."
+        echo "main head: $(git rev-parse --short origin/main)"
+        echo "dev head:  $(git rev-parse --short origin/dev)"
+        exit 1

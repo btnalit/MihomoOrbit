@@ -1,0 +1,49 @@
+# Dependencies
+**/node_modules
+.pnpm-store
+
+# Build outputs & caches
+**/.next
+**/dist
+**/.turbo
+*.tsbuildinfo
+
+# Development
+.git
+.gitignore
+.env.local
+.env.*.local
+*.log
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage
+.nyc_output
+
+# Docker
+docker-compose.override.yml
+Dockerfile
+.dockerignore
+
+# Documentation (keep minimal)
+README.md
+*.md
+
+# Data (will be mounted as volume)
+data
+*.db
+*.db-journal
+
+# Temporary files
+tmp
+temp
+*.tmp

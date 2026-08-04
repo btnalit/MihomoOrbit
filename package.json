@@ -1,0 +1,22 @@
+{
+  "name": "neko-master",
+  "version": "1.4.0",
+  "description": "Modern traffic analytics for edge gateways",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "check:api-routes": "node scripts/check-api-routes.mjs",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "turbo": "^2.9.17"
+  }
+}
