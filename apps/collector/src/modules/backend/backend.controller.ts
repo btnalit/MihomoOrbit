@@ -3,6 +3,7 @@
  */
 
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
+import { backendCapabilities } from '@mihomo-orbit/shared';
 import type { BackendService } from './backend.service.js';
 import type {
   CreateBackendInput,
@@ -30,7 +31,11 @@ const backendController: FastifyPluginAsync = async (fastify: FastifyInstance): 
 
   // Get all backends
   fastify.get('/', async () => {
-    return service.getAllBackends();
+    // M0 起后端列表附带能力标记,供 web 渲染/置灰功能入口(M1 实时管理、M2 配置编辑)
+    return service.getAllBackends().map((backend) => ({
+      ...backend,
+      capabilities: backendCapabilities({ url: backend.url }),
+    }));
   });
 
   // Get active backend

@@ -128,3 +128,39 @@ export function getGatewayBaseUrl(url: string): string {
 export function isAgentBackendUrl(url: string): boolean {
   return /^agent:\/\//i.test((url || '').trim());
 }
+
+/**
+ * 后端能力判定的输入。刻意接受「后端记录」而非 url 字符串:
+ * M1c(统一后端模型)会用 agent_id 取代 agent:// 判据,届时只需改本函数实现,
+ * 签名与调用点保持不变。
+ */
+export interface BackendCapabilityInput {
+  url: string;
+  /** M1c 起由 agent_id 非空决定;M0 阶段恒为 undefined,回退到 url 判据 */
+  agentBound?: boolean;
+}
+
+export interface BackendCapabilities {
+  /** 恒 true:所有后端都提供监控 */
+  monitoring: boolean;
+  /** 实时管理(M1)。M1c 之后所有后端都有 API 地址,此项将恒为 true */
+  management: boolean;
+  /** 配置编辑(M2),需要绑定 agent */
+  configEdit: boolean;
+}
+
+/**
+ * 唯一的后端能力判定函数。web 据此渲染或置灰功能入口。
+ *
+ * M0 只交付契约:本函数 + 后端列表 API 的 capabilities 字段。
+ * 现存的 isAgentBackendUrl 调用点(全仓 25 处)不在 M0 迁移,属 M1c。
+ */
+export function backendCapabilities(backend: BackendCapabilityInput): BackendCapabilities {
+  const legacyAgentUrl = isAgentBackendUrl(backend.url);
+  const agentBound = backend.agentBound ?? legacyAgentUrl;
+  return {
+    monitoring: true,
+    management: !legacyAgentUrl,
+    configEdit: agentBound,
+  };
+}
