@@ -9,7 +9,7 @@
 检查：
 
 ```sh
-file ./neko-agent
+file ./orbit-agent
 uname -m
 ```
 
@@ -61,40 +61,40 @@ Agent 二进制使用 PID 锁文件防止同一 backendId 运行两个进程。
 检查：
 
 ```bash
-nekoagent status <instance>
+orbitagent status <instance>
 ```
 
 若显示"已停止"但仍无法启动：
 
 ```bash
 # 找到并删除过期 PID 文件
-ls /var/run/neko-agent/
-rm /var/run/neko-agent/<instance>.pid
-nekoagent start <instance>
+ls /var/run/orbit-agent/
+rm /var/run/orbit-agent/<instance>.pid
+orbitagent start <instance>
 ```
 
-## `nekoagent stop` 耗时较长
+## `orbitagent stop` 耗时较长
 
 这是预期行为。停止时，Agent 会等待最多 10 秒以将最后一批流量数据 flush 至面板后再退出。stop 命令最多等待 12 秒，之后才发送 SIGKILL。
 
 如需立即强制终止：
 
 ```bash
-pid=$(cat /var/run/neko-agent/<instance>.pid)
+pid=$(cat /var/run/orbit-agent/<instance>.pid)
 kill -9 "$pid"
-rm -f /var/run/neko-agent/<instance>.pid
+rm -f /var/run/orbit-agent/<instance>.pid
 ```
 
 注意：强制终止可能丢失最后约 30 秒尚未 flush 的流量数据。
 
-## `nekoagent logs` 无输出
+## `orbitagent logs` 无输出
 
 日志文件在首次成功启动后才会创建。若 Agent 启动即失败，可通过以下方式排查：
 
 ```bash
-journalctl -u neko-agent-<instance> -n 50    # 使用 systemd 时
+journalctl -u orbit-agent-<instance> -n 50    # 使用 systemd 时
 # 或直接查看日志文件
-cat /var/run/neko-agent/<instance>.log
+cat /var/run/orbit-agent/<instance>.log
 ```
 
 ## Agent 有上报但面板无数据

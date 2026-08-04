@@ -1,6 +1,6 @@
 # Agent 文档
 
-本文档组适用于将 Neko Master 以中心化面板模式部署、并通过远程 Agent 采集数据的场景。
+本文档组适用于将 MihomoOrbit 以中心化面板模式部署、并通过远程 Agent 采集数据的场景。
 
 **中文** | [English](./README.md)
 

@@ -5,6 +5,18 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [0.1.0] - 2026-08-04
+
+Hard fork of neko-master v1.4.5 as **MihomoOrbit**.
+
+- Full identifier rename across npm scope, Go module, agent runtime, browser storage, Docker/CI (see `docs/migration-from-neko.md`).
+- Authentication is now **mandatory**: both bypass branches closed, one-time setup token on first run, 16-char minimum, salted scrypt hashing, rate-limited verification. Legacy sha256 hashes are treated as unconfigured and force a re-setup.
+- Agent keeps the legacy lock path so a leftover `neko-agent` cannot double-count traffic; `install.sh` refuses to install alongside one.
+- `backendCapabilities()` contract added to `@mihomo-orbit/shared` and exposed on the backend list API.
+- Repaired the `check:api-routes` gate (stale path, two uncovered controllers).
+
+Historical entries below are upstream neko-master history.
+
 ## [1.4.0] - 2026-07-19
 
 本版本源自第二次外部深度代码评审，逐条证伪核验后修复其中的高优先级问题：数据正确性、安全默认值、错误可见性，以及一处当前正在发生的安装故障。

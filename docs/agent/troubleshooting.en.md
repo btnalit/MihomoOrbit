@@ -9,7 +9,7 @@ Cause: binary architecture mismatch.
 Check:
 
 ```sh
-file ./neko-agent
+file ./orbit-agent
 uname -m
 ```
 
@@ -66,19 +66,19 @@ If a previous crash left a stale PID file, the new process exits immediately.
 Check:
 
 ```bash
-nekoagent status <instance>
+orbitagent status <instance>
 ```
 
 If it says "stopped" but the agent won't start:
 
 ```bash
 # locate and remove stale PID file
-ls /var/run/neko-agent/
-rm /var/run/neko-agent/<instance>.pid
-nekoagent start <instance>
+ls /var/run/orbit-agent/
+rm /var/run/orbit-agent/<instance>.pid
+orbitagent start <instance>
 ```
 
-## `nekoagent stop` takes a long time
+## `orbitagent stop` takes a long time
 
 This is expected. When stopped, the agent waits up to 10 seconds to flush the final batch
 of traffic data to the panel before exiting. The stop command waits up to 12 seconds before
@@ -87,22 +87,22 @@ sending SIGKILL.
 If you need to force-kill immediately:
 
 ```bash
-pid=$(cat /var/run/neko-agent/<instance>.pid)
+pid=$(cat /var/run/orbit-agent/<instance>.pid)
 kill -9 "$pid"
-rm -f /var/run/neko-agent/<instance>.pid
+rm -f /var/run/orbit-agent/<instance>.pid
 ```
 
 Note: force-killing may lose the last ~30s of traffic data that has not yet been flushed.
 
-## `nekoagent logs` shows no output
+## `orbitagent logs` shows no output
 
 The log file is created after the first successful start. If the agent fails immediately on
 start, check for errors with:
 
 ```bash
-journalctl -u neko-agent-<instance> -n 50    # if using systemd
+journalctl -u orbit-agent-<instance> -n 50    # if using systemd
 # or check the log file directly
-cat /var/run/neko-agent/<instance>.log
+cat /var/run/orbit-agent/<instance>.log
 ```
 
 ## Agent reports but dashboard shows no data

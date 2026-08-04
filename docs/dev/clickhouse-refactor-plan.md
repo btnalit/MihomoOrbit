@@ -272,8 +272,8 @@ Notes:
 
 Default compose now uses one-click interop credentials for ClickHouse:
 
-- `CH_USER=neko`
-- `CH_PASSWORD=neko_master`
+- `CH_USER=orbit`
+- `CH_PASSWORD=mihomo_orbit`
 
 So most Docker users do not need manual credential edits.
 
@@ -282,9 +282,9 @@ Recommended migration sequence:
 1. Start with ClickHouse enabled but keep SQLite reads:
    - `CH_ENABLED=1 CH_WRITE_ENABLED=1 STATS_QUERY_SOURCE=sqlite docker compose --profile clickhouse up -d`
 2. Migrate historical data inside container:
-   - `docker exec -it neko-master node /app/apps/collector/dist/scripts/migrate-sqlite-to-clickhouse.js --sqlite /app/data/stats.db --truncate`
+   - `docker exec -it mihomo-orbit node /app/apps/collector/dist/scripts/migrate-sqlite-to-clickhouse.js --sqlite /app/data/stats.db --truncate`
 3. Verify SQLite vs ClickHouse consistency:
-   - `docker exec -it neko-master node /app/apps/collector/dist/scripts/verify-sqlite-clickhouse.js --sqlite /app/data/stats.db --max-delta 1 --fail-on-delta`
+   - `docker exec -it mihomo-orbit node /app/apps/collector/dist/scripts/verify-sqlite-clickhouse.js --sqlite /app/data/stats.db --max-delta 1 --fail-on-delta`
 4. Switch to routed reads after verification:
    - `STATS_QUERY_SOURCE=auto docker compose up -d`
 

@@ -4,7 +4,7 @@
 
 ## What Agent mode solves
 
-Agent mode allows a centralized Neko Master panel to receive data from remote LAN gateways without direct collector-to-gateway access.
+Agent mode allows a centralized MihomoOrbit panel to receive data from remote LAN gateways without direct collector-to-gateway access.
 
 - Panel service runs in one central location (cloud VPS, NAS, server)
 - Agent runs close to each gateway (OpenWrt, Linux host, router companion box)
@@ -14,7 +14,7 @@ This is ideal for multi-site homes/labs and distributed deployments.
 
 ## Data flow
 
-1. Neko Master backend creates an `agent://<agent-id>` backend with system-managed token
+1. MihomoOrbit backend creates an `agent://<agent-id>` backend with system-managed token
 2. Agent polls Clash/Surge gateway API locally
 3. Agent submits batch deltas to `/api/agent/report`
 4. Agent sends periodic heartbeat to `/api/agent/heartbeat`
@@ -51,13 +51,13 @@ Both types go through the same report pipeline to the panel. Set `--gateway-type
 ## Multi-instance support
 
 A single host can run multiple agent instances simultaneously, each reporting to a different
-backend on the same or different panels. The `nekoagent` CLI manager handles instance
+backend on the same or different panels. The `orbitagent` CLI manager handles instance
 isolation using separate config and PID files per instance name.
 
 Example: one host running both a Clash and a Surge gateway:
 
 ```
-nekoagent list
+orbitagent list
 home-clash   running   backend-id=1  gateway=clash
 home-surge   running   backend-id=2  gateway=surge
 ```
@@ -65,5 +65,5 @@ home-surge   running   backend-id=2  gateway=surge
 ## Process isolation (PID lock)
 
 Each agent instance holds a PID lock to prevent duplicate processes for the same backend.
-If an instance crashes and leaves a stale PID file, `nekoagent start` will report it as
+If an instance crashes and leaves a stale PID file, `orbitagent start` will report it as
 already running. See troubleshooting guide for how to resolve this.

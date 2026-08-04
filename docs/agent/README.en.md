@@ -2,7 +2,7 @@
 
 [中文](./README.zh.md) | **English**
 
-Use this guide set when deploying Neko Master in a centralized mode with remote agents.
+Use this guide set when deploying MihomoOrbit in a centralized mode with remote agents.
 
 - [`overview.en.md`](./overview.en.md): architecture and mode comparison
 - [`quick-start.en.md`](./quick-start.en.md): minimal setup from UI to running agent

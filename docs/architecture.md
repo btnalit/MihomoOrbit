@@ -1,4 +1,4 @@
-# Neko Master 业务架构图
+# MihomoOrbit 业务架构图
 
 ## 整体架构概览
 
@@ -236,20 +236,20 @@
 
 ## Agent 模式架构
 
-Agent 模式允许一个中心化的 Neko Master 面板接收来自远程 LAN 网关的数据，无需 collector 直连网关。
+Agent 模式允许一个中心化的 MihomoOrbit 面板接收来自远程 LAN 网关的数据，无需 collector 直连网关。
 
 ### 组件说明
 
 | 组件 | 说明 |
 |---|---|
-| `neko-agent` | 数据采集守护进程，运行于网关旁边，周期性拉取并上报到面板 |
-| `nekoagent` | CLI 管理器（Shell 脚本），管理 `neko-agent` 实例的生命周期 |
+| `orbit-agent` | 数据采集守护进程，运行于网关旁边，周期性拉取并上报到面板 |
+| `orbitagent` | CLI 管理器（Shell 脚本），管理 `orbit-agent` 实例的生命周期 |
 
 ### 架构图
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    中心面板 (Neko Master)                        │
+│                    中心面板 (MihomoOrbit)                        │
 │                                                                   │
 │  Fastify API Server                                               │
 │  ├─ POST /api/agent/report       ← 接收批量流量增量               │
@@ -265,11 +265,11 @@ Agent 模式允许一个中心化的 Neko Master 面板接收来自远程 LAN �
 ┌─────────────────────────────────────────────────────────────────┐
 │                   网关旁边的主机 (Remote Host)                    │
 │                                                                   │
-│  nekoagent（CLI 管理器）                                          │
-│  ├─ /etc/neko-agent/<instance>.env  (配置文件)                    │
-│  └─ /var/run/neko-agent/<instance>.pid (PID 文件)                 │
+│  orbitagent（CLI 管理器）                                          │
+│  ├─ /etc/orbit-agent/<instance>.env  (配置文件)                    │
+│  └─ /var/run/orbit-agent/<instance>.pid (PID 文件)                 │
 │                                                                   │
-│  neko-agent（守护进程）                                           │
+│  orbit-agent（守护进程）                                           │
 │  │                                                                │
 │  ├── 1. 拉取网关数据                                              │
 │  │      ├─ Clash/Mihomo: WebSocket /connections (实时推送)        │
@@ -678,7 +678,7 @@ Dashboard 布局 (Tailwind CSS)
 ## 项目目录结构
 
 ```
-neko-master/
+mihomo-orbit/
 ├── apps/
 │   ├── web/                          # Next.js 前端
 │   │   ├── app/                      # App Router
@@ -760,7 +760,7 @@ neko-master/
 │       ├── internal/agent/           # 核心逻辑
 │       │   └── runner.go             # 采集循环、上报、心跳、配置同步
 │       ├── install.sh                # Agent 一键安装脚本
-│       └── nekoagent                 # CLI 管理器（Shell 脚本）
+│       └── orbitagent                 # CLI 管理器（Shell 脚本）
 │
 └── docker-compose.yml
 ```

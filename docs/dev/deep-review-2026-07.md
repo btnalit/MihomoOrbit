@@ -1,6 +1,6 @@
 # 深度 Code Review 报告（2026-07-04）
 
-> 范围：架构设计 / 探针（neko-agent + collector 对接）/ 数据库 / 性能 / 前端代码质量 / 交互与暗色模式，六个维度并行深查后交叉去重汇总。
+> 范围：架构设计 / 探针（orbit-agent + collector 对接）/ 数据库 / 性能 / 前端代码质量 / 交互与暗色模式，六个维度并行深查后交叉去重汇总。
 > 所有 P0 结论已抽查代码核实；数据库表达式索引结论经 `EXPLAIN QUERY PLAN` 实测；Go 侧 `go vet / build / test` 全绿。
 
 ## P0（正在造成错误结果或可致服务/探针瘫痪）
@@ -16,7 +16,7 @@
 - 修法：把存储拓扑显式建模为枚举（sqlite-only / dual-write / ch-primary），启动时校验并同时约束读写；回退结果标记 `degraded`；启用 CH 写但读源为 sqlite 时启动告警。
 
 ### P0-3 OpenWrt 探针"锁误判 → exit 0 → procd 重试耗尽"可永久静默下线【探针】
-- `runner.go:183-187` 拿锁失败仅 return（exit 0）；`nekoagent:304` procd respawn 5 次后放弃；`runner.go:166-177` 锁检查只看 comm 含 "neko-agent"，崩溃后 PID 被其他 backend 的 agent 实例复用即永久误判。另：systemd 单元 `PrivateTmp=true` 使 /tmp 锁在 systemd 场景完全失效。
+- `runner.go:183-187` 拿锁失败仅 return（exit 0）；`orbitagent:304` procd respawn 5 次后放弃；`runner.go:166-177` 锁检查只看 comm 含 "orbit-agent"，崩溃后 PID 被其他 backend 的 agent 实例复用即永久误判。另：systemd 单元 `PrivateTmp=true` 使 /tmp 锁在 systemd 场景完全失效。
 - 修法：改用 flock 咨询锁放 STATE_DIR（进程死亡自动释放）；拿锁失败 `os.Exit(1)`；OpenWrt respawn 改无限重试。
 
 ### P0-4 `getAllRuleChainFlows` O(R×N) 合并 + 全表无 LIMIT，可秒级卡死事件循环【性能】
@@ -42,11 +42,11 @@
 10. **30s 批量 flush 同步阻塞事件循环 100-500ms** → 分批 + `setImmediate` 让出；顺手把每次 flush 重新 prepare 的 ~17 条语句改实例级缓存（对照 singleStmts 模式）。
 
 ### 探针（打包进下个 agent release）
-11. **nekoagent 下载无 timeout/retry**（`nekoagent:82-95,489-493`；install.sh 已修但 :110 也漏）——memory 遗留项确认仍在。
-12. **cmd_upgrade `cp` 原地覆盖运行中脚本**（`nekoagent:633-641`）：实体拷贝安装的老用户 upgrade 可能跑飞 → cp 到 .new 后 mv 原子替换——遗留项确认。
+11. **orbitagent 下载无 timeout/retry**（`orbitagent:82-95,489-493`；install.sh 已修但 :110 也漏）——memory 遗留项确认仍在。
+12. **cmd_upgrade `cp` 原地覆盖运行中脚本**（`orbitagent:633-641`）：实体拷贝安装的老用户 upgrade 可能跑飞 → cp 到 .new 后 mv 原子替换——遗留项确认。
 13. **绑定保护超时 10s < 心跳 30s**（`app.ts:545` vs `config.go:55`）：空闲期 20s 窗口可被抢绑成 ping-pong → 超时改 心跳×2+余量；config/policy-state 同步也刷新 lastSeen。
-14. **tmp 目录 trap 被覆盖 → OpenWrt tmpfs（RAM）泄漏**（`nekoagent:567/619` 两个 EXIT trap 互相覆盖）；跨文件系统 mv 的 ETXTBSY 风险（`nekoagent:608`）。
-15. **systemd `StartLimitIntervalSec` 在 [Service] 段无效**（`nekoagent:271-277`，应在 [Unit]）——遗留项确认。
+14. **tmp 目录 trap 被覆盖 → OpenWrt tmpfs（RAM）泄漏**（`orbitagent:567/619` 两个 EXIT trap 互相覆盖）；跨文件系统 mv 的 ETXTBSY 风险（`orbitagent:608`）。
+15. **systemd `StartLimitIntervalSec` 在 [Service] 段无效**（`orbitagent:271-277`，应在 [Unit]）——遗留项确认。
 16. **shutdown drain 与 report loop 并发 flushOnce，`setRetryBatch` 覆盖丢批**（`runner.go:607-612`；`requeueFront` 是现成死代码，接线即可）。
 
 ### 前端

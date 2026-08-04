@@ -1,6 +1,6 @@
 # Neko Agent (Go)
 
-A standalone executable agent for LAN data collection and reporting to Neko Master.
+A standalone executable agent for LAN data collection and reporting to MihomoOrbit.
 
 ## Architecture
 
@@ -18,13 +18,13 @@ The agent follows a layered Go structure so that `main` stays thin and business 
 cd apps/agent
 
 # local build
-GOCACHE=/tmp/go-build go build -o neko-agent .
+GOCACHE=/tmp/go-build go build -o orbit-agent .
 
 # linux amd64
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOCACHE=/tmp/go-build go build -trimpath -ldflags "-s -w" -o dist/neko-agent-linux-amd64 .
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOCACHE=/tmp/go-build go build -trimpath -ldflags "-s -w" -o dist/orbit-agent-linux-amd64 .
 
 # linux arm64
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOCACHE=/tmp/go-build go build -trimpath -ldflags "-s -w" -o dist/neko-agent-linux-arm64 .
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOCACHE=/tmp/go-build go build -trimpath -ldflags "-s -w" -o dist/orbit-agent-linux-arm64 .
 ```
 
 ## Run
@@ -32,8 +32,8 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOCACHE=/tmp/go-build go build -trimpath -
 ### Clash
 
 ```bash
-./neko-agent \
-  --server-url https://your-neko.example.com \
+./orbit-agent \
+  --server-url https://your-orbit.example.com \
   --backend-id 1 \
   --backend-token <backend-token> \
   --gateway-type clash \
@@ -44,51 +44,51 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOCACHE=/tmp/go-build go build -trimpath -
 ### One-line Install Script (`curl | sh`)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/foru17/neko-master/main/apps/agent/install.sh \
-  | env NEKO_SERVER="https://your-neko.example.com" \
-        NEKO_BACKEND_ID="1" \
-        NEKO_BACKEND_TOKEN="<backend-token>" \
-        NEKO_GATEWAY_TYPE="clash" \
-        NEKO_GATEWAY_URL="http://192.168.1.1:9090" \
+curl -fsSL https://raw.githubusercontent.com/btnalit/MihomoOrbit/main/apps/agent/install.sh \
+  | env ORBIT_SERVER="https://your-orbit.example.com" \
+        ORBIT_BACKEND_ID="1" \
+        ORBIT_BACKEND_TOKEN="<backend-token>" \
+        ORBIT_GATEWAY_TYPE="clash" \
+        ORBIT_GATEWAY_URL="http://192.168.1.1:9090" \
         sh
 ```
 
-Installer also provides `nekoagent` manager for friendly operations:
+Installer also provides `orbitagent` manager for friendly operations:
 
 ```bash
-nekoagent status backend-1
-nekoagent logs backend-1
-nekoagent restart backend-1
-nekoagent upgrade
-nekoagent upgrade agent-v1.3.2
-nekoagent remove backend-1
-nekoagent uninstall
+orbitagent status backend-1
+orbitagent logs backend-1
+orbitagent restart backend-1
+orbitagent upgrade
+orbitagent upgrade agent-v1.3.2
+orbitagent remove backend-1
+orbitagent uninstall
 ```
 
 Pin release version (recommended for production):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/foru17/neko-master/main/apps/agent/install.sh \
-  | env NEKO_AGENT_VERSION="agent-v0.2.0" \
-        NEKO_SERVER="https://your-neko.example.com" \
-        NEKO_BACKEND_ID="1" \
-        NEKO_BACKEND_TOKEN="<backend-token>" \
-        NEKO_GATEWAY_TYPE="clash" \
-        NEKO_GATEWAY_URL="http://192.168.1.1:9090" \
+curl -fsSL https://raw.githubusercontent.com/btnalit/MihomoOrbit/main/apps/agent/install.sh \
+  | env ORBIT_AGENT_VERSION="agent-v0.2.0" \
+        ORBIT_SERVER="https://your-orbit.example.com" \
+        ORBIT_BACKEND_ID="1" \
+        ORBIT_BACKEND_TOKEN="<backend-token>" \
+        ORBIT_GATEWAY_TYPE="clash" \
+        ORBIT_GATEWAY_URL="http://192.168.1.1:9090" \
         sh
 ```
 
 Quiet mode (no runtime logs):
 
 ```bash
-./neko-agent ... --log=false
+./orbit-agent ... --log=false
 ```
 
 ### Surge
 
 ```bash
-./neko-agent \
-  --server-url https://your-neko.example.com \
+./orbit-agent \
+  --server-url https://your-orbit.example.com \
   --backend-id 2 \
   --backend-token <backend-token> \
   --gateway-type surge \
@@ -110,20 +110,20 @@ Quiet mode (no runtime logs):
 
 Install script env (optional):
 
-- `NEKO_GATEWAY_TOKEN`: gateway token
-- `NEKO_AUTO_START`: `true|false` (default `true`, starts now and registers boot autostart when supported)
-- `NEKO_LOG`: `true|false` (default `true`)
-- `NEKO_INSTALL_DIR`: install path (default `$HOME/.local/bin`)
-- `NEKO_AGENT_VERSION`: release tag, default `latest` (for tagged version use `agent-vX.Y.Z`)
-- `NEKO_PACKAGE_URL`: direct package URL override (tar.gz)
-- `NEKO_CHECKSUMS_URL`: checksums URL override
+- `ORBIT_GATEWAY_TOKEN`: gateway token
+- `ORBIT_AUTO_START`: `true|false` (default `true`, starts now and registers boot autostart when supported)
+- `ORBIT_LOG`: `true|false` (default `true`)
+- `ORBIT_INSTALL_DIR`: install path (default `$HOME/.local/bin`)
+- `ORBIT_AGENT_VERSION`: release tag, default `latest` (for tagged version use `agent-vX.Y.Z`)
+- `ORBIT_PACKAGE_URL`: direct package URL override (tar.gz)
+- `ORBIT_CHECKSUMS_URL`: checksums URL override
 
 ## Release artifact naming
 
 Per release tag (`agent-v*`), CI publishes:
 
-- `neko-agent_<tag>_<os>_<arch>.tar.gz` (versioned)
-- `neko-agent_<os>_<arch>.tar.gz` (latest alias)
+- `orbit-agent_<tag>_<os>_<arch>.tar.gz` (versioned)
+- `orbit-agent_<os>_<arch>.tar.gz` (latest alias)
 - `checksums.txt`
 
-Binary name inside tarball is always `neko-agent`.
+Binary name inside tarball is always `orbit-agent`.

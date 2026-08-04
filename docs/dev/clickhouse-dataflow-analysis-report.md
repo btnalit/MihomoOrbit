@@ -216,7 +216,7 @@ tx3(); // Device tables (条件执行)
 **Buffer 表配置** (关键IO优化):
 ```sql
 ENGINE = Buffer(
-  'neko_master', 'traffic_agg', 4,  -- 4层并发
+  'mihomo_orbit', 'traffic_agg', 4,  -- 4层并发
   10, 60,    -- min/max 时间: 10-60秒
   100, 10000, -- min/max 行数: 100-10000
   10000, 1000000 -- min/max 字节: 10KB-1MB

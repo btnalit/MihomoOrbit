@@ -11,8 +11,8 @@
 
 For each target OS/arch, workflow publishes two tarballs:
 
-- Versioned: `neko-agent_<tag>_<os>_<arch>.tar.gz`
-- Latest alias: `neko-agent_<os>_<arch>.tar.gz`
+- Versioned: `orbit-agent_<tag>_<os>_<arch>.tar.gz`
+- Latest alias: `orbit-agent_<os>_<arch>.tar.gz`
 
 Also publishes:
 
@@ -54,6 +54,6 @@ Numbers may skip when no agent release is needed.
 
 ## Naming conventions
 
-- Binary inside tarball is always `neko-agent`
+- Binary inside tarball is always `orbit-agent`
 - Tarball name carries platform identity for user download and script detection
 - Linux variants explicitly distinguish `amd64/arm64/armv7/mips/mipsle`

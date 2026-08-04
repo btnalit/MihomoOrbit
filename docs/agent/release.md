@@ -11,8 +11,8 @@
 
 每个目标 OS/架构均发布两个压缩包：
 
-- 带版本号：`neko-agent_<tag>_<os>_<arch>.tar.gz`
-- latest 别名：`neko-agent_<os>_<arch>.tar.gz`
+- 带版本号：`orbit-agent_<tag>_<os>_<arch>.tar.gz`
+- latest 别名：`orbit-agent_<os>_<arch>.tar.gz`
 
 同时发布：
 
@@ -54,6 +54,6 @@ Collector 在心跳/上报时验证 Agent 兼容性：
 
 ## 命名规范
 
-- 压缩包内二进制文件始终命名为 `neko-agent`
+- 压缩包内二进制文件始终命名为 `orbit-agent`
 - 压缩包名称包含平台信息，便于用户下载和脚本识别
 - Linux 变体明确区分 `amd64/arm64/armv7/mips/mipsle`

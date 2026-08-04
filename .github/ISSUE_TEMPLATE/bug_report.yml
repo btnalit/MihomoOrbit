@@ -35,8 +35,8 @@ body:
     id: version
     attributes:
       label: Version / 版本
-      description: "Image tag or commit hash, e.g. `foru17/neko-master:latest` or git SHA"
-      placeholder: "foru17/neko-master:latest"
+      description: "Image tag or commit hash, e.g. `btnalit/MihomoOrbit:latest` or git SHA"
+      placeholder: "btnalit/MihomoOrbit:latest"
     validations:
       required: true
 

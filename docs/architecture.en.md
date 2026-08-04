@@ -1,4 +1,4 @@
-# Neko Master Architecture
+# MihomoOrbit Architecture
 
 ## System Overview
 
@@ -235,21 +235,21 @@
 
 ## Agent Mode Architecture
 
-Agent mode allows a centralized Neko Master panel to receive data from remote LAN gateways
+Agent mode allows a centralized MihomoOrbit panel to receive data from remote LAN gateways
 without requiring direct collector-to-gateway network access.
 
 ### Components
 
 | Component | Description |
 |---|---|
-| `neko-agent` | Data collection daemon — runs near the gateway, pulls data and reports to panel |
-| `nekoagent` | CLI manager (shell script) — manages `neko-agent` instance lifecycle |
+| `orbit-agent` | Data collection daemon — runs near the gateway, pulls data and reports to panel |
+| `orbitagent` | CLI manager (shell script) — manages `orbit-agent` instance lifecycle |
 
 ### Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Central Panel (Neko Master)                   │
+│                    Central Panel (MihomoOrbit)                   │
 │                                                                   │
 │  Fastify API Server                                               │
 │  ├─ POST /api/agent/report       ← receive batch traffic deltas  │
@@ -265,11 +265,11 @@ without requiring direct collector-to-gateway network access.
 ┌─────────────────────────────────────────────────────────────────┐
 │                   Remote Host (near gateway)                      │
 │                                                                   │
-│  nekoagent (CLI manager)                                          │
-│  ├─ /etc/neko-agent/<instance>.env  (config file)                │
-│  └─ /var/run/neko-agent/<instance>.pid (PID file)                 │
+│  orbitagent (CLI manager)                                          │
+│  ├─ /etc/orbit-agent/<instance>.env  (config file)                │
+│  └─ /var/run/orbit-agent/<instance>.pid (PID file)                 │
 │                                                                   │
-│  neko-agent (daemon)                                              │
+│  orbit-agent (daemon)                                              │
 │  │                                                                │
 │  ├── 1. Pull gateway data                                         │
 │  │      ├─ Clash/Mihomo: WebSocket /connections (real-time push)  │
@@ -680,7 +680,7 @@ Container Queries (@container)
 ## Project Directory Structure
 
 ```
-neko-master/
+mihomo-orbit/
 ├── apps/
 │   ├── web/                          # Next.js Frontend
 │   │   ├── app/                      # App Router
@@ -762,7 +762,7 @@ neko-master/
 │       ├── internal/agent/           # Core logic
 │       │   └── runner.go             # Collection loop, report, heartbeat, config sync
 │       ├── install.sh                # Agent one-click install script
-│       └── nekoagent                 # CLI manager (shell script)
+│       └── orbitagent                 # CLI manager (shell script)
 │
 └── docker-compose.yml
 ```

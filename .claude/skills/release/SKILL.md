@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut and publish a Neko Master release — main product (Docker, v* tags) or Go agent (agent-v* tags). Use when bumping versions, writing CHANGELOG entries, tagging, or verifying CI artifacts.
+description: Cut and publish a MihomoOrbit release — main product (Docker, v* tags) or Go agent (agent-v* tags). Use when bumping versions, writing CHANGELOG entries, tagging, or verifying CI artifacts.
 ---
 
 # Release Process
@@ -44,7 +44,7 @@ gh release create vX.Y.Z --title "vX.Y.Z" --notes "<highlights + upgrade notes>"
 See `docs/agent/release.en.md` for full details. Short form:
 
 ```bash
-cd apps/agent && go vet ./... && go test ./... && sh -n nekoagent && sh -n install.sh
+cd apps/agent && go vet ./... && go test ./... && sh -n orbitagent && sh -n install.sh
 git tag agent-vX.Y.Z && git push origin agent-vX.Y.Z
 ```
 

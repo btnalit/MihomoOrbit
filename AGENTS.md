@@ -58,7 +58,7 @@ apps/web/
   app/[locale]/dashboard/                # main dashboard route
 apps/agent/
   internal/agent/runner.go               # main loop, retry/idempotency
-  nekoagent                              # POSIX-sh service manager (install/upgrade/systemd/procd)
+  orbitagent                              # POSIX-sh service manager (install/upgrade/systemd/procd)
 docs/
   architecture(.en).md                   # system architecture
   agent/                                 # probe docs (user-facing)

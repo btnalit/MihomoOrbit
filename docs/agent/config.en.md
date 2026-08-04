@@ -27,7 +27,7 @@
 ## Example: Clash
 
 ```bash
-./neko-agent \
+./orbit-agent \
   --server-url 'http://10.0.0.2:3000' \
   --backend-id 8 \
   --backend-token 'ag_xxx' \
@@ -39,7 +39,7 @@
 ## Example: Surge
 
 ```bash
-./neko-agent \
+./orbit-agent \
   --server-url 'http://10.0.0.2:3000' \
   --backend-id 9 \
   --backend-token 'ag_xxx' \

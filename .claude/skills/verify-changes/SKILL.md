@@ -57,7 +57,7 @@ pnpm --filter @mihomo-orbit/web exec tsc --noEmit
 ```bash
 cd apps/agent
 go vet ./... && go build ./... && go test ./...
-sh -n nekoagent && sh -n install.sh
+sh -n orbitagent && sh -n install.sh
 ```
 
 ## Checklist before commit

@@ -1,4 +1,4 @@
-# Contributing to Neko Master
+# Contributing to MihomoOrbit
 
 **English** | [中文](./CONTRIBUTING.zh.md)
 

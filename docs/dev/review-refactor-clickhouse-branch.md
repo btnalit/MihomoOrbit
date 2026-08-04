@@ -57,12 +57,12 @@
 
 **修复方案**：在 `ClickHouseWriter` 中追踪运行时连续失败次数，暴露 `isHealthy()` 方法（`isEnabled() && consecutiveFailures < threshold`），`batch-buffer.ts` 改为调用 `isHealthy()`。
 
-#### P0-2：`nekoagent stop` 只等 1 秒，Agent 优雅停机被截断
+#### P0-2：`orbitagent stop` 只等 1 秒，Agent 优雅停机被截断
 
-- **文件**：`apps/agent/nekoagent:326-330`
+- **文件**：`apps/agent/orbitagent:326-330`
 - **关联**：`apps/agent/internal/agent/runner.go:173-177`（优雅停机有 10 秒 timeout）
 
-`nekoagent stop` 发 SIGTERM 后 `sleep 1` 即 SIGKILL。Agent 的 `flushOnce` 需要最多 10 秒完成最后一批数据上报，1 秒后被强杀导致丢失最后一批流量数据。
+`orbitagent stop` 发 SIGTERM 后 `sleep 1` 即 SIGKILL。Agent 的 `flushOnce` 需要最多 10 秒完成最后一批数据上报，1 秒后被强杀导致丢失最后一批流量数据。
 
 **修复方案**：`sleep 1` 改为 `sleep 12`（10 秒超时 + 2 秒余量）。
 
@@ -111,7 +111,7 @@
 - **文件**：`apps/agent/install.sh:332-333`
 
 ```sh
-$(if [ -n "$NEKO_GATEWAY_TOKEN" ]; then echo "--gateway-token $NEKO_GATEWAY_TOKEN"; fi) \
+$(if [ -n "$ORBIT_GATEWAY_TOKEN" ]; then echo "--gateway-token $ORBIT_GATEWAY_TOKEN"; fi) \
 ```
 
 Token 含空格时（虽然实际 base64url 不含）参数会被错误分割。同文件其他地方已正确使用 `set --` 模式。
@@ -132,7 +132,7 @@ fi
 
 #### P2-3：`cmd_update` 下载远程脚本无 hash 验证
 
-- **文件**：`apps/agent/nekoagent:389-412`
+- **文件**：`apps/agent/orbitagent:389-412`
 
 更新时下载 `main` 分支的 install.sh 并直接执行，未做签名验证。
 

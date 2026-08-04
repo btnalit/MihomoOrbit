@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Usage Questions / 使用问题
-    url: https://github.com/foru17/neko-master/blob/main/README.md
+    url: https://github.com/btnalit/MihomoOrbit/blob/main/README.md
     about: Please check deployment and FAQ sections before opening an issue.
   - name: Architecture Docs / 架构文档
-    url: https://github.com/foru17/neko-master/blob/main/docs/architecture.en.md
+    url: https://github.com/btnalit/MihomoOrbit/blob/main/docs/architecture.en.md
     about: Read the English architecture guide for system design details.

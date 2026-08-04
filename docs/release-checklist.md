@@ -1,6 +1,6 @@
 # Release Checklist
 
-Use this checklist before shipping a new Neko Master release that includes Agent mode.
+Use this checklist before shipping a new MihomoOrbit release that includes Agent mode.
 
 ## Release lines
 
@@ -53,8 +53,8 @@ Expected result:
 
 - `Agent Release` workflow runs
 - Release assets uploaded:
-  - `neko-agent_<tag>_<os>_<arch>.tar.gz`
-  - `neko-agent_<os>_<arch>.tar.gz`
+  - `orbit-agent_<tag>_<os>_<arch>.tar.gz`
+  - `orbit-agent_<os>_<arch>.tar.gz`
   - `checksums.txt`
 
 ## Post-release checks
@@ -63,12 +63,12 @@ Expected result:
 2. Validate one Linux host install using script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/foru17/neko-master/main/apps/agent/install.sh \
-  | env NEKO_SERVER='http://<panel>:3000' \
-        NEKO_BACKEND_ID='<id>' \
-        NEKO_BACKEND_TOKEN='<token>' \
-        NEKO_GATEWAY_TYPE='clash' \
-        NEKO_GATEWAY_URL='http://127.0.0.1:9090' \
+curl -fsSL https://raw.githubusercontent.com/btnalit/MihomoOrbit/main/apps/agent/install.sh \
+  | env ORBIT_SERVER='http://<panel>:3000' \
+        ORBIT_BACKEND_ID='<id>' \
+        ORBIT_BACKEND_TOKEN='<token>' \
+        ORBIT_GATEWAY_TYPE='clash' \
+        ORBIT_GATEWAY_URL='http://127.0.0.1:9090' \
         sh
 ```
 
