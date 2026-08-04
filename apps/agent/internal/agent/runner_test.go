@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -132,5 +135,67 @@ func TestIngestSnapshotsFirstTrafficAfterZeroCarriesConnection(t *testing.T) {
 	}
 	if second[0].Connections != 1 {
 		t.Fatalf("expected connections 1 for first non-zero traffic, got %d", second[0].Connections)
+	}
+}
+
+// 双锁:改名后必须同时占用新旧两个锁路径。锁文件是新旧 agent 二进制之间
+// 唯一的互斥点——默认 agentId 由 backendToken 哈希派生,与二进制名无关,
+// 服务端无法区分二者,残留的 neko-agent 会与本 agent 同时上报导致流量翻倍。
+func TestLockPathsCoverLegacyAndNew(t *testing.T) {
+	r := NewRunner(config.Config{BackendID: 42})
+	got := r.lockPaths()
+	want := []string{
+		filepath.Join(os.TempDir(), "orbit-agent-backend-42.lock"),
+		filepath.Join(os.TempDir(), "neko-agent-backend-42.lock"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("lockPaths() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("lockPaths()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestAcquireLockFailsWhenLegacyLockHeld(t *testing.T) {
+	// 模拟同机残留的上游 neko-agent 持有旧锁
+	legacy := filepath.Join(os.TempDir(), "neko-agent-backend-4242.lock")
+	if err := os.WriteFile(legacy, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(legacy)
+
+	r := NewRunner(config.Config{BackendID: 4242})
+	if err := r.acquireLock(); err == nil {
+		r.releaseLock()
+		t.Fatal("acquireLock() succeeded while a legacy neko-agent lock was held; duplicate reporting would double-count traffic")
+	}
+
+	// 回滚校验:旧锁获取失败时,先拿到的新锁必须已释放,不能留下孤儿锁文件
+	orbit := filepath.Join(os.TempDir(), "orbit-agent-backend-4242.lock")
+	if _, err := os.Stat(orbit); err == nil {
+		os.Remove(orbit)
+		t.Fatal("acquireLock() left the orbit lock behind after failing on the legacy lock")
+	}
+}
+
+func TestAcquireLockCreatesBothLocksThenReleasesThem(t *testing.T) {
+	r := NewRunner(config.Config{BackendID: 4243})
+	if err := r.acquireLock(); err != nil {
+		t.Fatalf("acquireLock() = %v, want nil", err)
+	}
+	for _, p := range r.lockPaths() {
+		if _, err := os.Stat(p); err != nil {
+			r.releaseLock()
+			t.Fatalf("lock file %q was not created: %v", p, err)
+		}
+	}
+	r.releaseLock()
+	for _, p := range r.lockPaths() {
+		if _, err := os.Stat(p); err == nil {
+			os.Remove(p)
+			t.Fatalf("lock file %q survived releaseLock()", p)
+		}
 	}
 }

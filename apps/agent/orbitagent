@@ -1,13 +1,13 @@
 #!/usr/bin/env sh
 set -eu
 
-PROG="nekoagent"
+PROG="orbitagent"
 INSTALL_DIR_DEFAULT="${HOME}/.local/bin"
-INSTALL_DIR="${NEKO_INSTALL_DIR:-$INSTALL_DIR_DEFAULT}"
-AGENT_BIN="${NEKO_AGENT_BIN:-$INSTALL_DIR/neko-agent}"
-CONFIG_DIR="${NEKO_AGENT_CONFIG_DIR:-/etc/neko-agent}"
-STATE_DIR="${NEKO_AGENT_STATE_DIR:-/var/run/neko-agent}"
-AGENT_REPO="${NEKO_AGENT_REPO:-foru17/neko-master}"
+INSTALL_DIR="${ORBIT_INSTALL_DIR:-$INSTALL_DIR_DEFAULT}"
+AGENT_BIN="${ORBIT_AGENT_BIN:-$INSTALL_DIR/orbit-agent}"
+CONFIG_DIR="${ORBIT_AGENT_CONFIG_DIR:-/etc/orbit-agent}"
+STATE_DIR="${ORBIT_AGENT_STATE_DIR:-/var/run/orbit-agent}"
+AGENT_REPO="${ORBIT_AGENT_REPO:-btnalit/MihomoOrbit}"
 VERSION="0.2.4"
 
 log() {
@@ -51,7 +51,7 @@ is_running() {
         return $?
         ;;
       launchd)
-        label="io.neko-master.agent.${name}"
+        label="io.mihomo-orbit.agent.${name}"
         if launchctl list 2>/dev/null | awk -v lbl="$label" 'NR>1 && $3==lbl {found=1} END {exit !found}'; then
           return 0
         fi
@@ -165,7 +165,7 @@ detect_service_manager() {
 
 service_name_for_instance() {
   name="$1"
-  printf 'neko-agent-%s\n' "$name"
+  printf 'orbit-agent-%s\n' "$name"
 }
 
 # Check if instance is managed by a service manager (systemd/launchd/openwrt)
@@ -179,7 +179,7 @@ is_service_managed() {
       systemctl is-enabled "$service" >/dev/null 2>&1 && return 0
       ;;
     launchd)
-      label="io.neko-master.agent.${name}"
+      label="io.mihomo-orbit.agent.${name}"
       plist_path="${HOME}/Library/LaunchAgents/${label}.plist"
       [ -f "$plist_path" ] && return 0
       ;;
@@ -220,36 +220,36 @@ AGENT_BIN='$AGENT_BIN'
 CONF='$cf'
 
 [ -f "\$CONF" ] || {
-  echo "[nekoagent] error: config not found: \$CONF" >&2
+  echo "[orbitagent] error: config not found: \$CONF" >&2
   exit 1
 }
 
 . "\$CONF"
 
-: "\${NEKO_SERVER:?missing NEKO_SERVER}"
-: "\${NEKO_BACKEND_ID:?missing NEKO_BACKEND_ID}"
-: "\${NEKO_BACKEND_TOKEN:?missing NEKO_BACKEND_TOKEN}"
-: "\${NEKO_GATEWAY_TYPE:?missing NEKO_GATEWAY_TYPE}"
-: "\${NEKO_GATEWAY_URL:?missing NEKO_GATEWAY_URL}"
+: "\${ORBIT_SERVER:?missing ORBIT_SERVER}"
+: "\${ORBIT_BACKEND_ID:?missing ORBIT_BACKEND_ID}"
+: "\${ORBIT_BACKEND_TOKEN:?missing ORBIT_BACKEND_TOKEN}"
+: "\${ORBIT_GATEWAY_TYPE:?missing ORBIT_GATEWAY_TYPE}"
+: "\${ORBIT_GATEWAY_URL:?missing ORBIT_GATEWAY_URL}"
 
 set -- "\$AGENT_BIN" \
-  --server-url "\$NEKO_SERVER" \
-  --backend-id "\$NEKO_BACKEND_ID" \
-  --backend-token "\$NEKO_BACKEND_TOKEN" \
-  --gateway-type "\$NEKO_GATEWAY_TYPE" \
-  --gateway-url "\$NEKO_GATEWAY_URL"
+  --server-url "\$ORBIT_SERVER" \
+  --backend-id "\$ORBIT_BACKEND_ID" \
+  --backend-token "\$ORBIT_BACKEND_TOKEN" \
+  --gateway-type "\$ORBIT_GATEWAY_TYPE" \
+  --gateway-url "\$ORBIT_GATEWAY_URL"
 
-[ -n "\${NEKO_GATEWAY_TOKEN:-}" ] && set -- "\$@" --gateway-token "\$NEKO_GATEWAY_TOKEN"
-[ -n "\${NEKO_AGENT_ID:-}" ] && set -- "\$@" --agent-id "\$NEKO_AGENT_ID"
-[ -n "\${NEKO_REPORT_INTERVAL:-}" ] && set -- "\$@" --report-interval "\$NEKO_REPORT_INTERVAL"
-[ -n "\${NEKO_HEARTBEAT_INTERVAL:-}" ] && set -- "\$@" --heartbeat-interval "\$NEKO_HEARTBEAT_INTERVAL"
-[ -n "\${NEKO_GATEWAY_POLL_INTERVAL:-}" ] && set -- "\$@" --gateway-poll-interval "\$NEKO_GATEWAY_POLL_INTERVAL"
-[ -n "\${NEKO_REQUEST_TIMEOUT:-}" ] && set -- "\$@" --request-timeout "\$NEKO_REQUEST_TIMEOUT"
-[ -n "\${NEKO_REPORT_BATCH_SIZE:-}" ] && set -- "\$@" --report-batch-size "\$NEKO_REPORT_BATCH_SIZE"
-[ -n "\${NEKO_MAX_PENDING_UPDATES:-}" ] && set -- "\$@" --max-pending-updates "\$NEKO_MAX_PENDING_UPDATES"
-[ -n "\${NEKO_STALE_FLOW_TIMEOUT:-}" ] && set -- "\$@" --stale-flow-timeout "\$NEKO_STALE_FLOW_TIMEOUT"
+[ -n "\${ORBIT_GATEWAY_TOKEN:-}" ] && set -- "\$@" --gateway-token "\$ORBIT_GATEWAY_TOKEN"
+[ -n "\${ORBIT_AGENT_ID:-}" ] && set -- "\$@" --agent-id "\$ORBIT_AGENT_ID"
+[ -n "\${ORBIT_REPORT_INTERVAL:-}" ] && set -- "\$@" --report-interval "\$ORBIT_REPORT_INTERVAL"
+[ -n "\${ORBIT_HEARTBEAT_INTERVAL:-}" ] && set -- "\$@" --heartbeat-interval "\$ORBIT_HEARTBEAT_INTERVAL"
+[ -n "\${ORBIT_GATEWAY_POLL_INTERVAL:-}" ] && set -- "\$@" --gateway-poll-interval "\$ORBIT_GATEWAY_POLL_INTERVAL"
+[ -n "\${ORBIT_REQUEST_TIMEOUT:-}" ] && set -- "\$@" --request-timeout "\$ORBIT_REQUEST_TIMEOUT"
+[ -n "\${ORBIT_REPORT_BATCH_SIZE:-}" ] && set -- "\$@" --report-batch-size "\$ORBIT_REPORT_BATCH_SIZE"
+[ -n "\${ORBIT_MAX_PENDING_UPDATES:-}" ] && set -- "\$@" --max-pending-updates "\$ORBIT_MAX_PENDING_UPDATES"
+[ -n "\${ORBIT_STALE_FLOW_TIMEOUT:-}" ] && set -- "\$@" --stale-flow-timeout "\$ORBIT_STALE_FLOW_TIMEOUT"
 
-set -- "\$@" --log="\${NEKO_LOG:-true}"
+set -- "\$@" --log="\${ORBIT_LOG:-true}"
 exec "\$@"
 EOF
 
@@ -315,7 +315,7 @@ write_launchd_plist() {
   name="$1"
   runner="$2"
   launch_dir="${HOME}/Library/LaunchAgents"
-  label="io.neko-master.agent.${name}"
+  label="io.mihomo-orbit.agent.${name}"
   plist_path="${launch_dir}/${label}.plist"
   mkdir -p "$launch_dir"
   cat > "$plist_path" <<EOF
@@ -376,7 +376,7 @@ enable_autostart_launchd() {
 enable_autostart_cron() {
   name="$1"
   runner="$2"
-  marker="# nekoagent-autostart-${name}"
+  marker="# orbitagent-autostart-${name}"
   line="@reboot ${runner} >/dev/null 2>&1 ${marker}"
   old_cron="$(crontab -l 2>/dev/null || true)"
   {
@@ -408,7 +408,7 @@ disable_autostart_openwrt() {
 
 disable_autostart_launchd() {
   name="$1"
-  label="io.neko-master.agent.${name}"
+  label="io.mihomo-orbit.agent.${name}"
   plist_path="${HOME}/Library/LaunchAgents/${label}.plist"
   launchctl unload "$plist_path" >/dev/null 2>&1 || true
   rm -f "$plist_path"
@@ -416,7 +416,7 @@ disable_autostart_launchd() {
 
 disable_autostart_cron() {
   name="$1"
-  marker="# nekoagent-autostart-${name}"
+  marker="# orbitagent-autostart-${name}"
   old_cron="$(crontab -l 2>/dev/null || true)"
   printf '%s\n' "$old_cron" | grep -v "$marker" | crontab -
 }
@@ -499,7 +499,7 @@ get_latest_remote_tag() {
   printf '%s\n' "$tag"
 }
 
-# Return the version string reported by the local neko-agent binary, or "".
+# Return the version string reported by the local orbit-agent binary, or "".
 get_local_binary_version() {
   if [ -x "$AGENT_BIN" ]; then
     "$AGENT_BIN" --version 2>/dev/null | head -1 || true
@@ -544,7 +544,7 @@ target_plain_from_tag() {
 
 # ── Update / download binary ────────────────────────────────────────────────
 
-# Download, verify, and install a new neko-agent binary.
+# Download, verify, and install a new orbit-agent binary.
 # Usage: do_download_binary <version_arg> <os> <arch>
 #   version_arg: "latest" or "agent-v0.2.0" style tag
 do_download_binary() {
@@ -561,7 +561,7 @@ do_download_binary() {
       return 1
     fi
     release_path="releases/download/${tag}"
-    asset="neko-agent_${os}_${arch}.tar.gz"
+    asset="orbit-agent_${os}_${arch}.tar.gz"
   else
     # normalise: accept bare "0.2.0" or full "agent-v0.2.0"
     case "$version_arg" in
@@ -570,7 +570,7 @@ do_download_binary() {
       *)        tag="agent-v${version_arg}" ;;
     esac
     release_path="releases/download/${tag}"
-    asset="neko-agent_${tag}_${os}_${arch}.tar.gz"
+    asset="orbit-agent_${tag}_${os}_${arch}.tar.gz"
   fi
 
   package_url="https://github.com/${AGENT_REPO}/${release_path}/${asset}"
@@ -580,7 +580,7 @@ do_download_binary() {
   # shellcheck disable=SC2064
   trap "rm -rf '$tmp_dir'" EXIT INT TERM
 
-  archive_path="$tmp_dir/neko-agent.tar.gz"
+  archive_path="$tmp_dir/orbit-agent.tar.gz"
   checksums_path="$tmp_dir/checksums.txt"
 
   log "downloading $package_url"
@@ -608,9 +608,9 @@ do_download_binary() {
   mkdir -p "$tmp_dir/extract"
   tar -xzf "$archive_path" -C "$tmp_dir/extract"
 
-  new_binary="$tmp_dir/extract/neko-agent"
+  new_binary="$tmp_dir/extract/orbit-agent"
   if [ ! -f "$new_binary" ]; then
-    err "extracted archive does not contain neko-agent"
+    err "extracted archive does not contain orbit-agent"
     exit 1
   fi
 
@@ -626,19 +626,19 @@ do_download_binary() {
 #   agent-tag: e.g. "agent-v0.2.0"
 do_download_manager() {
   tag="$1"
-  manager_url="https://raw.githubusercontent.com/${AGENT_REPO}/${tag}/apps/agent/nekoagent"
+  manager_url="https://raw.githubusercontent.com/${AGENT_REPO}/${tag}/apps/agent/orbitagent"
 
   tmp_dir="$(mktemp -d)"
   # shellcheck disable=SC2064
   trap "rm -rf '$tmp_dir'" EXIT INT TERM
-  new_manager="$tmp_dir/nekoagent"
+  new_manager="$tmp_dir/orbitagent"
 
   log "downloading manager script: $manager_url"
   download_file "$manager_url" "$new_manager"
   chmod +x "$new_manager"
 
   mkdir -p "$INSTALL_DIR"
-  manager_target="$INSTALL_DIR/nekoagent"
+  manager_target="$INSTALL_DIR/orbitagent"
   mv "$new_manager" "$manager_target"
   log "manager installed: $manager_target"
 
@@ -662,8 +662,8 @@ version() {
   if [ -z "$binary_ver" ]; then
     binary_ver="(binary not found)"
   fi
-  printf 'nekoagent  %s\n' "$manager_ver"
-  printf 'neko-agent %s\n' "$binary_ver"
+  printf 'orbitagent  %s\n' "$manager_ver"
+  printf 'orbit-agent %s\n' "$binary_ver"
 }
 
 usage() {
@@ -685,7 +685,7 @@ Usage:
   $PROG upgrade [version]                    Upgrade manager+binary and restart running instances
   $PROG remove <name>                        Remove instance config/runtime
   $PROG delete <name>                        Alias of remove
-  $PROG uninstall                            Uninstall nekoagent + binaries
+  $PROG uninstall                            Uninstall orbitagent + binaries
   $PROG version                              Show manager and binary version
   $PROG help                                 Show this help
 
@@ -709,11 +709,11 @@ Config and runtime paths:
   AGENT_BIN=$AGENT_BIN
 
 Required config keys:
-  NEKO_SERVER, NEKO_BACKEND_ID, NEKO_BACKEND_TOKEN, NEKO_GATEWAY_TYPE, NEKO_GATEWAY_URL
+  ORBIT_SERVER, ORBIT_BACKEND_ID, ORBIT_BACKEND_TOKEN, ORBIT_GATEWAY_TYPE, ORBIT_GATEWAY_URL
 Optional keys:
-  NEKO_GATEWAY_TOKEN, NEKO_LOG, NEKO_AGENT_ID, NEKO_REPORT_INTERVAL,
-  NEKO_HEARTBEAT_INTERVAL, NEKO_GATEWAY_POLL_INTERVAL, NEKO_REQUEST_TIMEOUT,
-  NEKO_REPORT_BATCH_SIZE, NEKO_MAX_PENDING_UPDATES, NEKO_STALE_FLOW_TIMEOUT
+  ORBIT_GATEWAY_TOKEN, ORBIT_LOG, ORBIT_AGENT_ID, ORBIT_REPORT_INTERVAL,
+  ORBIT_HEARTBEAT_INTERVAL, ORBIT_GATEWAY_POLL_INTERVAL, ORBIT_REQUEST_TIMEOUT,
+  ORBIT_REPORT_BATCH_SIZE, ORBIT_MAX_PENDING_UPDATES, ORBIT_STALE_FLOW_TIMEOUT
 
 Examples:
   # Add and start a new backend
@@ -760,50 +760,50 @@ load_config() {
   fi
   # shellcheck disable=SC1090
   . "$cf"
-  require_config_key "NEKO_SERVER"
-  require_config_key "NEKO_BACKEND_ID"
-  require_config_key "NEKO_BACKEND_TOKEN"
-  require_config_key "NEKO_GATEWAY_TYPE"
-  require_config_key "NEKO_GATEWAY_URL"
+  require_config_key "ORBIT_SERVER"
+  require_config_key "ORBIT_BACKEND_ID"
+  require_config_key "ORBIT_BACKEND_TOKEN"
+  require_config_key "ORBIT_GATEWAY_TYPE"
+  require_config_key "ORBIT_GATEWAY_URL"
 }
 
 build_agent_args() {
   set -- \
-    --server-url "$NEKO_SERVER" \
-    --backend-id "$NEKO_BACKEND_ID" \
-    --backend-token "$NEKO_BACKEND_TOKEN" \
-    --gateway-type "$NEKO_GATEWAY_TYPE" \
-    --gateway-url "$NEKO_GATEWAY_URL"
+    --server-url "$ORBIT_SERVER" \
+    --backend-id "$ORBIT_BACKEND_ID" \
+    --backend-token "$ORBIT_BACKEND_TOKEN" \
+    --gateway-type "$ORBIT_GATEWAY_TYPE" \
+    --gateway-url "$ORBIT_GATEWAY_URL"
 
-  if [ -n "${NEKO_GATEWAY_TOKEN:-}" ]; then
-    set -- "$@" --gateway-token "$NEKO_GATEWAY_TOKEN"
+  if [ -n "${ORBIT_GATEWAY_TOKEN:-}" ]; then
+    set -- "$@" --gateway-token "$ORBIT_GATEWAY_TOKEN"
   fi
-  if [ -n "${NEKO_AGENT_ID:-}" ]; then
-    set -- "$@" --agent-id "$NEKO_AGENT_ID"
+  if [ -n "${ORBIT_AGENT_ID:-}" ]; then
+    set -- "$@" --agent-id "$ORBIT_AGENT_ID"
   fi
-  if [ -n "${NEKO_REPORT_INTERVAL:-}" ]; then
-    set -- "$@" --report-interval "$NEKO_REPORT_INTERVAL"
+  if [ -n "${ORBIT_REPORT_INTERVAL:-}" ]; then
+    set -- "$@" --report-interval "$ORBIT_REPORT_INTERVAL"
   fi
-  if [ -n "${NEKO_HEARTBEAT_INTERVAL:-}" ]; then
-    set -- "$@" --heartbeat-interval "$NEKO_HEARTBEAT_INTERVAL"
+  if [ -n "${ORBIT_HEARTBEAT_INTERVAL:-}" ]; then
+    set -- "$@" --heartbeat-interval "$ORBIT_HEARTBEAT_INTERVAL"
   fi
-  if [ -n "${NEKO_GATEWAY_POLL_INTERVAL:-}" ]; then
-    set -- "$@" --gateway-poll-interval "$NEKO_GATEWAY_POLL_INTERVAL"
+  if [ -n "${ORBIT_GATEWAY_POLL_INTERVAL:-}" ]; then
+    set -- "$@" --gateway-poll-interval "$ORBIT_GATEWAY_POLL_INTERVAL"
   fi
-  if [ -n "${NEKO_REQUEST_TIMEOUT:-}" ]; then
-    set -- "$@" --request-timeout "$NEKO_REQUEST_TIMEOUT"
+  if [ -n "${ORBIT_REQUEST_TIMEOUT:-}" ]; then
+    set -- "$@" --request-timeout "$ORBIT_REQUEST_TIMEOUT"
   fi
-  if [ -n "${NEKO_REPORT_BATCH_SIZE:-}" ]; then
-    set -- "$@" --report-batch-size "$NEKO_REPORT_BATCH_SIZE"
+  if [ -n "${ORBIT_REPORT_BATCH_SIZE:-}" ]; then
+    set -- "$@" --report-batch-size "$ORBIT_REPORT_BATCH_SIZE"
   fi
-  if [ -n "${NEKO_MAX_PENDING_UPDATES:-}" ]; then
-    set -- "$@" --max-pending-updates "$NEKO_MAX_PENDING_UPDATES"
+  if [ -n "${ORBIT_MAX_PENDING_UPDATES:-}" ]; then
+    set -- "$@" --max-pending-updates "$ORBIT_MAX_PENDING_UPDATES"
   fi
-  if [ -n "${NEKO_STALE_FLOW_TIMEOUT:-}" ]; then
-    set -- "$@" --stale-flow-timeout "$NEKO_STALE_FLOW_TIMEOUT"
+  if [ -n "${ORBIT_STALE_FLOW_TIMEOUT:-}" ]; then
+    set -- "$@" --stale-flow-timeout "$ORBIT_STALE_FLOW_TIMEOUT"
   fi
 
-  log_enabled="${NEKO_LOG:-true}"
+  log_enabled="${ORBIT_LOG:-true}"
   set -- "$@" --log="$log_enabled"
 
   printf '%s\n' "$*"
@@ -899,13 +899,13 @@ cmd_add() {
 
   # Build config
   config_vars=""
-  config_vars="$config_vars NEKO_SERVER=$server_url"
-  config_vars="$config_vars NEKO_BACKEND_ID=$backend_id"
-  config_vars="$config_vars NEKO_BACKEND_TOKEN=$backend_token"
-  config_vars="$config_vars NEKO_GATEWAY_TYPE=$gateway_type"
-  config_vars="$config_vars NEKO_GATEWAY_URL=$gateway_url"
+  config_vars="$config_vars ORBIT_SERVER=$server_url"
+  config_vars="$config_vars ORBIT_BACKEND_ID=$backend_id"
+  config_vars="$config_vars ORBIT_BACKEND_TOKEN=$backend_token"
+  config_vars="$config_vars ORBIT_GATEWAY_TYPE=$gateway_type"
+  config_vars="$config_vars ORBIT_GATEWAY_URL=$gateway_url"
   if [ -n "$gateway_token" ]; then
-    config_vars="$config_vars NEKO_GATEWAY_TOKEN=$gateway_token"
+    config_vars="$config_vars ORBIT_GATEWAY_TOKEN=$gateway_token"
   fi
 
   # Initialize config
@@ -939,7 +939,7 @@ cmd_start() {
     case "$manager" in
       systemd)  systemctl start "$service" ;;
       launchd)
-        label="io.neko-master.agent.${name}"
+        label="io.mihomo-orbit.agent.${name}"
         plist_path="${HOME}/Library/LaunchAgents/${label}.plist"
         launchctl load "$plist_path" 2>/dev/null || true
         ;;
@@ -980,7 +980,7 @@ cmd_stop() {
     case "$manager" in
       systemd)  systemctl stop "$service" ;;
       launchd)
-        label="io.neko-master.agent.${name}"
+        label="io.mihomo-orbit.agent.${name}"
         plist_path="${HOME}/Library/LaunchAgents/${label}.plist"
         launchctl unload "$plist_path" 2>/dev/null || true
         ;;
@@ -1099,7 +1099,7 @@ cmd_list() {
     # Load config to show backend info
     # shellcheck disable=SC1090
     . "$f"
-    printf '%-20s %-10s backend-id=%s gateway=%s%s\n' "$name" "$status" "${NEKO_BACKEND_ID:-?}" "${NEKO_GATEWAY_TYPE:-?}" "$managed"
+    printf '%-20s %-10s backend-id=%s gateway=%s%s\n' "$name" "$status" "${ORBIT_BACKEND_ID:-?}" "${ORBIT_GATEWAY_TYPE:-?}" "$managed"
   done
   if [ "$found" = false ]; then
     log "no instances configured"
@@ -1224,8 +1224,8 @@ cmd_remove() {
 
 cmd_uninstall() {
   rm -f "$AGENT_BIN"
-  rm -f "$INSTALL_DIR/nekoagent"
-  rm -f "/usr/local/bin/neko-agent" "/usr/local/bin/nekoagent"
+  rm -f "$INSTALL_DIR/orbitagent"
+  rm -f "/usr/local/bin/orbit-agent" "/usr/local/bin/orbitagent"
   log "binaries removed"
   log "note: instance config files remain in $CONFIG_DIR (use '$PROG remove <name>' if needed)"
 }

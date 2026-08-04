@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -75,7 +76,7 @@ type Runner struct {
 	httpClient    *http.Client
 	gatewayClient *gateway.Client
 	hostname      string
-	lockFile      *os.File
+	lockFiles     []*os.File
 
 	mu         sync.Mutex
 	queue      []domain.TrafficUpdate
@@ -107,11 +108,36 @@ func NewRunner(cfg config.Config) *Runner {
 	}
 }
 
-func (r *Runner) acquireLock() error {
-	// Use OS temp directory for lock file
-	lockDir := os.TempDir()
-	lockPath := fmt.Sprintf("%s/neko-agent-backend-%d.lock", lockDir, r.cfg.BackendID)
+// lockPaths returns every lock file this agent must hold, in acquisition order.
+//
+// The legacy neko-agent path is included deliberately. This lock is the only
+// mutual-exclusion point between this binary and a leftover upstream neko-agent
+// on the same host: the default agentId is a hash of the backend token
+// (internal/config), so both binaries register under the SAME agentId and the
+// server accepts both — their traffic would be counted twice. Dropping the
+// legacy path during the rename would create the very double-write it looks
+// like it prevents.
+func (r *Runner) lockPaths() []string {
+	dir := os.TempDir()
+	return []string{
+		filepath.Join(dir, fmt.Sprintf("orbit-agent-backend-%d.lock", r.cfg.BackendID)),
+		filepath.Join(dir, fmt.Sprintf("neko-agent-backend-%d.lock", r.cfg.BackendID)),
+	}
+}
 
+func (r *Runner) acquireLock() error {
+	for _, lockPath := range r.lockPaths() {
+		file, err := r.acquireLockAt(lockPath)
+		if err != nil {
+			r.releaseLock() // roll back locks already taken, leave no orphans
+			return err
+		}
+		r.lockFiles = append(r.lockFiles, file)
+	}
+	return nil
+}
+
+func (r *Runner) acquireLockAt(lockPath string) (*os.File, error) {
 	// Check if lock file exists and if process is still running
 	if data, err := os.ReadFile(lockPath); err == nil {
 		var pid int
@@ -119,7 +145,7 @@ func (r *Runner) acquireLock() error {
 			// Check if process is still running
 			if pid > 0 && pid != os.Getpid() {
 				if isProcessRunning(pid) {
-					return fmt.Errorf("another agent instance (PID %d) is already running for backend %d", pid, r.cfg.BackendID)
+					return nil, fmt.Errorf("another agent instance (PID %d) is already running for backend %d", pid, r.cfg.BackendID)
 				}
 				// Process is not running, stale lock file
 				log.Printf("[agent:%s] removing stale lock file from PID %d", r.cfg.AgentID, pid)
@@ -132,9 +158,9 @@ func (r *Runner) acquireLock() error {
 	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	if err != nil {
 		if os.IsExist(err) {
-			return fmt.Errorf("lock file already exists for backend %d", r.cfg.BackendID)
+			return nil, fmt.Errorf("lock file already exists for backend %d", r.cfg.BackendID)
 		}
-		return fmt.Errorf("failed to create lock file: %w", err)
+		return nil, fmt.Errorf("failed to create lock file: %w", err)
 	}
 
 	// Write PID to lock file
@@ -142,24 +168,23 @@ func (r *Runner) acquireLock() error {
 	if _, err := file.WriteString(pid); err != nil {
 		file.Close()
 		os.Remove(lockPath)
-		return fmt.Errorf("failed to write PID to lock file: %w", err)
+		return nil, fmt.Errorf("failed to write PID to lock file: %w", err)
 	}
 
-	r.lockFile = file
-	return nil
+	return file, nil
 }
 
 func (r *Runner) releaseLock() {
-	if r.lockFile != nil {
-		lockPath := r.lockFile.Name()
-		r.lockFile.Close()
+	for _, file := range r.lockFiles {
+		lockPath := file.Name()
+		file.Close()
 		os.Remove(lockPath)
-		r.lockFile = nil
 	}
+	r.lockFiles = nil
 }
 
-// isProcessRunning checks whether the PID is alive AND belongs to a
-// neko-agent process. On Linux we cross-check /proc/<pid>/comm so that a
+// isProcessRunning checks whether the PID is alive AND belongs to an
+// agent process (orbit-agent, or a leftover upstream neko-agent). On Linux we cross-check /proc/<pid>/comm so that a
 // stale PID later reused by an unrelated process cannot permanently block
 // agent startup. On non-Linux (or if /proc isn't available) we fall back to
 // the signal-0 liveness check.
@@ -173,7 +198,10 @@ func isProcessRunning(pid int) bool {
 		// liveness check as authoritative.
 		return true
 	}
-	return strings.Contains(strings.TrimSpace(string(data)), "neko-agent")
+	comm := strings.TrimSpace(string(data))
+	// 新旧两种进程名都算存活:锁要能挡住残留的 neko-agent(防双写),
+	// 也要能挡住另一个 orbit-agent(否则彼此判定对方为陈旧锁而并行运行)。
+	return strings.Contains(comm, "orbit-agent") || strings.Contains(comm, "neko-agent")
 }
 
 func (r *Runner) Run(ctx context.Context) {

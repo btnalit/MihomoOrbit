@@ -78,4 +78,4 @@ jobs:
           GOMIPS: ${{ matrix.gomips || '' }}
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags "-s -w" -o "dist/neko-agent-${{ matrix.os }}-${{ matrix.arch }}" .
+          go build -trimpath -ldflags "-s -w" -o "dist/orbit-agent-${{ matrix.os }}-${{ matrix.arch }}" .

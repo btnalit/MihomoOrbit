@@ -39,11 +39,11 @@ type Config struct {
 }
 
 func Parse(args []string) (Config, error) {
-	fs := flag.NewFlagSet("neko-agent", flag.ContinueOnError)
+	fs := flag.NewFlagSet("orbit-agent", flag.ContinueOnError)
 	fs.SetOutput(new(strings.Builder))
 
-	serverURL := fs.String("server-url", "", "Neko Master server URL, e.g. https://neko.example.com")
-	backendID := fs.Int("backend-id", 0, "Backend ID configured in Neko Master")
+	serverURL := fs.String("server-url", "", "MihomoOrbit server URL, e.g. https://orbit.example.com")
+	backendID := fs.Int("backend-id", 0, "Backend ID configured in MihomoOrbit")
 	backendToken := fs.String("backend-token", "", "Backend token for agent authentication")
 	agentID := fs.String("agent-id", "", "Agent ID (optional, auto-generated from backend-token if not provided)")
 	gatewayType := fs.String("gateway-type", "clash", "Gateway type: clash or surge")
@@ -128,11 +128,11 @@ func Parse(args []string) (Config, error) {
 func Usage() string {
 	lines := []string{
 		"Usage:",
-		"  neko-agent --server-url <url> --backend-id <id> --backend-token <token> --gateway-type <clash|surge> --gateway-url <url> [options]",
+		"  orbit-agent --server-url <url> --backend-id <id> --backend-token <token> --gateway-type <clash|surge> --gateway-url <url> [options]",
 		"",
 		"Required:",
-		"  --server-url            Neko Master server URL",
-		"  --backend-id            Backend ID in Neko Master",
+		"  --server-url            MihomoOrbit server URL",
+		"  --backend-id            Backend ID in MihomoOrbit",
 		"  --backend-token         Backend token",
 		"  --gateway-url           Gateway API URL",
 		"",

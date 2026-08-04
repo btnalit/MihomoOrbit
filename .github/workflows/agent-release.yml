@@ -83,12 +83,12 @@ jobs:
           VERSION_PLAIN="${VERSION#agent-v}"
           go build -trimpath \
             -ldflags "-s -w -X github.com/btnalit/MihomoOrbit/apps/agent/internal/config.AgentVersion=${VERSION_PLAIN}" \
-            -o "$workdir/neko-agent" .
-          chmod +x "$workdir/neko-agent"
+            -o "$workdir/orbit-agent" .
+          chmod +x "$workdir/orbit-agent"
 
-          versioned_archive="neko-agent_${VERSION}_${{ matrix.os }}_${{ matrix.arch }}.tar.gz"
-          latest_archive="neko-agent_${{ matrix.os }}_${{ matrix.arch }}.tar.gz"
-          tar -C "$workdir" -czf "dist/release/$versioned_archive" neko-agent
+          versioned_archive="orbit-agent_${VERSION}_${{ matrix.os }}_${{ matrix.arch }}.tar.gz"
+          latest_archive="orbit-agent_${{ matrix.os }}_${{ matrix.arch }}.tar.gz"
+          tar -C "$workdir" -czf "dist/release/$versioned_archive" orbit-agent
           cp "dist/release/$versioned_archive" "dist/release/$latest_archive"
 
       - name: Upload package artifact
