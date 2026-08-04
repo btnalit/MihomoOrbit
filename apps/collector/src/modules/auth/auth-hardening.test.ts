@@ -166,4 +166,31 @@ describe('auth hardening', () => {
     expect(authService.getSetupToken()).toBeNull();
   });
 
+
+  it('invalidates an existing session cookie after the token is changed', async () => {
+    const setupToken = authService.getSetupToken()!;
+    await app.inject({
+      method: 'POST', url: '/api/auth/enable',
+      headers: { 'x-setup-token': setupToken },
+      payload: { token: 'orbit-admin-token-2026' },
+    });
+
+    const login = await app.inject({
+      method: 'POST', url: '/api/auth/verify',
+      payload: { token: 'orbit-admin-token-2026' },
+    });
+    const cookie = login.cookies.find((c: { name: string }) => c.name === 'orbit-session');
+    expect(cookie).toBeDefined();
+
+    // cookie 携带的是明文访问令牌;换令牌后它必须立刻失效,
+    // 而不是靠验证缓存的 TTL continue 放行。
+    await authService.updateToken('orbit-admin-token-2099');
+
+    const stale = await app.inject({
+      method: 'GET', url: '/api/backends',
+      cookies: { 'orbit-session': cookie!.value },
+    });
+    expect(stale.statusCode).toBe(401);
+  });
+
 });
