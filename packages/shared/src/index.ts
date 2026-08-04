@@ -237,6 +237,11 @@ export type WebSocketEvent = StatsUpdateEvent | AggregatedUpdateEvent;
 export interface AuthState {
   enabled: boolean;
   hasToken: boolean;
+  /**
+   * 初始设置是否已完成。与 `enabled` 不同:legacy(未加盐 sha256)令牌哈希会
+   * 让本字段为 false,从而触发重新设置流。见 collector auth.service.isConfigured()。
+   */
+  configured: boolean;
   forceAccessControlOff?: boolean;
   showcaseMode?: boolean;
 }

@@ -51,7 +51,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Wait, /api/auth/state is public.
       
       if (!response.ok) {
-        setAuthState({ enabled: false, hasToken: false });
+        // configured 取 true:这是「拿不到状态」的乐观兜底,若填 false,
+        // 一次网络抖动就会弹出首次设置对话框。服务端仍然强制认证。
+        setAuthState({ enabled: false, hasToken: false, configured: true });
         setIsAuthenticated(true);
         return;
       }
@@ -78,7 +80,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error("Failed to check auth state:", error);
       // On error, assume no auth required to prevent lockout
-      setAuthState({ enabled: false, hasToken: false });
+      // configured 取 true:这是「拿不到状态」的乐观兜底,若填 false,
+        // 一次网络抖动就会弹出首次设置对话框。服务端仍然强制认证。
+        setAuthState({ enabled: false, hasToken: false, configured: true });
       setIsAuthenticated(true);
     } finally {
       setIsLoading(false);
@@ -177,10 +181,19 @@ export function useRequireAuth() {
   // 2. If auth not enabled, don't show login
   // 3. If auth enabled and not authenticated, show login
   
-  const showLogin = !isLoading && !!authState?.enabled && !isAuthenticated;
-  
+  // 首次设置:认证尚未配置(或旧 sha256 哈希被判为未配置)。
+  // 此时后端除 /api/auth/{state,enable} 外一律 401,WS 也会拒连,
+  // 必须渲染设置流而不是登录框,否则页面空白且不断重连。
+  const needsSetup =
+    !isLoading && !!authState && !authState.configured && !authState.forceAccessControlOff;
+
+  // 已配置才谈得上登录
+  const showLogin =
+    !isLoading && !!authState?.enabled && !!authState?.configured && !isAuthenticated;
+
   return {
     showLogin,
+    needsSetup,
     isLoading,
     authEnabled: authState?.enabled,
     error: null, // We handle errors via event listeners mostly

@@ -633,8 +633,6 @@ export const api = {
   enableAuth: (token: string) =>
     fetchJson<{ success: boolean; message: string }>(`${API_BASE}/auth/enable`, 'POST', { token }),
 
-  disableAuth: (token?: string) =>
-    fetchJson<{ success: boolean; message: string }>(`${API_BASE}/auth/disable`, 'POST', token ? { token } : undefined),
 
   verifyAuth: (token: string) =>
     fetchJson<{ valid: boolean; message?: string }>(`${API_BASE}/auth/verify`, 'POST', { token }),

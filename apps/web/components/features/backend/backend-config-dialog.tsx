@@ -719,7 +719,6 @@ export function BackendConfigDialog({
   const [showAuthToken, setShowAuthToken] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [confirmEnableAuthDialogOpen, setConfirmEnableAuthDialogOpen] = useState(false);
-  const [confirmDisableAuthDialogOpen, setConfirmDisableAuthDialogOpen] = useState(false);
   const [changeTokenDialogOpen, setChangeTokenDialogOpen] = useState(false);
   const [changeTokenForm, setChangeTokenForm] = useState({
     current: "",
@@ -1322,7 +1321,7 @@ export function BackendConfigDialog({
 
   // Validate token format
   const isValidToken = (token: string): boolean => {
-    if (token.length < 6) return false;
+    if (token.length < 16) return false;
     const hasLetter = /[a-zA-Z]/.test(token);
     const hasNumber = /[0-9]/.test(token);
     return hasLetter && hasNumber;
@@ -1356,30 +1355,8 @@ export function BackendConfigDialog({
     }
   };
 
-  // Handle disable auth
-  const handleDisableAuth = async () => {
-    setConfirmDisableAuthDialogOpen(true);
-  };
-  // Confirm disable auth
-  const confirmDisableAuth = async () => {
-    setAuthLoading(true);
-    try {
-      // Cookie is used for authentication
-      await api.disableAuth();
-      setAuthToken("");
-      setConfirmDisableAuthDialogOpen(false);
-      // Invalidate auth state cache to trigger refetch
-      queryClient.invalidateQueries({ queryKey: authKeys.state() });
-      toast.success(t("auth.disabledSuccess"));
-    } catch (error: any) {
-      toast.error(error.message || t("auth.disableFailed"));
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
   const handleChangeToken = async () => {
-    if (!changeTokenForm.new || changeTokenForm.new.length < 6) {
+    if (!changeTokenForm.new || changeTokenForm.new.length < 16) {
       toast.error(t("auth.invalidToken"));
       return;
     }
@@ -2225,17 +2202,10 @@ export function BackendConfigDialog({
                       <Shield className="w-4 h-4 text-primary" />
                       <h4 className="text-sm font-medium">{t("auth.title")}</h4>
                     </div>
-                    <Switch
-                      checked={authEnabled}
-                      onCheckedChange={(checked) => {
-                        if (checked) {
-                          handleEnableAuth();
-                        } else {
-                          handleDisableAuth();
-                        }
-                       }}
-                       disabled={authLoading || isShowcase}
-                    />
+                    {/* 认证自 M0 起强制启用,没有关闭开关 */}
+                    <span className="text-xs px-2 py-1 rounded-md bg-primary/10 text-primary font-medium">
+                      {t("auth.alwaysOn")}
+                    </span>
                   </div>
 
                   <p className="text-sm text-muted-foreground mb-4">
@@ -2277,7 +2247,7 @@ export function BackendConfigDialog({
 
                       {isTokenInvalid && (
                         <p className="text-xs text-destructive animate-in slide-in-from-top-1 duration-200">
-                          {t("auth.tokenRequirements") || "Token must be at least 6 characters and contain both letters and numbers"}
+                          {t("auth.tokenRequirements")}
                         </p>
                       )}
 
@@ -2290,6 +2260,15 @@ export function BackendConfigDialog({
                       <p className="text-xs text-muted-foreground">
                         {t("auth.tokenHint")}
                       </p>
+
+                      {/* 强制认证下这条路径只在 FORCE_ACCESS_CONTROL_OFF 救援模式出现;
+                          原先由开关兼作提交入口,开关移除后需要独立按钮 */}
+                      <Button
+                        size="sm"
+                        onClick={handleEnableAuth}
+                        disabled={authLoading || isShowcase || !isValidToken(authToken)}>
+                        {t("auth.enableAction")}
+                      </Button>
                     </div>
                   )}
 
@@ -2944,34 +2923,6 @@ export function BackendConfigDialog({
               onClick={confirmEnableAuth}
               className="bg-primary">
               {authState?.forceAccessControlOff ? t("auth.changeToken") : t("auth.confirmEnable")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Confirm Disable Auth Dialog */}
-      <AlertDialog
-        open={confirmDisableAuthDialogOpen}
-        onOpenChange={setConfirmDisableAuthDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5 text-destructive" />
-              {t("auth.confirmDisableTitle")}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("auth.confirmDisableDescription")}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel
-              onClick={() => setConfirmDisableAuthDialogOpen(false)}>
-              {commonT("cancel")}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmDisableAuth}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              {t("auth.confirmDisable")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -3,17 +3,18 @@
 import { useEffect, useRef } from "react";
 import { useRequireAuth, useAuth } from "@/lib/auth";
 import { useQueryClient } from "@tanstack/react-query";
-import { authKeys } from "@/lib/auth-queries";
+import { authKeys, useEnableAuth } from "@/lib/auth-queries";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { LoginDialog } from "./login-dialog";
 
 export function AuthGuard() {
-  const { showLogin } = useRequireAuth();
+  const { showLogin, needsSetup } = useRequireAuth();
   const { login, confirmLogin } = useAuth();
   const queryClient = useQueryClient();
   const t = useTranslations("auth");
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const enableAuth = useEnableAuth();
 
   useEffect(() => {
     return () => {
@@ -41,6 +42,33 @@ export function AuthGuard() {
       return false;
     }
   };
+
+  // 首次设置:用启动日志里的 setup token 设定访问令牌,成功后自动登录。
+  const handleSetup = async (token: string, setupToken?: string): Promise<boolean> => {
+    if (!setupToken) return false;
+    try {
+      await enableAuth.mutateAsync({ setupToken, token });
+      confirmTimerRef.current = setTimeout(() => {
+        confirmLogin();
+        queryClient.invalidateQueries({ queryKey: authKeys.state() });
+      }, 2500);
+      return true;
+    } catch (error) {
+      // 把后端的具体原因(setup token 无效 / 令牌不合规)透传给对话框
+      throw error instanceof Error ? error : new Error(t("setupFailed"));
+    }
+  };
+
+  if (needsSetup) {
+    return (
+      <LoginDialog
+        open={true}
+        mode="setup"
+        onOpenChange={() => {}}
+        onLogin={handleSetup}
+      />
+    );
+  }
 
   if (!showLogin) return null;
 

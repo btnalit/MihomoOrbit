@@ -169,7 +169,6 @@
     "ipCount": "IP数",
     "proxy": "代理节点",
     "proxyTraffic": "代理节点流量明细",
-
     "domainsCount": "个域名",
     "showing": "显示",
     "of": "共",
@@ -355,7 +354,18 @@
     "loggingIn": "登录中...",
     "login": "登录",
     "loginSuccess": "欢迎回来",
-    "redirecting": "正在同步网络数据..."
+    "redirecting": "正在同步网络数据...",
+    "setupTitle": "设置访问令牌",
+    "setupDescription": "首次启动尚未配置认证。请在 collector 启动日志中找到一次性 setup token。",
+    "setupTokenPlaceholder": "粘贴启动日志中的 setup token",
+    "setupTokenRequired": "请输入 setup token",
+    "newTokenPlaceholder": "设置访问令牌(至少 16 位)",
+    "confirmTokenPlaceholder": "再次输入访问令牌",
+    "tokensDoNotMatch": "两次输入的访问令牌不一致",
+    "tokenRequirements": "访问令牌至少 16 位,且需同时包含字母和数字",
+    "setupAction": "完成设置",
+    "settingUp": "设置中...",
+    "setupFailed": "设置失败,请检查 setup token 是否正确"
   },
   "backend": {
     "title": "设置",
@@ -505,22 +515,17 @@
       "title": "访问控制",
       "description": "启用访问控制以保护您的面板数据安全",
       "tokenPlaceholder": "设置访问令牌",
-      "tokenRequirements": "令牌必须至少6位，且包含字母和数字",
+      "tokenRequirements": "令牌必须至少 16 位，且包含字母和数字",
       "tokenHint": "建议设置一个容易记住但难以猜测的令牌",
       "enabled": "访问控制已启用",
       "enabledSuccess": "访问控制已启用，请牢记您的令牌",
       "enableFailed": "启用访问控制失败",
-      "disabledSuccess": "访问控制已禁用",
-      "disableFailed": "禁用访问控制失败",
       "warningTitle": "重要提示",
       "warningDescription": "请妥善保管您的访问令牌。如果丢失令牌，您将无法访问面板。",
       "confirmEnableTitle": "确认启用访问控制",
       "confirmEnableDescription": "启用访问控制后，所有用户都需要输入正确的令牌才能访问面板。",
       "rememberTokenWarning": "请务必牢记此令牌！丢失令牌将无法访问面板！",
       "confirmEnable": "我已牢记令牌，确认启用",
-      "confirmDisableTitle": "确认禁用访问控制",
-      "confirmDisableDescription": "禁用访问控制后，任何人都可以访问您的面板。确定要禁用吗？",
-      "confirmDisable": "确认禁用",
       "changeToken": "修改令牌",
       "changeTokenTitle": "修改访问令牌",
       "changeTokenDescription": "将您的访问令牌更新为新的令牌",
@@ -534,7 +539,9 @@
       "forceOffWarningDescription": "通过环境变量强制关闭了访问控制。您可以在不提供当前令牌的情况下重置令牌。",
       "emergencyResetTitle": "确认重置访问令牌",
       "emergencyResetDescription": "当前处于紧急访问模式。重置密码后，旧的令牌将失效。",
-      "emergencyResetWarning": "为了您的面板安全，请在重置完成后，务必删除后端环境变量 FORCE_ACCESS_CONTROL_OFF 并重启服务。"
+      "emergencyResetWarning": "为了您的面板安全，请在重置完成后，务必删除后端环境变量 FORCE_ACCESS_CONTROL_OFF 并重启服务。",
+      "alwaysOn": "强制启用",
+      "enableAction": "启用"
     }
   },
   "health": {

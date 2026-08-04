@@ -27,6 +27,22 @@ async function verifyToken(token: string): Promise<boolean> {
   return result.valid;
 }
 
+/**
+ * 首次设置:未配置状态下 /api/auth/enable 要求携带一次性 setup token,
+ * 该 token 打印在 collector 启动日志里。见设计规范 3.5(b)。
+ */
+async function enableAuth(setupToken: string, token: string): Promise<void> {
+  const response = await fetch("/api/auth/enable", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Setup-Token": setupToken },
+    body: JSON.stringify({ token }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body?.error || "Failed to complete setup");
+  }
+}
+
 // Query keys
 export const authKeys = {
   all: ["auth"] as const,
@@ -67,6 +83,25 @@ export function useLogin() {
     },
     onSuccess: () => {
       // Invalidate auth state to trigger a refetch
+      queryClient.invalidateQueries({ queryKey: authKeys.state() });
+    },
+  });
+}
+
+export function useEnableAuth() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ setupToken, token }: { setupToken: string; token: string }) => {
+      await enableAuth(setupToken, token);
+      // 设置成功后立即登录,拿到 orbit-session cookie
+      const isValid = await verifyToken(token);
+      if (!isValid) {
+        throw new Error("Setup succeeded but login failed");
+      }
+      return true;
+    },
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: authKeys.state() });
     },
   });

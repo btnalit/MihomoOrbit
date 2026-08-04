@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useAuthState } from "@/lib/auth-queries";
 import type { StatsSummary } from '@mihomo-orbit/shared';
 import type { TimeRange } from '@/lib/api';
 
@@ -227,6 +228,13 @@ export function useStatsWebSocket(options: UseStatsWebSocketOptions = {}) {
     trackLastMessage = true,
     enabled = true,
   } = options;
+  // 认证尚未完成初始设置时,collector 会以 4001 拒绝 WS 握手。此时若照常
+  // 连接,退避重连会在整个设置流程中持续制造失败连接(且没有任何提示)。
+  // 见设计规范 3.5 首启剧本。
+  const { data: authStateForWs } = useAuthState();
+  const setupPending =
+    !!authStateForWs && !authStateForWs.configured && !authStateForWs.forceAccessControlOff;
+  const shouldConnect = enabled && !setupPending;
   const normalizedSummaryFields = useMemo(
     () => normalizeSummaryFields(summaryFields),
     [summaryFields],
@@ -498,7 +506,7 @@ export function useStatsWebSocket(options: UseStatsWebSocketOptions = {}) {
   }, [cleanup]);
 
   useEffect(() => {
-    if (!enabled) {
+    if (!shouldConnect) {
       disconnect();
       return;
     }
@@ -509,7 +517,7 @@ export function useStatsWebSocket(options: UseStatsWebSocketOptions = {}) {
     return () => {
       disconnect();
     };
-  }, [enabled, connect, disconnect]);
+  }, [shouldConnect, connect, disconnect]);
 
   return {
     status,
