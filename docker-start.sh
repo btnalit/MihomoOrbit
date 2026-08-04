@@ -27,7 +27,7 @@ fi
 export API_PORT COLLECTOR_WS_PORT DB_PATH
 
 echo "╔════════════════════════════════════════════════════════╗"
-echo "║          Neko Master - Starting...                     ║"
+echo "║          MihomoOrbit - Starting...                     ║"
 echo "╚════════════════════════════════════════════════════════╝"
 echo
 echo "📊 Web UI:     http://0.0.0.0:${WEB_PORT}"

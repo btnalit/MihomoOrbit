@@ -1,6 +1,6 @@
 * text=auto eol=lf
 *.sh text eol=lf
-apps/agent/nekoagent text eol=lf
+apps/agent/orbitagent text eol=lf
 *.png binary
 *.jpg binary
 *.ico binary

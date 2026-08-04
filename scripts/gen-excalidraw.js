@@ -66,7 +66,7 @@ const e = (...args) => elements.push(...args);
 // ─────────────────────────────────────────────────────────────────
 // TITLE
 // ─────────────────────────────────────────────────────────────────
-e(text("title", 40, -50, "Neko Master 系统架构图", 28, "#212529"));
+e(text("title", 40, -50, "MihomoOrbit 系统架构图", 28, "#212529"));
 
 // ─────────────────────────────────────────────────────────────────
 // LAYER 1: FRONTEND  y: 0 → 440
@@ -238,7 +238,7 @@ e(text("ag-section-title", 40, AG_Y - 38, "── Agent 模式架构 (远程数�
 // Central Panel
 e(rect("ag-panel-r", 600, AG_Y, 700, 380, "#e7f5ff", "#1971c2", 2));
 e(text("ag-panel-t", 620, AG_Y + 10,
-  "中心面板 (Neko Master)\n\nFastify API Server:\n  POST /api/agent/report\n       接收批量流量增量\n  POST /api/agent/heartbeat\n       接收心跳 (在线状态)\n  POST /api/agent/config-sync\n       规则/代理/Provider 配置\n  POST /api/agent/policy-state\n       当前策略状态\n\nBackend 类型: agent://\n系统生成 token, 绑定 agentId",
+  "中心面板 (MihomoOrbit)\n\nFastify API Server:\n  POST /api/agent/report\n       接收批量流量增量\n  POST /api/agent/heartbeat\n       接收心跳 (在线状态)\n  POST /api/agent/config-sync\n       规则/代理/Provider 配置\n  POST /api/agent/policy-state\n       当前策略状态\n\nBackend 类型: agent://\n系统生成 token, 绑定 agentId",
   12, "#1864ab"));
 
 // Arrow: Agent → Panel

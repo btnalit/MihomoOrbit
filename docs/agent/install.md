@@ -87,7 +87,7 @@ orbitagent uninstall
 
 ```ini
 [Unit]
-Description=Neko Agent (<instance>)
+Description=MihomoOrbit Agent (<instance>)
 After=network-online.target
 Wants=network-online.target
 

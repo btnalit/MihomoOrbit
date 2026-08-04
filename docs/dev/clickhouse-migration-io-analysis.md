@@ -12,7 +12,7 @@
 相比于 `main` 分支单纯依赖 SQLite 和内存的模式，当前版本的数据流变更为更为复杂的双写+读写分离架构：
 
 1. **数据源头 (采集层)**：
-   - 依赖 `GatewayCollector` 通过 WebSocket 持续对接 Clash/Neko 核心，增量计算后的流量 (`TrafficUpdate`) 和 IP 信息进入内存处理环节。此过程纯内存操作，无 I/O 开销。
+   - 依赖 `GatewayCollector` 通过 WebSocket 持续对接 Clash/Mihomo 核心，增量计算后的流量 (`TrafficUpdate`) 和 IP 信息进入内存处理环节。此过程纯内存操作，无 I/O 开销。
 
 2. **处理层 (内存缓冲)**：
    - 引入了 `BatchBuffer` (分钟级聚合器)。所有零散请求按 (domain, ip, chain, rule) 多维度 Tuple 进行本地 Map 聚合。

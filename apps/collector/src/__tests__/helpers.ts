@@ -9,7 +9,7 @@ import os from 'os';
  * Automatically cleaned up via the returned `cleanup` function.
  */
 export function createTestDatabase(): { db: StatsDatabase; cleanup: () => void } {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neko-test-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'orbit-test-'));
   const dbPath = path.join(tmpDir, 'test.db');
   const db = new StatsDatabase(dbPath);
   return {

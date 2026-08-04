@@ -510,7 +510,7 @@ function buildAgentUrl(agentId: string): string {
 }
 
 const AGENT_INSTALL_SCRIPT_URL =
-  "https://raw.githubusercontent.com/foru17/neko-master/main/apps/agent/install.sh";
+  "https://raw.githubusercontent.com/btnalit/MihomoOrbit/main/apps/agent/install.sh";
 
 function getSuggestedServerUrl(): string {
   if (typeof window !== "undefined" && window.location?.origin) {
@@ -535,7 +535,7 @@ function buildAgentRunCommand(info: AgentBootstrapInfo, showToken = true): strin
     const rawToken = info.token.trim() || "<backend-token>";
     const backendToken = showToken ? rawToken : "***";
     const lines = [
-      "./neko-agent \\",
+      "./orbit-agent \\",
       "  --server-url " + shellQuote(getSuggestedServerUrl()) + " \\",
       "  --backend-id " + info.backendId + " \\",
       "  --backend-token " + shellQuote(backendToken) + " \\",
@@ -555,7 +555,7 @@ function buildAgentRunCommand(info: AgentBootstrapInfo, showToken = true): strin
     info.type === "surge" ? "http://127.0.0.1:9091" : "http://127.0.0.1:9090";
 
   const _legacy = [
-    "./neko-agent \\",
+    "./orbit-agent \\",
     `  --server-url ${getSuggestedServerUrl()} \\`,
     `  --backend-id ${info.backendId} \\`,
     `  --backend-token ${info.token} \\`,
@@ -579,16 +579,16 @@ function buildAgentInstallScriptCommand(info: AgentBootstrapInfo, showToken = tr
     const backendToken = showToken ? rawToken : "***";
     const lines = [
       "curl -fsSL " + AGENT_INSTALL_SCRIPT_URL + " \\",
-      "  | env NEKO_SERVER=" + shellQuote(getSuggestedServerUrl()) + " \\",
-      "        NEKO_BACKEND_ID=" + shellQuote(String(info.backendId)) + " \\",
-      "        NEKO_BACKEND_TOKEN=" + shellQuote(backendToken) + " \\",
-      "        NEKO_GATEWAY_TYPE=" + shellQuote(info.type) + " \\",
-      "        NEKO_GATEWAY_URL=" + shellQuote(gatewayUrlWithConfig) + " \\",
+      "  | env ORBIT_SERVER=" + shellQuote(getSuggestedServerUrl()) + " \\",
+      "        ORBIT_BACKEND_ID=" + shellQuote(String(info.backendId)) + " \\",
+      "        ORBIT_BACKEND_TOKEN=" + shellQuote(backendToken) + " \\",
+      "        ORBIT_GATEWAY_TYPE=" + shellQuote(info.type) + " \\",
+      "        ORBIT_GATEWAY_URL=" + shellQuote(gatewayUrlWithConfig) + " \\",
     ];
 
     if (info.gatewayToken.trim()) {
       lines.push(
-        "        NEKO_GATEWAY_TOKEN=" + shellQuote(info.gatewayToken.trim()) + " \\",
+        "        ORBIT_GATEWAY_TOKEN=" + shellQuote(info.gatewayToken.trim()) + " \\",
       );
     }
 
@@ -601,11 +601,11 @@ function buildAgentInstallScriptCommand(info: AgentBootstrapInfo, showToken = tr
 
   const _legacy = [
     `curl -fsSL ${AGENT_INSTALL_SCRIPT_URL} \\`,
-    `  | env NEKO_SERVER=${shellQuote(getSuggestedServerUrl())} \\`,
-    `        NEKO_BACKEND_ID=${shellQuote(String(info.backendId))} \\`,
-    `        NEKO_BACKEND_TOKEN=${shellQuote(info.token)} \\`,
-    `        NEKO_GATEWAY_TYPE=${shellQuote(info.type)} \\`,
-    `        NEKO_GATEWAY_URL=${shellQuote(gatewayUrl)} \\`,
+    `  | env ORBIT_SERVER=${shellQuote(getSuggestedServerUrl())} \\`,
+    `        ORBIT_BACKEND_ID=${shellQuote(String(info.backendId))} \\`,
+    `        ORBIT_BACKEND_TOKEN=${shellQuote(info.token)} \\`,
+    `        ORBIT_GATEWAY_TYPE=${shellQuote(info.type)} \\`,
+    `        ORBIT_GATEWAY_URL=${shellQuote(gatewayUrl)} \\`,
     `        sh`,
   ].join("\n");
   void _legacy;
@@ -624,7 +624,7 @@ function buildAgentQuickAddCommand(info: AgentBootstrapInfo, showToken = true): 
   const instanceName = `backend-${info.backendId}`;
 
   const lines = [
-    "nekoagent add " + shellQuote(instanceName) + " \\",
+    "orbitagent add " + shellQuote(instanceName) + " \\",
     "  --server-url " + shellQuote(getSuggestedServerUrl()) + " \\",
     "  --backend-id " + info.backendId + " \\",
     "  --backend-token " + shellQuote(backendToken) + " \\",

@@ -264,7 +264,7 @@ write_systemd_unit() {
   unit_path="/etc/systemd/system/${service}.service"
   cat > "$unit_path" <<EOF
 [Unit]
-Description=Neko Agent (${name})
+Description=MihomoOrbit Agent (${name})
 After=network-online.target
 Wants=network-online.target
 
@@ -668,7 +668,7 @@ version() {
 
 usage() {
   cat <<EOF
-Neko Agent Manager v${VERSION}
+MihomoOrbit Agent Manager v${VERSION}
 
 Usage:
   $PROG init <name> [KEY=VALUE ...]          Create/overwrite config file

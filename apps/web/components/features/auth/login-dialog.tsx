@@ -16,9 +16,9 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
-const CAT_OPEN_EYE = "/images/neko-open-eye.png";
-const CAT_CLOSE_EYE = "/images/neko-open-close.png";
-const NEKO_WELCOME = "/images/neko-welcome.png";
+const MASCOT_OPEN_EYE = "/images/mascot-open-eye.png";
+const MASCOT_CLOSE_EYE = "/images/mascot-close-eye.png";
+const MASCOT_WELCOME = "/images/mascot-welcome.png";
 
 interface LoginDialogProps {
   open: boolean;
@@ -88,8 +88,8 @@ export function LoginDialog({ open, onOpenChange, onLogin }: LoginDialogProps) {
             >
               <div className="relative w-40 h-40 sm:w-50 sm:h-50">
                  <Image
-                  src={NEKO_WELCOME}
-                  alt="Welcome Neko"
+                  src={MASCOT_WELCOME}
+                  alt="Welcome"
                   fill
                   className="object-contain drop-shadow-xl"
                   priority
@@ -142,7 +142,7 @@ export function LoginDialog({ open, onOpenChange, onLogin }: LoginDialogProps) {
                      {/* Closed Eye Cat (Always present as base) */}
                     <div className="absolute inset-0">
                       <Image
-                        src={CAT_CLOSE_EYE}
+                        src={MASCOT_CLOSE_EYE}
                         alt="Cat Closed Eyes"
                         fill
                         className="object-contain drop-shadow-2xl filter brightness-110"
@@ -158,7 +158,7 @@ export function LoginDialog({ open, onOpenChange, onLogin }: LoginDialogProps) {
                       transition={{ duration: 0.2 }}
                     >
                       <Image
-                        src={CAT_OPEN_EYE}
+                        src={MASCOT_OPEN_EYE}
                         alt="Cat Open Eyes"
                         fill
                         className="object-contain drop-shadow-2xl filter brightness-110"

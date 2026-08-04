@@ -83,14 +83,14 @@ run_agent_installer() {
 
 	echo ""
 	echo "╔════════════════════════════════════════════════════════╗"
-	echo "║           Neko Agent - One-Click Install              ║"
+	echo "║           MihomoOrbit Agent - One-Click Install              ║"
 	echo "╚════════════════════════════════════════════════════════╝"
 	echo ""
 
 	print_info "Prepare required variables for agent install"
 	print_info "Tip: you can pre-export env vars to run non-interactively"
 
-	prompt_if_empty "ORBIT_SERVER" "Neko server URL (e.g. http://10.0.0.2:3000)"
+	prompt_if_empty "ORBIT_SERVER" "MihomoOrbit server URL (e.g. http://10.0.0.2:3000)"
 	prompt_if_empty "ORBIT_BACKEND_ID" "Backend ID"
 	prompt_if_empty "ORBIT_BACKEND_TOKEN" "Backend token" true
 	prompt_if_empty "ORBIT_GATEWAY_TYPE" "Gateway type (clash/surge)"
@@ -432,7 +432,7 @@ agent | agent-install)
 	print_error "Unknown command: $1"
 	echo "Usage:"
 	echo "  ./setup.sh                # setup MihomoOrbit service"
-	echo "  ./setup.sh agent-install  # install and run Neko Agent"
+	echo "  ./setup.sh agent-install  # install and run MihomoOrbit Agent"
 	exit 1
 	;;
 esac

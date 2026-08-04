@@ -1,4 +1,4 @@
-# Neko Agent (Go)
+# MihomoOrbit Agent (Go)
 
 A standalone executable agent for LAN data collection and reporting to MihomoOrbit.
 
