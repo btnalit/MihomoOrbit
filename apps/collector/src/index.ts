@@ -133,6 +133,13 @@ async function main() {
       '[SECURITY] FORCE_ACCESS_CONTROL_OFF is set — ALL authentication is bypassed. Remove it except for recovery.',
     );
   }
+  if (apiFastifyApp?.authService.hasLegacyTokenHash()) {
+    console.warn(
+      '[SECURITY] The stored access token still uses the pre-M0 unsalted SHA-256 format. ' +
+        'It is treated as unconfigured and must be re-set (see docs/migration-from-neko.md). ' +
+        'While FORCE_ACCESS_CONTROL_OFF is set this prompt is bypassed and the weak token stays in place.',
+    );
+  }
   if (apiFastifyApp && !apiFastifyApp.authService.isConfigured()) {
     console.warn(
       `[SETUP] Authentication is not configured yet.\n` +

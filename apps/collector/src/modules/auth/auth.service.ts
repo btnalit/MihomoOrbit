@@ -128,6 +128,15 @@ export class AuthService {
     return config.enabled && !!config.tokenHash && !isLegacyHash(config.tokenHash);
   }
 
+  /**
+   * 存储的哈希是否为 M0 之前的未加盐 sha256。isConfigured() 已把它当作未配置,
+   * 但 FORCE_ACCESS_CONTROL_OFF 会绕过整个设置流程,导致弱令牌被无限期沿用
+   * 且毫无提示——启动告警据此点名(见 index.ts)。
+   */
+  hasLegacyTokenHash(): boolean {
+    return isLegacyHash(this.db.getAuthConfig().tokenHash);
+  }
+
   /** Returns the current one-time setup token, or null once configured/consumed. */
   getSetupToken(): string | null {
     return this.setupToken;
