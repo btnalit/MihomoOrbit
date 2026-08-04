@@ -15,7 +15,7 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn, formatBytes } from "@/lib/utils";
-import type { TrafficTrendPoint } from "@neko-master/shared";
+import type { TrafficTrendPoint } from "@mihomo-orbit/shared";
 
 type TimeRange = "30m" | "1h" | "24h" | "today";
 type TrendGranularity = "minute" | "day";

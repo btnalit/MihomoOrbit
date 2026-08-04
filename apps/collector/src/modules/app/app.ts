@@ -11,7 +11,7 @@ import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import type { StatsDatabase } from '../db/db.js';
 import type { RealtimeStore } from '../realtime/realtime.store.js';
-import { buildGatewayHeaders, getGatewayBaseUrl, isAgentBackendUrl, parseSurgeRule } from '@neko-master/shared';
+import { buildGatewayHeaders, getGatewayBaseUrl, isAgentBackendUrl, parseSurgeRule } from '@mihomo-orbit/shared';
 import type { TrafficUpdate } from '../db/db.js';
 import { SurgePolicySyncService } from '../surge/surge-policy-sync.js';
 import type { GeoIPService } from '../geo/geo.service.js';

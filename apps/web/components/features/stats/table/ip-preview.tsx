@@ -8,7 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { CountryFlag } from "@/components/features/countries/country-flag";
 import { cn } from "@/lib/utils";
 import { useCountryName } from "@/lib/i18n-country";
-import { normalizeGeoIP, type GeoIPInfo } from "@neko-master/shared";
+import { normalizeGeoIP, type GeoIPInfo } from "@mihomo-orbit/shared";
 
 interface IPPreviewProps {
   ip?: string | null;

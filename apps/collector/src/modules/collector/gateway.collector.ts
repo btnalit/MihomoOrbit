@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import type { ConnectionsData } from "@neko-master/shared";
+import type { ConnectionsData } from "@mihomo-orbit/shared";
 import { StatsDatabase } from "../db/db.js";
 import { GeoIPService } from "../geo/geo.service.js";
 import { TrafficWriteError } from "../clickhouse/clickhouse.writer.js";

@@ -27,7 +27,7 @@ import { toast } from "sonner";
 import type {
   StatsSummary,
   CountryStats,
-} from "@neko-master/shared";
+} from "@mihomo-orbit/shared";
 
 export type { BackendStatus, TabId, TimePreset };
 

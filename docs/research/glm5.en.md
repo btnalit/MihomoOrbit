@@ -631,13 +631,13 @@ runAutoCleanup():
 
 ```bash
 # All tests
-pnpm --filter @neko-master/collector test
+pnpm --filter @mihomo-orbit/collector test
 
 # Single file
-pnpm --filter @neko-master/collector test -- src/modules/auth/auth.service.test.ts
+pnpm --filter @mihomo-orbit/collector test -- src/modules/auth/auth.service.test.ts
 
 # Watch mode
-pnpm --filter @neko-master/collector test:watch
+pnpm --filter @mihomo-orbit/collector test:watch
 ```
 
 ---

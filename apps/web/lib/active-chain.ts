@@ -1,5 +1,5 @@
 import type { GatewayProvidersResponse, GatewayRulesResponse, GatewayProxiesResponse } from "./api";
-import { parseGatewayRule } from "@neko-master/shared";
+import { parseGatewayRule } from "@mihomo-orbit/shared";
 
 export function encodeActiveLinkKey(sourceName: string, targetName: string): string {
   return JSON.stringify([sourceName, targetName]);

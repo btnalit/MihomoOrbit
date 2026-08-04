@@ -52,7 +52,7 @@ import {
   type DomainSortKey,
   type SortOrder,
 } from "@/lib/stats-utils";
-import type { DomainStats } from "@neko-master/shared";
+import type { DomainStats } from "@mihomo-orbit/shared";
 
 const DETAIL_QUERY_STALE_MS = 30_000;
 

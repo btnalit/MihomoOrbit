@@ -8,7 +8,7 @@ import type {
   TrafficTrendPoint,
   ProxyTrafficStats,
   DeviceStats,
-} from "@neko-master/shared";
+} from "@mihomo-orbit/shared";
 import { getAuthHeaders } from "./auth-queries";
 
 type RuntimeConfig = {

@@ -22,7 +22,7 @@ import { formatBytes } from "@/lib/utils";
 import { api, type TimeRange } from "@/lib/api";
 import { useStableTimeRange } from "@/lib/hooks/use-stable-time-range";
 import { getDomainsQueryKey } from "@/lib/stats-query-keys";
-import type { DomainStats } from "@neko-master/shared";
+import type { DomainStats } from "@mihomo-orbit/shared";
 
 interface TopDomainsChartProps {
   data?: DomainStats[];

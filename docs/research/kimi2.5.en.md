@@ -156,7 +156,7 @@ pnpm install
 pnpm dev
 pnpm build
 pnpm lint
-pnpm --filter @neko-master/collector test
+pnpm --filter @mihomo-orbit/collector test
 ```
 
 Collector tests can be filtered by file name or test title.

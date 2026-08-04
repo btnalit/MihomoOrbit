@@ -24,17 +24,17 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # Build shared package first
-RUN pnpm --filter @neko-master/shared build
+RUN pnpm --filter @mihomo-orbit/shared build
 
 # Build collector
-RUN pnpm --filter @neko-master/collector build
+RUN pnpm --filter @mihomo-orbit/collector build
 
 # Build web with production env for PWA
 ENV NODE_ENV=production
-RUN pnpm --filter @neko-master/web build
+RUN pnpm --filter @mihomo-orbit/web build
 
 # Create a minimal, deployable bundle for collector (production deps only)
-RUN pnpm --filter @neko-master/collector deploy --prod /app/apps/collector-deploy && \
+RUN pnpm --filter @mihomo-orbit/collector deploy --prod /app/apps/collector-deploy && \
     mkdir -p /app/apps/collector-deploy/dist && \
     cp -r /app/apps/collector/dist/* /app/apps/collector-deploy/dist/
 

@@ -8,8 +8,8 @@ import { DomainPreview } from "@/components/features/domains";
 import { getDomainColor, getIPGradient } from "@/lib/stats-utils";
 import { formatBytes, formatNumber } from "@/lib/utils";
 import { useCountryName } from "@/lib/i18n-country";
-import { normalizeGeoIP } from "@neko-master/shared";
-import type { DomainStats, IPStats, ProxyTrafficStats } from "@neko-master/shared";
+import { normalizeGeoIP } from "@mihomo-orbit/shared";
+import type { DomainStats, IPStats, ProxyTrafficStats } from "@mihomo-orbit/shared";
 
 interface DomainExpandedDetailsProps {
   domain: Pick<

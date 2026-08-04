@@ -20,10 +20,10 @@ Monorepo 结构：`apps/web`（Next.js 前端）、`apps/collector`（Fastify + 
 按改动范围运行检查（详见 [`verify-changes` skill](./.claude/skills/verify-changes/SKILL.md)）：
 
 ```bash
-pnpm --filter @neko-master/collector exec tsc --noEmit
-pnpm --filter @neko-master/collector test
-pnpm --filter @neko-master/web exec tsc --noEmit
-pnpm --filter @neko-master/web exec next build     # 影响生产构建的前端改动
+pnpm --filter @mihomo-orbit/collector exec tsc --noEmit
+pnpm --filter @mihomo-orbit/collector test
+pnpm --filter @mihomo-orbit/web exec tsc --noEmit
+pnpm --filter @mihomo-orbit/web exec next build     # 影响生产构建的前端改动
 cd apps/agent && go vet ./... && go test ./...      # 探针改动
 ```
 

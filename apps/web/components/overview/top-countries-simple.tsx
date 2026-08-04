@@ -8,7 +8,7 @@ import { CountryFlag } from "@/components/features/countries";
 import { formatBytes, formatNumber, cn } from "@/lib/utils";
 import { useResponsiveItemCount } from "@/lib/hooks/use-responsive-item-count";
 import { useCountryName } from "@/lib/i18n-country";
-import type { CountryStats } from "@neko-master/shared";
+import type { CountryStats } from "@mihomo-orbit/shared";
 
 interface TopCountriesSimpleProps {
   countries: CountryStats[];

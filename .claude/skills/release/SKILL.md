@@ -22,10 +22,10 @@ Two independent release lines, both driven entirely by git tags:
 4. **Test gates** (all must pass):
 
 ```bash
-pnpm --filter @neko-master/collector exec tsc --noEmit
-pnpm --filter @neko-master/collector test
-pnpm --filter @neko-master/web exec tsc --noEmit
-pnpm --filter @neko-master/web exec next build
+pnpm --filter @mihomo-orbit/collector exec tsc --noEmit
+pnpm --filter @mihomo-orbit/collector test
+pnpm --filter @mihomo-orbit/web exec tsc --noEmit
+pnpm --filter @mihomo-orbit/web exec next build
 ```
 
 5. **Ship**:

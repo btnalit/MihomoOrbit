@@ -3,7 +3,7 @@ import type { StatsDatabase } from "../db/db.js";
 import { GeoIPService } from "../geo/geo.service.js";
 import { TrafficWriteError } from "../clickhouse/clickhouse.writer.js";
 import { realtimeStore } from "../realtime/realtime.store.js";
-import type { SurgeRequest, SurgeRequestsData } from "@neko-master/shared";
+import type { SurgeRequest, SurgeRequestsData } from "@mihomo-orbit/shared";
 import { calculateBackoffDelay } from "../../shared/utils/backoff.js";
 import { BatchBuffer } from "./batch-buffer.js";
 

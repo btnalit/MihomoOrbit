@@ -13,7 +13,7 @@ import {
   type SortOrder,
 } from "@/lib/stats-utils";
 import { DomainStatsTable } from "./domain-stats-table";
-import type { DomainStats, StatsSummary } from "@neko-master/shared";
+import type { DomainStats, StatsSummary } from "@mihomo-orbit/shared";
 
 interface DomainsTableProps {
   activeBackendId?: number;

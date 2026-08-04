@@ -29,7 +29,7 @@ import type {
   CountryStats,
   DeviceStats,
   ProxyStats,
-} from "@neko-master/shared";
+} from "@mihomo-orbit/shared";
 import type { PageSize } from "@/lib/stats-utils";
 
 interface ContentProps {

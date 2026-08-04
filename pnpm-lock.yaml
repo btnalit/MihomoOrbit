@@ -23,7 +23,7 @@ importers:
       '@fastify/cors':
         specifier: ^11.2.0
         version: 11.2.0
-      '@neko-master/shared':
+      '@mihomo-orbit/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       better-sqlite3:
@@ -75,7 +75,7 @@ importers:
       '@ducanh2912/next-pwa':
         specifier: ^10.2.9
         version: 10.2.9(next@16.2.7(@babel/core@7.29.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(webpack@5.105.0)
-      '@neko-master/shared':
+      '@mihomo-orbit/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@radix-ui/react-alert-dialog':

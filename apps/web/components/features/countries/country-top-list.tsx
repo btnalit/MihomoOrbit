@@ -8,7 +8,7 @@ import { OverviewCard } from "@/components/common";
 import { TopListItem } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { useCountryName } from "@/lib/i18n-country";
-import type { CountryStats } from "@neko-master/shared";
+import type { CountryStats } from "@mihomo-orbit/shared";
 
 interface CountryTopListProps {
   data: CountryStats[];

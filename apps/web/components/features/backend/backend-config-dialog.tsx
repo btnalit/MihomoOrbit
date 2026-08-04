@@ -59,7 +59,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn, formatBytes, formatNumber } from "@/lib/utils";
 import { api, type GeoLookupConfig, type GeoLookupProvider } from "@/lib/api";
-import { isAgentBackendUrl } from "@neko-master/shared";
+import { isAgentBackendUrl } from "@mihomo-orbit/shared";
 import { toast } from "sonner";
 import { BackendVerifyAnimation } from "@/components/features/backend/backend-verify-animation";
 import { BackendListSkeleton } from "@/components/ui/insight-skeleton";

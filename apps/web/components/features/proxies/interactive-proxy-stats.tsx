@@ -24,7 +24,7 @@ import { Favicon } from "@/components/common";
 import { DomainStatsTable, IPStatsTable } from "@/components/features/stats/table";
 import { InsightChartSkeleton, InsightThreePanelSkeleton } from "@/components/ui/insight-skeleton";
 import { COLORS, type PageSize } from "@/lib/stats-utils";
-import type { ProxyStats, StatsSummary } from "@neko-master/shared";
+import type { ProxyStats, StatsSummary } from "@mihomo-orbit/shared";
 
 interface InteractiveProxyStatsProps {
   data?: ProxyStats[];

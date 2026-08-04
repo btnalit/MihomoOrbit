@@ -5,7 +5,7 @@
  * traffic in range, traffic trend and aggregated trend.
  */
 import type Database from 'better-sqlite3';
-import type { HourlyStats } from '@neko-master/shared';
+import type { HourlyStats } from '@mihomo-orbit/shared';
 import { BaseRepository } from './base.repository.js';
 
 export class TimeseriesRepository extends BaseRepository {

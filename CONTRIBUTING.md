@@ -20,10 +20,10 @@ Monorepo layout: `apps/web` (Next.js frontend), `apps/collector` (Fastify + SQLi
 Run the checks for the areas you touched (details: [`verify-changes` skill](./.claude/skills/verify-changes/SKILL.md)):
 
 ```bash
-pnpm --filter @neko-master/collector exec tsc --noEmit
-pnpm --filter @neko-master/collector test
-pnpm --filter @neko-master/web exec tsc --noEmit
-pnpm --filter @neko-master/web exec next build     # for production-impacting web changes
+pnpm --filter @mihomo-orbit/collector exec tsc --noEmit
+pnpm --filter @mihomo-orbit/collector test
+pnpm --filter @mihomo-orbit/web exec tsc --noEmit
+pnpm --filter @mihomo-orbit/web exec next build     # for production-impacting web changes
 cd apps/agent && go vet ./... && go test ./...      # for agent changes
 ```
 

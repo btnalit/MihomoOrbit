@@ -42,7 +42,7 @@ import type {
   DomainStats,
   IPStats,
   StatsSummary,
-} from "@neko-master/shared";
+} from "@mihomo-orbit/shared";
 
 interface InteractiveDeviceStatsProps {
   data: DeviceStats[];

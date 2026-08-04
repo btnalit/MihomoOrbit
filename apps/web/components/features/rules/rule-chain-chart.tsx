@@ -5,7 +5,7 @@ import { Network, ArrowRight } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatBytes, formatNumber } from "@/lib/utils";
-import type { RuleStats } from "@neko-master/shared";
+import type { RuleStats } from "@mihomo-orbit/shared";
 
 interface RuleChainChartProps {
   data: RuleStats[];

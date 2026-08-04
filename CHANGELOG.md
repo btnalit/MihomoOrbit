@@ -534,7 +534,7 @@
 ### 变更
 - **项目品牌重塑**：从 "Clash Master" 更名为 "Neko Master"
   - 更新所有素材和品牌标识
-  - 包作用域从 `@clashmaster` 更改为 `@neko-master`
+  - 包作用域从 `@clashmaster` 更改为 `@mihomo-orbit`
   - 清理遗留引用
 - 重构 Web 应用组件目录结构，划分为 `common`、`layout` 和 `features` 三个目录
 - 将 API 路由从单体 `api.ts` 迁移到专用控制器

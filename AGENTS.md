@@ -98,28 +98,28 @@ docs/
 
 ### Filtered workspace commands (recommended during development)
 
-- Build web only: `pnpm --filter @neko-master/web build`
-- Build collector only: `pnpm --filter @neko-master/collector build`
-- Build shared only: `pnpm --filter @neko-master/shared build`
-- Lint web only: `pnpm --filter @neko-master/web lint`
-- Lint collector only: `pnpm --filter @neko-master/collector lint`
+- Build web only: `pnpm --filter @mihomo-orbit/web build`
+- Build collector only: `pnpm --filter @mihomo-orbit/collector build`
+- Build shared only: `pnpm --filter @mihomo-orbit/shared build`
+- Lint web only: `pnpm --filter @mihomo-orbit/web lint`
+- Lint collector only: `pnpm --filter @mihomo-orbit/collector lint`
 
 ### Tests
 
 - This repo currently has tests in `apps/collector` (Vitest).
-- Run all collector tests: `pnpm --filter @neko-master/collector test`
-- Watch mode: `pnpm --filter @neko-master/collector test:watch`
+- Run all collector tests: `pnpm --filter @mihomo-orbit/collector test`
+- Watch mode: `pnpm --filter @mihomo-orbit/collector test:watch`
 
 ### Run a single test file (important)
 
 - Run one test file:
-  - `pnpm --filter @neko-master/collector test -- src/modules/auth/auth.service.test.ts`
+  - `pnpm --filter @mihomo-orbit/collector test -- src/modules/auth/auth.service.test.ts`
 - Run one test file by pattern:
-  - `pnpm --filter @neko-master/collector test -- src/**/*.geoip-config.test.ts`
+  - `pnpm --filter @mihomo-orbit/collector test -- src/**/*.geoip-config.test.ts`
 - Run a single test case by name:
-  - `pnpm --filter @neko-master/collector test -- -t "should validate token format"`
+  - `pnpm --filter @mihomo-orbit/collector test -- -t "should validate token format"`
 - Run single file + test name:
-  - `pnpm --filter @neko-master/collector test -- src/modules/auth/auth.service.test.ts -t "should validate token format"`
+  - `pnpm --filter @mihomo-orbit/collector test -- src/modules/auth/auth.service.test.ts -t "should validate token format"`
 
 ### Writing tests (collector)
 
@@ -129,7 +129,7 @@ docs/
 
 ### Type checks and push safety
 
-- Collector type check: `pnpm --filter @neko-master/collector exec tsc --noEmit`
+- Collector type check: `pnpm --filter @mihomo-orbit/collector exec tsc --noEmit`
 - Note: `.husky/pre-push` runs checks when pushing to `main`:
   - collector `tsc --noEmit`
   - web `build`
@@ -159,7 +159,7 @@ docs/
   3) workspace/internal modules.
 - Use relative imports with `.js` extension in ESM NodeNext packages (`collector`, `shared`).
 - In web app code, prefer alias imports via `@/*` for internal modules.
-- Do not create cross-app deep imports; use `@neko-master/shared` for shared contracts.
+- Do not create cross-app deep imports; use `@mihomo-orbit/shared` for shared contracts.
 
 ### Formatting and Layout
 
@@ -201,7 +201,7 @@ docs/
 - Respect Next.js App Router conventions (`app/[locale]/...`).
 - Add `"use client"` only for client components/hooks that need it.
 - Prefer React Query hooks for server state and caching.
-- Keep API contract types aligned with `@neko-master/shared` and `apps/web/lib/api.ts`.
+- Keep API contract types aligned with `@mihomo-orbit/shared` and `apps/web/lib/api.ts`.
 - Reuse shared utility helpers (`cn`, formatting utilities) instead of ad-hoc duplicates.
 - **i18n**: uses `next-intl` with two locales (`zh` default, `en`).
   - Translation files: `apps/web/messages/{zh,en}.json`.

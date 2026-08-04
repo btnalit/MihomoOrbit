@@ -5,7 +5,7 @@
  * All specific repositories should extend this class.
  */
 import type Database from 'better-sqlite3';
-import type { ProxyStats } from '@neko-master/shared';
+import type { ProxyStats } from '@mihomo-orbit/shared';
 
 export abstract class BaseRepository {
   protected db: Database.Database;

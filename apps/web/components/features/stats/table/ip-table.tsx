@@ -13,7 +13,7 @@ import {
   type SortOrder,
 } from "@/lib/stats-utils";
 import { IPStatsTable } from "./ip-stats-table";
-import type { IPStats, StatsSummary } from "@neko-master/shared";
+import type { IPStats, StatsSummary } from "@mihomo-orbit/shared";
 
 interface IPsTableProps {
   activeBackendId?: number;

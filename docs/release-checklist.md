@@ -14,8 +14,8 @@ Use this checklist before shipping a new Neko Master release that includes Agent
 Run locally from repo root:
 
 ```bash
-pnpm --filter @neko-master/collector build
-pnpm --filter @neko-master/web exec tsc --noEmit
+pnpm --filter @mihomo-orbit/collector build
+pnpm --filter @mihomo-orbit/web exec tsc --noEmit
 ```
 
 Run agent checks:

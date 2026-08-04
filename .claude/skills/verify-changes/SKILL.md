@@ -12,34 +12,34 @@ Run the smallest check set that covers what you touched. All commands run from t
 ### apps/collector (backend)
 
 ```bash
-pnpm --filter @neko-master/collector exec tsc --noEmit
-pnpm --filter @neko-master/collector test
+pnpm --filter @mihomo-orbit/collector exec tsc --noEmit
+pnpm --filter @mihomo-orbit/collector test
 ```
 
 Single test file / case (much faster while iterating):
 
 ```bash
-pnpm --filter @neko-master/collector test -- src/modules/auth/auth.service.test.ts
-pnpm --filter @neko-master/collector test -- -t "should validate token format"
+pnpm --filter @mihomo-orbit/collector test -- src/modules/auth/auth.service.test.ts
+pnpm --filter @mihomo-orbit/collector test -- -t "should validate token format"
 ```
 
 Lint (CI-relevant; `console.log` is forbidden in collector source — use `console.info/warn/error`):
 
 ```bash
-pnpm --filter @neko-master/collector lint
+pnpm --filter @mihomo-orbit/collector lint
 ```
 
 ### apps/web (frontend)
 
 ```bash
-pnpm --filter @neko-master/web exec tsc --noEmit
-pnpm --filter @neko-master/web lint
+pnpm --filter @mihomo-orbit/web exec tsc --noEmit
+pnpm --filter @mihomo-orbit/web lint
 ```
 
 For production-impacting changes (new routes, error boundaries, next.config, i18n files) also run the full build — it catches what tsc alone misses:
 
 ```bash
-pnpm --filter @neko-master/web exec next build
+pnpm --filter @mihomo-orbit/web exec next build
 ```
 
 ### packages/shared
@@ -47,9 +47,9 @@ pnpm --filter @neko-master/web exec next build
 Shared types are consumed by both apps — verify both compile:
 
 ```bash
-pnpm --filter @neko-master/shared build
-pnpm --filter @neko-master/collector exec tsc --noEmit
-pnpm --filter @neko-master/web exec tsc --noEmit
+pnpm --filter @mihomo-orbit/shared build
+pnpm --filter @mihomo-orbit/collector exec tsc --noEmit
+pnpm --filter @mihomo-orbit/web exec tsc --noEmit
 ```
 
 ### apps/agent (Go probe)

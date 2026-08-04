@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn, formatBytes, formatNumber } from "@/lib/utils";
 import { useIsWindows } from "@/lib/hooks/use-is-windows";
 import { useResponsiveItemCount } from "@/lib/hooks/use-responsive-item-count";
-import type { ProxyStats } from "@neko-master/shared";
+import type { ProxyStats } from "@mihomo-orbit/shared";
 
 interface TopProxiesSimpleProps {
   proxies: ProxyStats[];

@@ -7,7 +7,7 @@ import { useTranslations } from "next-intl";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatBytes, formatNumber, cn } from "@/lib/utils";
 import { useIsWindows } from "@/lib/hooks/use-is-windows";
-import type { ProxyStats } from "@neko-master/shared";
+import type { ProxyStats } from "@mihomo-orbit/shared";
 
 interface ProxyStatsChartProps {
   data: ProxyStats[];

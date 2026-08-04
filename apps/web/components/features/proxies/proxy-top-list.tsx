@@ -9,7 +9,7 @@ import { TopListItem } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { formatBytes, formatNumber, cn } from "@/lib/utils";
 import { useIsWindows } from "@/lib/hooks/use-is-windows";
-import type { ProxyStats } from "@neko-master/shared";
+import type { ProxyStats } from "@mihomo-orbit/shared";
 
 interface ProxyTopListProps {
   data: ProxyStats[];

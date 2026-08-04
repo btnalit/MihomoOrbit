@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn, formatBytes, formatNumber } from "@/lib/utils";
 import { useSettings, getFaviconUrl } from "@/lib/settings";
 import { useResponsiveItemCount } from "@/lib/hooks/use-responsive-item-count";
-import type { DomainStats } from "@neko-master/shared";
+import type { DomainStats } from "@mihomo-orbit/shared";
 
 interface TopDomainsSimpleProps {
   domains: DomainStats[];

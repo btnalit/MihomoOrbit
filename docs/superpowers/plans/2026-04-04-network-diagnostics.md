@@ -1259,7 +1259,7 @@ git commit -m "feat(collector): add network diagnostics controller with agent re
 import { ProxyAgent } from 'undici';
 import type { StatsDatabase } from '../db/db.js';
 import type { BackendConfig } from '../../database/repositories/index.js';
-import { buildGatewayHeaders, getGatewayBaseUrl, isAgentBackendUrl } from '@neko-master/shared';
+import { buildGatewayHeaders, getGatewayBaseUrl, isAgentBackendUrl } from '@mihomo-orbit/shared';
 
 interface DiagTarget {
   name: string;

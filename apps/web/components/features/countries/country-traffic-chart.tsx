@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CountryFlag } from "./country-flag";
 import { formatBytes, formatNumber } from "@/lib/utils";
 import { useCountryName } from "@/lib/i18n-country";
-import type { CountryStats } from "@neko-master/shared";
+import type { CountryStats } from "@mihomo-orbit/shared";
 
 interface CountryTrafficChartProps {
   data: CountryStats[];

@@ -50,8 +50,8 @@ import {
   type SortOrder,
 } from "@/lib/stats-utils";
 import { useCountryName } from "@/lib/i18n-country";
-import { normalizeGeoIP } from "@neko-master/shared";
-import type { IPStats } from "@neko-master/shared";
+import { normalizeGeoIP } from "@mihomo-orbit/shared";
+import type { IPStats } from "@mihomo-orbit/shared";
 
 const DETAIL_QUERY_STALE_MS = 30_000;
 type IPTableMode = "local" | "remote";

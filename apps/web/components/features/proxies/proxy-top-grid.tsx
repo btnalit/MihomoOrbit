@@ -12,7 +12,7 @@ import {
 } from "@/components/features/countries";
 import { formatBytes, formatNumber, cn } from "@/lib/utils";
 import { useIsWindows } from "@/lib/hooks/use-is-windows";
-import type { ProxyStats } from "@neko-master/shared";
+import type { ProxyStats } from "@mihomo-orbit/shared";
 
 interface ProxyTopGridProps {
   data: ProxyStats[];

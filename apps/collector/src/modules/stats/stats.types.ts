@@ -2,7 +2,7 @@
  * Stats module type definitions
  */
 
-import type { DomainStats, IPStats, ProxyStats, RuleStats, HourlyStats, DeviceStats } from '@neko-master/shared';
+import type { DomainStats, IPStats, ProxyStats, RuleStats, HourlyStats, DeviceStats } from '@mihomo-orbit/shared';
 
 export interface TimeRangeQuery {
   start?: string;

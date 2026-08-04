@@ -5,7 +5,7 @@
  * and per-rule domain/IP breakdowns.
  */
 import type Database from 'better-sqlite3';
-import type { DomainStats, IPStats, ProxyStats, RuleStats } from '@neko-master/shared';
+import type { DomainStats, IPStats, ProxyStats, RuleStats } from '@mihomo-orbit/shared';
 import { BaseRepository } from './base.repository.js';
 
 interface ProxyTrafficStats {

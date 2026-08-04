@@ -240,23 +240,23 @@ To help existing SQLite users transfer historical data before cutover, collector
 
 - Script: `apps/collector/src/scripts/migrate-sqlite-to-clickhouse.ts`
 - Command:
-  - `pnpm --filter @neko-master/collector migrate:sqlite-to-ch`
+  - `pnpm --filter @mihomo-orbit/collector migrate:sqlite-to-ch`
 
 Common examples:
 
 - Append-import from current SQLite DB:
-  - `CH_ENABLED=1 pnpm --filter @neko-master/collector migrate:sqlite-to-ch -- --sqlite ./apps/collector/stats.db`
+  - `CH_ENABLED=1 pnpm --filter @mihomo-orbit/collector migrate:sqlite-to-ch -- --sqlite ./apps/collector/stats.db`
 - Replace target tables and re-import:
-  - `CH_ENABLED=1 pnpm --filter @neko-master/collector migrate:sqlite-to-ch -- --sqlite ./apps/collector/stats.db --truncate`
+  - `CH_ENABLED=1 pnpm --filter @mihomo-orbit/collector migrate:sqlite-to-ch -- --sqlite ./apps/collector/stats.db --truncate`
 - Import a time window only:
-  - `CH_ENABLED=1 pnpm --filter @neko-master/collector migrate:sqlite-to-ch -- --sqlite ./apps/collector/stats.db --from 2026-02-01T00:00:00Z --to 2026-02-20T00:00:00Z`
+  - `CH_ENABLED=1 pnpm --filter @mihomo-orbit/collector migrate:sqlite-to-ch -- --sqlite ./apps/collector/stats.db --from 2026-02-01T00:00:00Z --to 2026-02-20T00:00:00Z`
 
 Validation command after migration:
 
 - Compare SQLite vs CH over a time window:
-  - `CH_ENABLED=1 pnpm --filter @neko-master/collector verify:sqlite-vs-ch -- --sqlite ./apps/collector/stats.db --from 2026-02-01T00:00:00Z --to 2026-02-20T00:00:00Z`
+  - `CH_ENABLED=1 pnpm --filter @mihomo-orbit/collector verify:sqlite-vs-ch -- --sqlite ./apps/collector/stats.db --from 2026-02-01T00:00:00Z --to 2026-02-20T00:00:00Z`
 - Fail CI/automation when delta is above threshold:
-  - `CH_ENABLED=1 pnpm --filter @neko-master/collector verify:sqlite-vs-ch -- --sqlite ./apps/collector/stats.db --max-delta 1 --fail-on-delta`
+  - `CH_ENABLED=1 pnpm --filter @mihomo-orbit/collector verify:sqlite-vs-ch -- --sqlite ./apps/collector/stats.db --max-delta 1 --fail-on-delta`
 
 Current migration coverage:
 

@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useTranslations, useLocale } from "next-intl";
-import type { HourlyStats } from "@neko-master/shared";
+import type { HourlyStats } from "@mihomo-orbit/shared";
 import { formatBytes } from "@/lib/utils";
 
 interface TrafficChartProps {

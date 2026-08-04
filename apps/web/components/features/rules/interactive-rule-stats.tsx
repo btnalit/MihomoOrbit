@@ -29,7 +29,7 @@ import { useIsWindows } from "@/lib/hooks/use-is-windows";
 import type { PageSize } from "@/lib/stats-utils";
 import { UnifiedRuleChainFlow } from "@/components/features/rules/rule-chain-flow";
 import { InsightChartSkeleton, InsightDetailSectionSkeleton, InsightThreePanelSkeleton } from "@/components/ui/insight-skeleton";
-import type { RuleStats, StatsSummary } from "@neko-master/shared";
+import type { RuleStats, StatsSummary } from "@mihomo-orbit/shared";
 
 interface InteractiveRuleStatsProps {
   data?: RuleStats[];

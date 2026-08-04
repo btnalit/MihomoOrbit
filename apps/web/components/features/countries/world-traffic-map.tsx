@@ -14,7 +14,7 @@ import { useTheme } from "next-themes";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatBytes, formatNumber } from "@/lib/utils";
 import { useCountryName } from "@/lib/i18n-country";
-import type { CountryStats } from "@neko-master/shared";
+import type { CountryStats } from "@mihomo-orbit/shared";
 
 interface WorldTrafficMapProps {
   data: CountryStats[];

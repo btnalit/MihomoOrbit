@@ -1,6 +1,6 @@
 
 import { WebSocket } from 'ws';
-import { StatsSummary } from '@neko-master/shared';
+import { StatsSummary } from '@mihomo-orbit/shared';
 
 export type SummaryFieldKey =
   | 'totals'

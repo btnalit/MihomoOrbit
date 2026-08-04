@@ -1,5 +1,5 @@
 import { WebSocketServer as WSServer, WebSocket } from 'ws';
-import type { StatsSummary, DomainStats, IPStats, ProxyStats, CountryStats, DeviceStats, RuleStats, HourlyStats } from '@neko-master/shared';
+import type { StatsSummary, DomainStats, IPStats, ProxyStats, CountryStats, DeviceStats, RuleStats, HourlyStats } from '@mihomo-orbit/shared';
 import type { StatsDatabase } from '../db/db.js';
 import type { StatsService } from '../stats/stats.service.js';
 import type { SummaryFieldKey, SummaryFieldMask } from './websocket.types.js';

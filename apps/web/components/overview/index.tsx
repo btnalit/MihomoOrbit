@@ -18,7 +18,7 @@ import type {
   CountryStats,
   TrafficTrendPoint,
   StatsSummary,
-} from "@neko-master/shared";
+} from "@mihomo-orbit/shared";
 
 type TrendTimeRange = "30m" | "1h" | "24h" | "today";
 type TrendGranularity = "minute" | "day";

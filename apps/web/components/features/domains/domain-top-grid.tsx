@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { formatBytes, formatNumber } from "@/lib/utils";
 import { useSettings, getFaviconUrl } from "@/lib/settings";
-import type { DomainStats } from "@neko-master/shared";
+import type { DomainStats } from "@mihomo-orbit/shared";
 
 interface DomainTopGridProps {
   data: DomainStats[];

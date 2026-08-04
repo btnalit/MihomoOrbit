@@ -5,7 +5,7 @@ import { Download, Upload, Globe, Activity, Server, Route, AlertTriangle } from 
 import { useTranslations, useLocale } from "next-intl";
 import { animate, motion, useTransform, useMotionValue } from "framer-motion";
 import { formatBytes, cn } from "@/lib/utils";
-import type { StatsSummary } from "@neko-master/shared";
+import type { StatsSummary } from "@mihomo-orbit/shared";
 
 interface StatsCardsProps {
   data: StatsSummary | null;

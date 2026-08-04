@@ -8,7 +8,7 @@ import { TopListItem } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { formatBytes, formatNumber } from "@/lib/utils";
 import { useSettings, getFaviconUrl } from "@/lib/settings";
-import type { DomainStats } from "@neko-master/shared";
+import type { DomainStats } from "@mihomo-orbit/shared";
 
 interface DomainTopListProps {
   data: DomainStats[];

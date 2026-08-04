@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { randomBytes } from 'crypto';
-import { normalizeGeoIP, type Connection, type DomainStats, type IPStats, type HourlyStats, type ProxyStats, type RuleStats, type ProxyTrafficStats, type DeviceStats } from '@neko-master/shared';
+import { normalizeGeoIP, type Connection, type DomainStats, type IPStats, type HourlyStats, type ProxyStats, type RuleStats, type ProxyTrafficStats, type DeviceStats } from '@mihomo-orbit/shared';
 import { getAllSchemaStatements } from '../../database/schema.js';
 import { cleanupMisattributedRuleNames } from '../../database/rule-name-cleanup.js';
 import {

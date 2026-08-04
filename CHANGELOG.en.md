@@ -538,7 +538,7 @@ This release comes from a project-wide deep review (architecture / database / pe
 ### Changed
 - **Project Rebranding**: Renamed from "Clash Master" to "Neko Master"
   - Updated all assets and branding materials
-  - Changed package scope from `@clashmaster` to `@neko-master`
+  - Changed package scope from `@clashmaster` to `@mihomo-orbit`
   - Cleanup of legacy references
 - Restructured web app components into `common`, `layout`, and `features` directories
 - Migrated API routes from monolithic `api.ts` to dedicated controllers

@@ -2,7 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
-import type { AuthState } from "@neko-master/shared";
+import type { AuthState } from "@mihomo-orbit/shared";
 
 // API functions
 async function fetchAuthState(): Promise<AuthState> {

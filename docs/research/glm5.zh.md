@@ -321,9 +321,9 @@ Web UI 通过 HTTP + WebSocket 消费数据
 常用命令：
 
 ```bash
-pnpm --filter @neko-master/collector test
-pnpm --filter @neko-master/collector test -- src/modules/auth/auth.service.test.ts
-pnpm --filter @neko-master/collector test:watch
+pnpm --filter @mihomo-orbit/collector test
+pnpm --filter @mihomo-orbit/collector test -- src/modules/auth/auth.service.test.ts
+pnpm --filter @mihomo-orbit/collector test:watch
 ```
 
 ---

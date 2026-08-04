@@ -156,7 +156,7 @@ pnpm install
 pnpm dev
 pnpm build
 pnpm lint
-pnpm --filter @neko-master/collector test
+pnpm --filter @mihomo-orbit/collector test
 ```
 
 单测可按文件或用例名过滤执行。

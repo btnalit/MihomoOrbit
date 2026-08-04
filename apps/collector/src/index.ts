@@ -1,7 +1,7 @@
 import { config } from 'dotenv';
 import path from 'path';
 import fs from 'fs';
-import { isAgentBackendUrl } from '@neko-master/shared';
+import { isAgentBackendUrl } from '@mihomo-orbit/shared';
 
 // Load .env.local if it exists (takes precedence over .env, but not shell)
 const envLocalPath = path.join(process.cwd(), '.env.local');

@@ -36,7 +36,7 @@
 4. **INSTR 子串误匹配丢关联数据**（`traffic-writer.repository.ts:45-59,527-547`）："a.com" 命中 "aa.com" 导致新值不追加；正确写法 L679 已存在（`','||list||','`），推广到全部 CSV 列。
 5. **四个 `total_download + total_upload` 表达式索引从未被使用**（`schema.ts:465-471`，EXPLAIN 实测）：纯写放大，DROP。
 6. **flush 部分失败状态机复制三份**（gateway.collector / surge.collector / app.ts flushAgentBuffer）：防丢数据最核心的逻辑 copy-paste，已现细微分叉 → 下沉进 BatchBuffer。
-7. **WS 协议类型三处定义已漂移、无版本号**：server 内联 + websocket.types.ts（未接线）+ web 手写（含服务端根本不发的 `liveConnections` 死字段）→ 契约收进 @neko-master/shared；`message.parser.ts` 300 行死抽象删除或接线。
+7. **WS 协议类型三处定义已漂移、无版本号**：server 内联 + websocket.types.ts（未接线）+ web 手写（含服务端根本不发的 `liveConnections` 死字段）→ 契约收进 @mihomo-orbit/shared；`message.parser.ts` 300 行死抽象删除或接线。
 8. **连接即推全字段默认摘要**（`websocket.server.ts:260-279`）：订阅意图到达前白算一次全量 summary → 首帧延迟到收到 subscribe。
 9. **分钟边界查询风暴**（cache 存结果值非 Promise，所有客户端 rolling range 同时跳变）→ cache 存 Promise 做请求合并 + subscribe 推送 debounce。
 10. **30s 批量 flush 同步阻塞事件循环 100-500ms** → 分批 + `setImmediate` 让出；顺手把每次 flush 重新 prepare 的 ~17 条语句改实例级缓存（对照 singleStmts 模式）。

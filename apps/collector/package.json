@@ -1,5 +1,5 @@
 {
-  "name": "@neko-master/collector",
+  "name": "@mihomo-orbit/collector",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
@@ -15,7 +15,7 @@
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.2.0",
-    "@neko-master/shared": "workspace:*",
+    "@mihomo-orbit/shared": "workspace:*",
     "better-sqlite3": "^12.10.0",
     "dotenv": "^17.4.2",
     "fastify": "^5.8.5",

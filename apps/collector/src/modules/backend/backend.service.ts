@@ -18,7 +18,7 @@ import type {
   CreateBackendResult,
   RotateAgentTokenResult,
 } from './backend.types.js';
-import { isAgentBackendUrl } from '@neko-master/shared';
+import { isAgentBackendUrl } from '@mihomo-orbit/shared';
 import { loadClickHouseConfig, runClickHouseQuery } from '../clickhouse/clickhouse.config.js';
 import type { ClickHouseConfig } from '../clickhouse/clickhouse.config.js';
 

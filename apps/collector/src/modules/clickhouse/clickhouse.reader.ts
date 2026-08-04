@@ -4,7 +4,7 @@ import type {
   IPStats,
   ProxyStats,
   RuleStats,
-} from '@neko-master/shared';
+} from '@mihomo-orbit/shared';
 import { loadClickHouseConfig } from './clickhouse.config.js';
 
 type StatsQuerySource = 'sqlite' | 'clickhouse' | 'auto';

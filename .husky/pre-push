@@ -9,7 +9,7 @@ while read local_ref local_oid remote_ref remote_oid; do
     pnpm --filter collector exec tsc --noEmit || exit 1
 
     echo "→ Building web app..."
-    pnpm --filter @neko-master/web build || exit 1
+    pnpm --filter @mihomo-orbit/web build || exit 1
 
     echo "✅ All checks passed."
     exit 0

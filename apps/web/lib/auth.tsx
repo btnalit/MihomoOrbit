@@ -11,7 +11,7 @@ import {
 import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { authKeys } from "./auth-queries";
 
-import type { AuthState } from "@neko-master/shared";
+import type { AuthState } from "@mihomo-orbit/shared";
 
 interface AuthContextType {
   isAuthenticated: boolean;

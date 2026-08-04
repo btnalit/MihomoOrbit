@@ -7,7 +7,7 @@ import {
   DeviceStats,
   RuleStats,
   TrafficTrendPoint,
-} from '@neko-master/shared';
+} from '@mihomo-orbit/shared';
 import { RealtimeStore } from './realtime.store.js';
 import { MinuteBucket, SummaryDelta } from './realtime.types.js';
 

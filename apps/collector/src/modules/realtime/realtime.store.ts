@@ -7,7 +7,7 @@ import type {
   RuleStats,
   StatsSummary,
   TrafficTrendPoint,
-} from '@neko-master/shared';
+} from '@mihomo-orbit/shared';
 import type { StatsDatabase } from '../db/db.js';
 import { buildRuleName } from '../../shared/utils/rule-name.js';
 

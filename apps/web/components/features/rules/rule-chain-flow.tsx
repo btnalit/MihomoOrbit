@@ -38,7 +38,7 @@ import { useStableTimeRange } from "@/lib/hooks/use-stable-time-range";
 import { useIsWindows } from "@/lib/hooks/use-is-windows";
 import { resolveActiveChains, encodeActiveLinkKey, type ActiveChainInfo } from "@/lib/active-chain";
 import { useTranslations } from "next-intl";
-import type { StatsSummary } from "@neko-master/shared";
+import type { StatsSummary } from "@mihomo-orbit/shared";
 import { useGatewayProviders, useGatewayProxies } from "@/hooks/api/use-gateway";
 import { useGatewayRules } from "@/hooks/api/use-rules";
 
