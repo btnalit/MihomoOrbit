@@ -1,0 +1,84 @@
+name: CI
+
+# M0 之前这里是空的:三个 workflow 分别管 Go agent、agent 发布和镜像构建,
+# 没有任何一个跑 collector 的测试、lint 或路由门禁。唯一的验证是本地
+# pre-push 钩子——一旦用 --no-verify 或本机环境出问题(2026-08-05 就因为
+# 临时盘写满导致钩子构建崩溃),回归就能直接进 main 而无人察觉。
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+concurrency:
+  # PR 上取消被取代的运行;推送到 main/dev 时不取消,
+  # 保证每个落到分支上的提交都有独立、可追溯的结论。
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 顺序要紧:必须先装 pnpm,后面 setup-node 的 cache: pnpm 才找得到它。
+      # 顺序颠倒时缓存会静默失效而不报错——与 agent 那条 go.sum 缓存警告同类的坑。
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 上游 neko 就有这道门禁,但它不在 pnpm build 里,必须单独跑。
+      - name: Check API route registry
+        run: pnpm check:api-routes
+
+      - name: Type check collector
+        run: pnpm --filter @mihomo-orbit/collector exec tsc --noEmit
+
+      - name: Lint collector
+        run: pnpm --filter @mihomo-orbit/collector lint
+
+      - name: Test collector
+        run: pnpm --filter @mihomo-orbit/collector test
+
+  lint-web:
+    name: Lint web (存量债务,不阻断)
+    runs-on: ubuntu-latest
+    # 从 neko-master 继承下来 110 个 error / 57 个 warning,分布在 31 个文件,
+    # 主要是 react-hooks/set-state-in-effect 与 no-explicit-any。清理它们属于
+    # 组件层重构而非基础环境工作,所以这里只做可见性:让数字持续暴露在 CI 上,
+    # 但不因为存量债务把 main 钉死成红色。清完之后把 continue-on-error 删掉。
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint web
+        run: pnpm --filter @mihomo-orbit/web lint

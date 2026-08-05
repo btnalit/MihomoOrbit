@@ -6,7 +6,23 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main, dev]
+    # PR 阶段这个 workflow 唯一的独有价值是"镜像还能不能构建出来"。
+    # 应用代码的正确性由 ci.yml 覆盖,所以只在真正可能弄坏镜像的文件
+    # 变动时才花这份构建时间——dependabot 的十个 PR 各烧掉一次多架构
+    # 构建,就是没有这个过滤器的直接后果。
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker-compose.yml"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/docker-build.yml"
   workflow_dispatch:
+
+concurrency:
+  # 只在 PR 上取消被取代的运行。tag 推送("refs/tags/v*")必须跑完,
+  # 中途取消会让 GHCR 上留下不完整的多架构 manifest。
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # 必须写死小写:GHCR 拒绝大写镜像名,而 ${{ github.repository }} 会给出 btnalit/MihomoOrbit

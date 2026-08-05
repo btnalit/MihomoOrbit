@@ -8,6 +8,12 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  # 发布流程**绝不能**中途取消:cancel-in-progress 会在上传 release
+  # 资产的过程中杀掉任务,留下一个只有部分产物的 GitHub Release。
+  group: agent-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     name: Test Agent
@@ -23,6 +29,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: apps/agent/go.mod
+          cache: false
 
       - name: Run tests
         run: go test ./...
@@ -64,6 +71,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: apps/agent/go.mod
+          cache: false
 
       - name: Build archive
         env:

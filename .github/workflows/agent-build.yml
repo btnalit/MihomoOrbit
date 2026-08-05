@@ -13,6 +13,15 @@ on:
       - "apps/agent/**"
       - ".github/workflows/agent-build.yml"
 
+concurrency:
+  # 同一分支上被取代的运行直接取消。tag 不走这个 workflow,
+  # 所以这里可以无条件取消而不会打断发布。
+  group: agent-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test Agent
@@ -28,6 +37,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: apps/agent/go.mod
+          # agent 零外部依赖(go.mod 无 require,仓库里也没有 go.sum),
+          # 开着缓存只会每次刷一条 "Restore cache failed" 的误导性警告。
+          cache: false
 
       - name: Run tests
         run: go test ./...
@@ -76,6 +88,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: apps/agent/go.mod
+          # agent 零外部依赖(go.mod 无 require,仓库里也没有 go.sum),
+          # 开着缓存只会每次刷一条 "Restore cache failed" 的误导性警告。
+          cache: false
 
       - name: Build binary
         env:

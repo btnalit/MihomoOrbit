@@ -5,11 +5,14 @@ while read local_ref local_oid remote_ref remote_oid; do
   if echo "$remote_ref" | grep -q "refs/heads/main$"; then
     echo "🔍 Pushing to main — running pre-push checks..."
 
-    echo "→ Running collector type check..."
-    pnpm --filter collector exec tsc --noEmit || exit 1
+    # 这里只留"快且能在本机稳定跑完"的检查。完整的 web 构建交给 CI:
+    # 它耗时数分钟,且在临时盘吃紧时会直接 OOM 崩掉(2026-08-05 就因此
+    # 连续挡住推送,逼出 --no-verify)。镜像构建在 CI 上仍会完整验证。
+    echo "→ Type-checking collector..."
+    pnpm --filter @mihomo-orbit/collector exec tsc --noEmit || exit 1
 
-    echo "→ Building web app..."
-    pnpm --filter @mihomo-orbit/web build || exit 1
+    echo "→ Running collector tests..."
+    pnpm --filter @mihomo-orbit/collector test || exit 1
 
     echo "✅ All checks passed."
     exit 0
