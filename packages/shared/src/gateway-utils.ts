@@ -136,8 +136,14 @@ export function isAgentBackendUrl(url: string): boolean {
  */
 export interface BackendCapabilityInput {
   url: string;
-  /** M1c 起由 agent_id 非空决定;M0 阶段恒为 undefined,回退到 url 判据 */
+  /** M0 兼容形态;M1c 新字段在场时被 agentId 取代 */
   agentBound?: boolean;
+  /** M1c:'' = 无 API 通道 */
+  apiUrl?: string;
+  /** M1c:'' = 未配 agent */
+  agentToken?: string;
+  /** M1c:'' = 未绑定 */
+  agentId?: string;
 }
 
 export interface BackendCapabilities {
@@ -156,11 +162,18 @@ export interface BackendCapabilities {
  * 现存的 isAgentBackendUrl 调用点(全仓 25 处)不在 M0 迁移,属 M1c。
  */
 export function backendCapabilities(backend: BackendCapabilityInput): BackendCapabilities {
+  if (backend.apiUrl !== undefined || backend.agentToken !== undefined || backend.agentId !== undefined) {
+    return {
+      monitoring: true,
+      management: !!(backend.apiUrl || '').trim(),
+      configEdit: !!(backend.agentId || '').trim(),
+    };
+  }
+  // M0 契约回退:仅有 url 时沿用旧判据(web 端在 Task 7 之前仍传此形态)
   const legacyAgentUrl = isAgentBackendUrl(backend.url);
-  const agentBound = backend.agentBound ?? legacyAgentUrl;
   return {
     monitoring: true,
     management: !legacyAgentUrl,
-    configEdit: agentBound,
+    configEdit: backend.agentBound ?? legacyAgentUrl,
   };
 }

@@ -35,3 +35,22 @@ describe('backendCapabilities', () => {
     expect(backendCapabilities({ url: '  AGENT://Router  ' }).configEdit).toBe(true);
   });
 });
+
+describe('backendCapabilities (M1c unified model)', () => {
+  it('management follows api_url presence, not url scheme', () => {
+    expect(backendCapabilities({ url: 'agent://router', apiUrl: 'http://10.0.0.1:9090', agentToken: 't', agentId: 'a1' }))
+      .toEqual({ monitoring: true, management: true, configEdit: true });
+    expect(backendCapabilities({ url: 'agent://router', apiUrl: '', agentToken: 't', agentId: 'a1' }))
+      .toEqual({ monitoring: true, management: false, configEdit: true });
+  });
+  it('configEdit requires an explicitly bound agent, not just a token', () => {
+    expect(backendCapabilities({ url: 'http://x:9090', apiUrl: 'http://x:9090', agentToken: 't', agentId: '' }).configEdit)
+      .toBe(false);
+  });
+  it('legacy M0 shape (url only) keeps its old behavior', () => {
+    expect(backendCapabilities({ url: 'http://x:9090' }))
+      .toEqual({ monitoring: true, management: true, configEdit: false });
+    expect(backendCapabilities({ url: 'agent://r' }))
+      .toEqual({ monitoring: true, management: false, configEdit: true });
+  });
+});
