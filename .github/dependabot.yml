@@ -40,6 +40,8 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
+    # 这里**不**忽略 major:官方 action 的大版本升级是例行维护,而且是必需的——
+    # 2026-08-05 的构建日志显示 checkout@v4 / build-push-action@v6 等已被钉在
+    # 废弃的 Node 20 运行时上。危险的是 npm/gomod 的 major(typescript 6->7、
+    # better-sqlite3 12->13 会真的编译不过),那两个生态仍然忽略。
+    # 分组保证它们仍然只开一个 PR。
