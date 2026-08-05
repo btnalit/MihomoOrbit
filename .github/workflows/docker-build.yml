@@ -19,10 +19,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # 只在 PR 上取消被取代的运行。tag 推送("refs/tags/v*")必须跑完,
-  # 中途取消会让 GHCR 上留下不完整的多架构 manifest。
+  # 除 tag 外一律取消被取代的运行。分支上新提交的镜像本来就会覆盖同名
+  # 标签(latest / 版本号 / sha),让旧的多架构构建跑满 18 分钟毫无意义。
+  # tag 推送("refs/tags/v*")必须跑完:中途取消会在 GHCR 上留下不完整的
+  # 多架构 manifest,而那是对外发布的产物。
   group: docker-build-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   # 必须写死小写:GHCR 拒绝大写镜像名,而 ${{ github.repository }} 会给出 btnalit/MihomoOrbit
