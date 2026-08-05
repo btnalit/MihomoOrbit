@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from '../app/app.js';
 import { createTestDatabase } from '../../__tests__/helpers.js';
@@ -191,6 +191,131 @@ describe('auth hardening', () => {
       cookies: { 'orbit-session': cookie!.value },
     });
     expect(stale.statusCode).toBe(401);
+  });
+
+  // C1: the pre-auth per-IP limiter guards every protected route (not just
+  // /verify and /enable), and is registered BEFORE the mandatory-auth hook so
+  // a locked-out IP never reaches authService.verifyToken() — meaning scrypt
+  // must not run for it either. Threshold is 20 failures/15min, looser than
+  // the 5/15min login limiter (auth.controller.ts) that governs /verify.
+  it('locks out an IP with 429 on a protected route after repeated bad Bearer tokens, without repeatedly paying scrypt', async () => {
+    await enableAuthForTest(app, 'a-16-char-token-1');
+    const scryptSpy = vi.spyOn(crypto, 'scrypt');
+
+    const attempts = 25; // > the 20-failure pre-auth threshold
+    let lastStatus = 0;
+    for (let i = 0; i < attempts; i++) {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/backends',
+        headers: { authorization: 'Bearer wrong-token-000000' },
+      });
+      lastStatus = res.statusCode;
+    }
+
+    expect(lastStatus).toBe(429);
+    // The first bad attempt pays the real scrypt cost; every repeat of the
+    // exact same wrong token is served from the short-TTL negative cache
+    // (and, once locked out, short-circuited by the pre-auth limiter before
+    // verifyToken() is even called) — so scrypt must not run again for it.
+    expect(scryptSpy).toHaveBeenCalledTimes(1);
+
+    scryptSpy.mockRestore();
+  });
+
+  // C1: the negative-result cache means a repeated identical bad token never
+  // re-pays the scrypt cost, independent of the per-IP limiter above.
+  it('does not invoke scrypt for a repeated identical bad token (negative cache)', async () => {
+    await authService.enableAuth('a-16-char-token-1');
+    const scryptSpy = vi.spyOn(crypto, 'scrypt');
+
+    await expect(authService.verifyToken('wrong-token-000000')).resolves.toMatchObject({ valid: false });
+    expect(scryptSpy).toHaveBeenCalledTimes(1);
+
+    await expect(authService.verifyToken('wrong-token-000000')).resolves.toMatchObject({ valid: false });
+    expect(scryptSpy).toHaveBeenCalledTimes(1);
+
+    scryptSpy.mockRestore();
+  });
+
+  // C1 (false-lockout guard): the pre-auth limiter is meant to be looser than
+  // the login limiter specifically so a stale session never traps a real
+  // user — logging back in with the current token must lift a pre-auth
+  // lockout immediately, not just wait out the 15-minute window.
+  it('recovers from a pre-auth 429 lockout immediately after a successful /api/auth/verify login', async () => {
+    await enableAuthForTest(app, 'a-16-char-token-1');
+
+    let lastStatus = 0;
+    for (let i = 0; i < 21; i++) {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/backends',
+        headers: { authorization: 'Bearer wrong-token-000000' },
+      });
+      lastStatus = res.statusCode;
+    }
+    expect(lastStatus).toBe(429);
+
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/auth/verify',
+      payload: { token: 'a-16-char-token-1' },
+    });
+    expect(login.statusCode).toBe(200);
+    const cookie = login.cookies.find((c: { name: string }) => c.name === 'orbit-session');
+    expect(cookie).toBeDefined();
+
+    const afterLogin = await app.inject({
+      method: 'GET',
+      url: '/api/backends',
+      cookies: { 'orbit-session': cookie!.value },
+    });
+    expect(afterLogin.statusCode).toBe(200);
+  });
+
+  // I1: request.ip must honor X-Forwarded-For only from the trusted loopback
+  // proxy (the bundled Next.js server rewrite runs on the same host), and
+  // ignore it entirely from any other peer — otherwise a direct LAN client
+  // could spoof a fresh X-Forwarded-For on every request to dodge the
+  // per-IP limiters above indefinitely. Exercised indirectly through the
+  // pre-auth limiter, since it is the observable effect of request.ip.
+  it('honors X-Forwarded-For only from the trusted loopback proxy, not from a direct peer', async () => {
+    await enableAuthForTest(app, 'a-16-char-token-1');
+
+    // Loopback peer (trusted): each request claims a different real client
+    // IP via X-Forwarded-For. If honored, no single apparent IP accumulates
+    // past the threshold, so every request just 401s.
+    for (let i = 0; i < 25; i++) {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/backends',
+        remoteAddress: '127.0.0.1',
+        headers: {
+          authorization: 'Bearer wrong-token-000000',
+          'x-forwarded-for': `203.0.113.${i}`,
+        },
+      });
+      expect(res.statusCode).toBe(401);
+    }
+
+    // Direct, non-loopback peer (untrusted): X-Forwarded-For must be
+    // ignored, so a forged, ever-changing value cannot dodge the limiter —
+    // every request is attributed to the one real peer address and must
+    // still lock out past the threshold.
+    let lastStatus = 0;
+    for (let i = 0; i < 25; i++) {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/backends',
+        remoteAddress: '10.20.2.66',
+        headers: {
+          authorization: 'Bearer wrong-token-000000',
+          'x-forwarded-for': `198.51.100.${i}`,
+        },
+      });
+      lastStatus = res.statusCode;
+    }
+    expect(lastStatus).toBe(429);
   });
 
 });

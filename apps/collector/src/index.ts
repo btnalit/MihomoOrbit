@@ -22,6 +22,7 @@ import { SurgePolicySyncService } from './modules/surge/surge-policy-sync.js';
 let wsServer: StatsWebSocketServer;
 
 import { APIServer } from './modules/app/app.js';
+import { AuthService } from './modules/auth/index.js';
 import { GeoIPService } from './modules/geo/geo.service.js';
 import { StatsService } from './modules/stats/index.js';
 import {
@@ -35,6 +36,11 @@ import { CleanupService, type CleanupOverrides } from './modules/cleanup/index.j
 
 const COLLECTOR_WS_PORT = parseInt(process.env.COLLECTOR_WS_PORT || '3002');
 const API_PORT = parseInt(process.env.API_PORT || '3001');
+// Web UI port — the bundled Next.js server, not this collector's own API
+// port. Only used for the printed first-run setup URL (see [SETUP] below);
+// the collector itself never listens on it. Matches the WEB_PORT naming used
+// by setup.sh/Dockerfile/docker-compose.yml (default 3000).
+const WEB_PORT = parseInt(process.env.WEB_PORT || '3000');
 const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'stats.db');
 
 /**
@@ -94,10 +100,17 @@ async function main() {
   // Initialize GeoIP service
   geoService = new GeoIPService(db);
 
+  // Single shared AuthService for this process: both the HTTP API and the
+  // WebSocket server verify tokens through this one instance, so
+  // updateToken()/enableAuth() cache invalidation and the pre-auth per-IP
+  // limiter apply to both surfaces immediately — otherwise a revoked token
+  // could keep opening new WS connections for up to its own cache TTL. See I2.
+  const authService = new AuthService(db);
+
   // Initialize WebSocket server for real-time updates
   console.log('[Main] Starting WebSocket server on port', COLLECTOR_WS_PORT);
   const statsService = new StatsService(db, realtimeStore);
-  wsServer = new StatsWebSocketServer(COLLECTOR_WS_PORT, db, statsService);
+  wsServer = new StatsWebSocketServer(COLLECTOR_WS_PORT, db, statsService, authService);
   wsServer.start();
 
   // Initialize policy sync service
@@ -123,6 +136,7 @@ async function main() {
       wsServer.clearBackendCache(backendId);
       wsServer.broadcastStats(backendId, true);
     },
+    authService,
   );
   const apiFastifyApp = await apiServer.start();
 
@@ -143,7 +157,9 @@ async function main() {
   if (apiFastifyApp && !apiFastifyApp.authService.isConfigured()) {
     console.warn(
       `[SETUP] Authentication is not configured yet.\n` +
-        `  Open  http://<host>:${API_PORT}/  and use this one-time setup token:\n` +
+        // Web UI port, not this API's own port (API_PORT serves no UI) —
+        // see I6 in the M0 review findings.
+        `  Open  http://<host>:${WEB_PORT}/  and use this one-time setup token:\n` +
         `      ${apiFastifyApp.authService.getSetupToken()}\n` +
         `  It is regenerated on every restart and invalidated once setup completes.`,
     );

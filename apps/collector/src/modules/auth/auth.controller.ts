@@ -6,6 +6,7 @@
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { AuthService } from './auth.service.js';
+import { IpFailureLimiter } from './ip-failure-limiter.js';
 
 // Extend Fastify instance
 declare module 'fastify' {
@@ -19,7 +20,8 @@ declare module 'fastify' {
 // both routes sit on that hook's pre-auth allowlist so it can serve the
 // unauthenticated login/first-run flows, and a limiter placed inside the
 // hook would `return` before ever running for them. See M0 plan Task 8 /
-// design spec section 3.5(c).
+// design spec section 3.5(c). (A second, looser limiter guards every other
+// protected route and the WS handshake — see AuthService's pre-auth limiter.)
 const FAILURE_LIMIT = 5;
 const LOCKOUT_MS = 15 * 60 * 1000;
 const RATE_LIMITED_RESPONSE = { error: 'Too many failed attempts. Try again later.' };
@@ -27,34 +29,13 @@ const RATE_LIMITED_RESPONSE = { error: 'Too many failed attempts. Try again late
 export async function authController(app: FastifyInstance) {
   const authService = app.authService;
 
-  // 限速器状态随插件注册创建,而非模块级:模块级 Map 会让同一进程内
-  // 多个 createApp() 实例(以及相邻测试用例)共享锁定计数。
-  const failuresByIp = new Map<string, { count: number; lockedUntil: number }>();
-
-  function isLockedOut(ip: string): boolean {
-    const entry = failuresByIp.get(ip);
-    if (!entry) return false;
-    // Not locked yet (still under the failure threshold) — leave the counter
-    // alone so it keeps accumulating across requests.
-    if (entry.lockedUntil === 0) return false;
-    if (entry.lockedUntil > Date.now()) return true;
-    // Lockout window has elapsed; drop the stale entry so failures start fresh.
-    failuresByIp.delete(ip);
-    return false;
-  }
-
-  function recordFailure(ip: string): void {
-    const entry = failuresByIp.get(ip) ?? { count: 0, lockedUntil: 0 };
-    entry.count += 1;
-    if (entry.count >= FAILURE_LIMIT) {
-      entry.lockedUntil = Date.now() + LOCKOUT_MS;
-    }
-    failuresByIp.set(ip, entry);
-  }
-
-  function recordSuccess(ip: string): void {
-    failuresByIp.delete(ip);
-  }
+  // Limiter state is created per plugin registration, not module-level: a
+  // module-level instance would let multiple createApp() instances in the
+  // same process (and neighboring test cases) share lockout counts.
+  const limiter = new IpFailureLimiter({ failureLimit: FAILURE_LIMIT, lockoutMs: LOCKOUT_MS });
+  const isLockedOut = (ip: string) => limiter.isLockedOut(ip);
+  const recordFailure = (ip: string) => limiter.recordFailure(ip);
+  const recordSuccess = (ip: string) => limiter.recordSuccess(ip);
 
   /**
    * GET /api/auth/state
@@ -90,6 +71,17 @@ export async function authController(app: FastifyInstance) {
 
     if (result.valid) {
       recordSuccess(request.ip);
+      // Also clears the separate, looser pre-auth per-IP limiter that guards
+      // every other protected route (see AuthService.recordPreAuthSuccess).
+      // Without this, a dashboard whose session cookie went stale after a
+      // token rotation racks up a pre-auth failure on every protected
+      // request it fires, can get 429-locked out for the full 15 minutes —
+      // and logging back in here would otherwise NOT clear that lockout,
+      // since only this route's own 5/15 limiter was reset. Proving a fresh
+      // token here is exactly the signal that should lift the other
+      // limiter too. Brute force against /verify itself is unaffected: it
+      // still costs 5 failures under this route's own stricter limiter.
+      authService.recordPreAuthSuccess(request.ip);
       // Set valid token as HttpOnly cookie
       // Only use secure if the connection is actually HTTPS
       const isSecure = request.protocol === 'https';
