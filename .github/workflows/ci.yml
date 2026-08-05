@@ -50,6 +50,12 @@ jobs:
       - name: Build shared package
         run: pnpm --filter @mihomo-orbit/shared build
 
+      # I5:apps/web 此前没有编译期门禁——lint-web 是 continue-on-error 的存量债务
+      # (见下方 job),.husky/pre-push 也从未跑过 web 构建。这一步是硬门禁,
+      # 类型错误直接把 CI 钉红,不再依赖本地钩子或人工发现。
+      - name: Type check web
+        run: pnpm --filter @mihomo-orbit/web exec tsc --noEmit
+
       # 上游 neko 就有这道门禁,但它不在 pnpm build 里,必须单独跑。
       - name: Check API route registry
         run: pnpm check:api-routes

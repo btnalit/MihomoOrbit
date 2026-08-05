@@ -67,4 +67,4 @@ sh -n orbitagent && sh -n install.sh
 - [ ] UI changes: both locales translated and dark mode checked (see the `ui-conventions` skill)
 - [ ] DB writes/schema touched: run the `add-stats-dimension` / `db-conventions` checklists
 
-Note: `.husky/pre-push` runs collector `tsc --noEmit` + web `build` when pushing to `main` — running them yourself first avoids a slow failed push.
+Note: `.husky/pre-push` runs collector `tsc --noEmit` + collector `test` when pushing to `main` (no web build/type check locally — that gate lives in CI's `ci.yml`) — running the collector checks yourself first avoids a slow failed push.

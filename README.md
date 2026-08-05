@@ -43,6 +43,8 @@ docker compose up -d
 
 用该 token 在网页上设置一个**至少 16 位**的访问令牌即可完成初始化。setup token 每次重启轮换,设置完成后立即失效。
 
+自动化部署可以用环境变量 `ORBIT_SETUP_TOKEN` 预置这个一次性 token,省去从日志里现读的步骤;值不足 16 位会被忽略并打印告警,退回生成随机 token(见 `.env.example`)。
+
 > 认证是**强制**的,没有关闭开关。`FORCE_ACCESS_CONTROL_OFF=true` 仅作为找回令牌的救援通道,启动时会打印安全告警,用完请立即移除。
 
 ## 从 neko-master 迁移

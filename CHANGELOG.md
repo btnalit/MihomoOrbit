@@ -14,6 +14,7 @@ Hard fork of neko-master v1.4.5 as **MihomoOrbit**.
 - Agent keeps the legacy lock path so a leftover `neko-agent` cannot double-count traffic; `install.sh` refuses to install alongside one.
 - `backendCapabilities()` contract added to `@mihomo-orbit/shared` and exposed on the backend list API.
 - Repaired the `check:api-routes` gate (stale path, two uncovered controllers).
+- Version deliberately resets to `0.1.0` here, down from upstream neko-master's `1.4.0` — this is a fork restart, not a downgrade. GHCR/tag history before this point belongs to the upstream project's numbering.
 
 Historical entries below are upstream neko-master history.
 
