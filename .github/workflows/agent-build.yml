@@ -33,6 +33,11 @@ jobs:
         run: go test ./...
 
       - name: Vulnerability scan
+        # govulncheck@latest 需要 Go >= 1.25,而 go.mod 声明 go 1.22 且
+        # setup-go 会把 GOTOOLCHAIN 钉成 local——必须允许自动拉取工具链,
+        # 否则这一步必然失败(不是依赖问题,是工具链约束)。
+        env:
+          GOTOOLCHAIN: auto
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   cross-build:

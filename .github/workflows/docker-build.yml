@@ -42,6 +42,7 @@ jobs:
           fi
 
       - name: Set up QEMU
+        if: github.event_name != 'pull_request'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
@@ -82,4 +83,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          # PR 只验证 amd64 能否构建即可:多架构走 QEMU 模拟 arm64,单次约 18 分钟,
+          # 而 PR 阶段并不推送镜像。完整矩阵留给 main/tag 的真实发布。
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}

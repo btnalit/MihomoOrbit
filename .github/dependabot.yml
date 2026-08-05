@@ -1,23 +1,45 @@
 version: 2
+
+# 硬分叉后不跟上游代码,但依赖 CVE 必须自行跟进(见设计规范 §7)。
+#
+# 三条噪音控制,均为 2026-08-05 首次启用后按实际效果收紧:
+#   1. 每个生态**合并成一个 PR**(patterns: ["*"]),而不是每个依赖一个 PR。
+#   2. **忽略 major 升级**——checkout 4→7、typescript 6→7、better-sqlite3 12→13
+#      这类破坏性升级需要人工决策,不该自动开 PR 并占满 CI。需要时手动升。
+#   3. PR 上限压到 1,避免同时挂十几个分支。
 updates:
-  # 硬分叉后不跟上游代码,但依赖 CVE 必须自行跟进(见设计规范 §7)
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 1
     groups:
-      all-minor-patch:
-        update-types: [minor, patch]
+      npm-dependencies:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: gomod
     directory: /apps/agent
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 1
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
