@@ -10,7 +10,7 @@ import { LoginDialog } from "./login-dialog";
 
 export function AuthGuard() {
   const { showLogin, needsSetup } = useRequireAuth();
-  const { login, confirmLogin } = useAuth();
+  const { login, confirmLogin, confirmSetup } = useAuth();
   const queryClient = useQueryClient();
   const t = useTranslations("auth");
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -49,7 +49,11 @@ export function AuthGuard() {
     try {
       await enableAuth.mutateAsync({ setupToken, token });
       confirmTimerRef.current = setTimeout(() => {
-        confirmLogin();
+        // confirmSetup() flips authState.configured synchronously so
+        // `needsSetup` is already false when this callback returns —
+        // see the comment on confirmSetup() in lib/auth.tsx for why a
+        // checkAuth()-only refetch (async) isn't reliable here.
+        confirmSetup();
         queryClient.invalidateQueries({ queryKey: authKeys.state() });
       }, 2500);
       return true;
