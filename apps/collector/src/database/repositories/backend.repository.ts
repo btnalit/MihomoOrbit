@@ -17,6 +17,10 @@ export interface BackendConfig {
   enabled: boolean;
   is_active: boolean;
   listening: boolean;
+  api_url: string;
+  api_secret: string;
+  agent_token: string;
+  agent_id: string;
   created_at: string;
   updated_at: string;
 }
@@ -31,12 +35,30 @@ export class BackendRepository {
   /**
    * Create a new backend configuration
    */
-  createBackend(backend: { name: string; url: string; token?: string; type?: 'clash' | 'surge' }): number {
+  createBackend(backend: {
+    name: string;
+    url: string;
+    token?: string;
+    type?: 'clash' | 'surge';
+    apiUrl?: string;
+    apiSecret?: string;
+    agentToken?: string;
+    agentId?: string;
+  }): number {
     const stmt = this.db.prepare(`
-      INSERT INTO backend_configs (name, url, token, type, enabled, is_active, listening)
-      VALUES (?, ?, ?, ?, 1, 0, 1)
+      INSERT INTO backend_configs (name, url, token, type, enabled, is_active, listening, api_url, api_secret, agent_token, agent_id)
+      VALUES (?, ?, ?, ?, 1, 0, 1, ?, ?, ?, ?)
     `);
-    const result = stmt.run(backend.name, backend.url, backend.token || '', backend.type || 'clash');
+    const result = stmt.run(
+      backend.name,
+      backend.url,
+      backend.token || '',
+      backend.type || 'clash',
+      backend.apiUrl || '',
+      backend.apiSecret || '',
+      backend.agentToken || '',
+      backend.agentId || '',
+    );
     return Number(result.lastInsertRowid);
   }
 
@@ -45,7 +67,7 @@ export class BackendRepository {
    */
   getAllBackends(): BackendConfig[] {
     const stmt = this.db.prepare(`
-      SELECT id, name, url, token, type, enabled, is_active, listening, created_at, updated_at
+      SELECT id, name, url, token, type, enabled, is_active, listening, api_url, api_secret, agent_token, agent_id, created_at, updated_at
       FROM backend_configs
       ORDER BY created_at ASC
     `);
@@ -57,7 +79,7 @@ export class BackendRepository {
    */
   getBackend(id: number): BackendConfig | undefined {
     const stmt = this.db.prepare(`
-      SELECT id, name, url, token, type, enabled, is_active, listening, created_at, updated_at
+      SELECT id, name, url, token, type, enabled, is_active, listening, api_url, api_secret, agent_token, agent_id, created_at, updated_at
       FROM backend_configs
       WHERE id = ?
     `);
@@ -69,7 +91,7 @@ export class BackendRepository {
    */
   getActiveBackend(): BackendConfig | undefined {
     const stmt = this.db.prepare(`
-      SELECT id, name, url, token, type, enabled, is_active, listening, created_at, updated_at
+      SELECT id, name, url, token, type, enabled, is_active, listening, api_url, api_secret, agent_token, agent_id, created_at, updated_at
       FROM backend_configs
       WHERE is_active = 1
       LIMIT 1
@@ -82,7 +104,7 @@ export class BackendRepository {
    */
   getListeningBackends(): BackendConfig[] {
     const stmt = this.db.prepare(`
-      SELECT id, name, url, token, type, enabled, is_active, listening, created_at, updated_at
+      SELECT id, name, url, token, type, enabled, is_active, listening, api_url, api_secret, agent_token, agent_id, created_at, updated_at
       FROM backend_configs
       WHERE listening = 1 AND enabled = 1
     `);
@@ -123,6 +145,22 @@ export class BackendRepository {
     if (updates.is_active !== undefined) {
       sets.push('is_active = ?');
       values.push(updates.is_active ? 1 : 0);
+    }
+    if (updates.api_url !== undefined) {
+      sets.push('api_url = ?');
+      values.push(updates.api_url);
+    }
+    if (updates.api_secret !== undefined) {
+      sets.push('api_secret = ?');
+      values.push(updates.api_secret);
+    }
+    if (updates.agent_token !== undefined) {
+      sets.push('agent_token = ?');
+      values.push(updates.agent_token);
+    }
+    if (updates.agent_id !== undefined) {
+      sets.push('agent_id = ?');
+      values.push(updates.agent_id);
     }
 
     if (sets.length === 0) return;
@@ -165,6 +203,21 @@ export class BackendRepository {
       WHERE id = ?
     `);
     stmt.run(listening ? 1 : 0, id);
+  }
+
+  /** 原子认领绑定:仅当未绑定时成功。防止两个 agent 并发心跳互抢。 */
+  claimAgentBinding(backendId: number, agentId: string): boolean {
+    const result = this.db.prepare(`
+      UPDATE backend_configs SET agent_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND agent_id = ''
+    `).run(agentId, backendId);
+    return result.changes === 1;
+  }
+
+  unbindAgent(backendId: number): void {
+    this.db.prepare(`
+      UPDATE backend_configs SET agent_id = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?
+    `).run(backendId);
   }
 
   /**

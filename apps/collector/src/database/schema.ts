@@ -362,6 +362,10 @@ export const SCHEMA = {
       enabled BOOLEAN DEFAULT 1,
       is_active BOOLEAN DEFAULT 0,
       listening BOOLEAN DEFAULT 1,
+      api_url TEXT DEFAULT '',
+      api_secret TEXT DEFAULT '',
+      agent_token TEXT DEFAULT '',
+      agent_id TEXT DEFAULT '',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );

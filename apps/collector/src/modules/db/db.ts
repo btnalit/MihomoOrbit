@@ -5,6 +5,7 @@ import { randomBytes } from 'crypto';
 import { normalizeGeoIP, type Connection, type DomainStats, type IPStats, type HourlyStats, type ProxyStats, type RuleStats, type ProxyTrafficStats, type DeviceStats } from '@mihomo-orbit/shared';
 import { getAllSchemaStatements } from '../../database/schema.js';
 import { cleanupMisattributedRuleNames } from '../../database/rule-name-cleanup.js';
+import { migrateBackendConfigsToUnifiedModel } from '../../database/migrations/unified-backend-model.js';
 import {
   AuthRepository,
   SurgeRepository,
@@ -46,6 +47,10 @@ export interface BackendConfig {
   enabled: boolean;
   is_active: boolean;
   listening: boolean;
+  api_url: string;
+  api_secret: string;
+  agent_token: string;
+  agent_id: string;
   created_at: string;
   updated_at: string;
 }
@@ -283,6 +288,9 @@ export class StatsDatabase {
 
     // Migrate connection_logs data to new aggregation tables (one-time backfill)
     this.migrateConnectionLogsToAggregation();
+
+    // M1c: unified backend model (api_url/api_secret/agent_token/agent_id)
+    migrateBackendConfigsToUnifiedModel(this.db);
   }
 
   // Backfill minute_stats, domain_proxy_stats, ip_proxy_stats from connection_logs
@@ -1024,7 +1032,7 @@ export class StatsDatabase {
   getCleanupStats() { return this.repos.config.getCleanupStats(); }
 
   // Backend
-  createBackend(backend: { name: string; url: string; token?: string; type?: 'clash' | 'surge' }) { return this.repos.backend.createBackend(backend); }
+  createBackend(backend: { name: string; url: string; token?: string; type?: 'clash' | 'surge'; apiUrl?: string; apiSecret?: string; agentToken?: string; agentId?: string }) { return this.repos.backend.createBackend(backend); }
   getAllBackends() { return this.repos.backend.getAllBackends(); }
   getBackend(id: number) { return this.repos.backend.getBackend(id); }
   getActiveBackend() { return this.repos.backend.getActiveBackend(); }
@@ -1032,6 +1040,8 @@ export class StatsDatabase {
   updateBackend(id: number, updates: Partial<Omit<BackendConfig, 'id' | 'created_at'>>) { this.repos.backend.updateBackend(id, updates); }
   setActiveBackend(id: number) { this.repos.backend.setActiveBackend(id); }
   setBackendListening(id: number, listening: boolean) { this.repos.backend.setBackendListening(id, listening); }
+  claimAgentBinding(backendId: number, agentId: string) { return this.repos.backend.claimAgentBinding(backendId, agentId); }
+  unbindAgent(backendId: number) { this.repos.backend.unbindAgent(backendId); }
   deleteBackend(id: number) {
     this.repos.backend.deleteBackend(id);
     this.clearRangeQueryCache(id);
