@@ -19,6 +19,7 @@ interface AuthContextType {
   isLoading: boolean;
   login: (token: string, updateState?: boolean) => Promise<boolean>;
   confirmLogin: () => void;
+  confirmSetup: () => void;
   logout: () => void;
   checkAuth: () => Promise<void>;
 }
@@ -81,8 +82,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.error("Failed to check auth state:", error);
       // On error, assume no auth required to prevent lockout
       // configured 取 true:这是「拿不到状态」的乐观兜底,若填 false,
-        // 一次网络抖动就会弹出首次设置对话框。服务端仍然强制认证。
-        setAuthState({ enabled: false, hasToken: false, configured: true });
+      // 一次网络抖动就会弹出首次设置对话框。服务端仍然强制认证。
+      setAuthState({ enabled: false, hasToken: false, configured: true });
       setIsAuthenticated(true);
     } finally {
       setIsLoading(false);
@@ -91,6 +92,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Confirm login manually (used for delayed UI transitions)
   const confirmLogin = useCallback(() => {
+    setIsAuthenticated(true);
+  }, []);
+
+  // Confirm first-run setup manually (mirrors confirmLogin). Called from the
+  // setup dialog's success-animation timer in AuthGuard.
+  //
+  // A plain checkAuth() refetch is not enough here: it's async, and would
+  // race LoginDialog's own ~2500ms success timer (started ~simultaneously).
+  // If the network round trip doesn't land before that timer fires,
+  // LoginDialog resets to a blank form before the dialog is unmounted —
+  // review finding C2. Flipping authState synchronously guarantees
+  // `needsSetup` is already false by the time that happens.
+  const confirmSetup = useCallback(() => {
+    setAuthState((prev) =>
+      prev ? { ...prev, enabled: true, hasToken: true, configured: true } : prev
+    );
     setIsAuthenticated(true);
   }, []);
 
@@ -155,6 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isLoading,
         login,
         confirmLogin,
+        confirmSetup,
         logout,
         checkAuth,
       }}
