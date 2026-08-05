@@ -43,6 +43,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # collector 从 @mihomo-orbit/shared 导入类型,而那个包的类型入口指向它的
+      # dist/。本地开发机上 dist/ 早就存在,所以类型检查和测试"一直是过的";
+      # 在全新检出上它们会因为 TS2307 全线失败。CI 首跑就是这样红的——
+      # 也就是说这两道检查在干净环境里从来没能跑起来过。
+      - name: Build shared package
+        run: pnpm --filter @mihomo-orbit/shared build
+
       # 上游 neko 就有这道门禁,但它不在 pnpm build 里,必须单独跑。
       - name: Check API route registry
         run: pnpm check:api-routes
