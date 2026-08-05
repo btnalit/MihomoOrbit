@@ -603,14 +603,9 @@ export async function createApp(options: AppOptions) {
       reply.status(404).send({ error: 'Backend not found' });
       return false;
     }
-    if (!isAgentBackendUrl(backend.url)) {
-      reply.status(400).send({ error: 'Backend is not in agent mode (url must start with agent://)' });
-      return false;
-    }
-
-    const expected = (backend.token || '').trim();
+    const expected = (backend.agent_token || '').trim();
     if (!expected) {
-      reply.status(403).send({ error: 'Agent backend token is not configured' });
+      reply.status(400).send({ error: 'No agent is configured for this backend' });
       return false;
     }
 
@@ -627,33 +622,21 @@ export async function createApp(options: AppOptions) {
     agentId: string,
     reply: { status: (code: number) => { send: (payload: Record<string, unknown>) => unknown } },
   ): boolean => {
-    const heartbeat = db.getAgentHeartbeat(backendId);
-    if (!heartbeat) {
-      return true;
+    const bound = (db.getBackend(backendId)?.agent_id || '').trim();
+    if (bound === agentId) return true;
+    if (bound === '') {
+      if (db.claimAgentBinding(backendId, agentId)) {
+        console.info(`[Agent] Backend ${backendId} bound to agent '${agentId}'`);
+        return true;
+      }
+      // Claim race: another process just wrote it. Re-read; if it's us, allow.
+      if ((db.getBackend(backendId)?.agent_id || '').trim() === agentId) return true;
     }
-    if (heartbeat.agentId === agentId) {
-      return true;
-    }
-
-    // Allow rebinding if the existing agent has been offline for a while
-    // Agent heartbeat interval is 30s, so 10s timeout allows quick restart
-    // while preventing accidental duplicate bindings
-    const AGENT_BINDING_TIMEOUT_MS = 10000;
-    const lastSeenMs = new Date(heartbeat.lastSeen).getTime();
-    const ageMs = Number.isFinite(lastSeenMs) ? Math.max(0, Date.now() - lastSeenMs) : Number.POSITIVE_INFINITY;
-    
-    if (Number.isFinite(ageMs) && ageMs > AGENT_BINDING_TIMEOUT_MS) {
-      console.info(`[Agent] Allowing rebinding for backend ${backendId}: previous agent '${heartbeat.agentId}' offline for ${Math.round(ageMs / 1000)}s`);
-      return true;
-    }
-
     reply.status(409).send({
-      error: `Agent token is already bound to '${heartbeat.agentId}'. ` +
-             `Wait ${Math.round((AGENT_BINDING_TIMEOUT_MS - ageMs) / 1000)}s for previous agent to timeout. ` +
-             `If you need to run multiple agents on the same backend, use different --agent-id values.`,
-      code: 'AGENT_TOKEN_ALREADY_BOUND',
-      boundAgentId: heartbeat.agentId,
-      remainingSeconds: Math.round((AGENT_BINDING_TIMEOUT_MS - ageMs) / 1000),
+      error: `This backend is bound to agent '${bound || 'another agent'}'. ` +
+             `Rebinding is an explicit admin operation: rotate the agent token or unbind in backend settings.`,
+      code: 'AGENT_BINDING_FIXED',
+      boundAgentId: bound,
     });
     return false;
   };

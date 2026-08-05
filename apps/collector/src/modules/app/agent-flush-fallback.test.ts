@@ -48,6 +48,8 @@ describe("Agent flush ClickHouse-failure fallback (C1)", () => {
       url: "agent://test",
       token: AGENT_TOKEN,
       type: "clash",
+      // M1c: ingest auth now checks agent_token, not the legacy token mirror.
+      agentToken: AGENT_TOKEN,
     });
     db.setActiveBackend(backendId);
 
