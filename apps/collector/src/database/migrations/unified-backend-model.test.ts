@@ -80,3 +80,58 @@ describe('unified backend model migration', () => {
     expect(row.token).toBe('agent-secret-1');
   });
 });
+
+// Fresh-schema shape: backend_configs is created WITH the 4 new columns already
+// (as schema.ts now does), but rows can still land in legacy shape afterward —
+// e.g. an ancient-DB upgrade's performMigration() inserting the 'Default' backend
+// relying on column defaults, or a pre-Task-2 createBackend({name,url,token}) call.
+// The column-existence check must not skip backfilling these.
+describe('unified backend model migration — late-inserted legacy rows (fresh-schema shape)', () => {
+  let tmpDir: string;
+  let db: Database.Database;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'orbit-m1c-late-'));
+    db = new Database(path.join(tmpDir, 'fresh.db'));
+    db.exec(`
+      CREATE TABLE backend_configs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL, url TEXT NOT NULL, token TEXT DEFAULT '',
+        type TEXT DEFAULT 'clash', enabled BOOLEAN DEFAULT 1,
+        is_active BOOLEAN DEFAULT 0, listening BOOLEAN DEFAULT 1,
+        api_url TEXT DEFAULT '', api_secret TEXT DEFAULT '',
+        agent_token TEXT DEFAULT '', agent_id TEXT DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE agent_heartbeats (
+        backend_id INTEGER PRIMARY KEY, agent_id TEXT NOT NULL,
+        last_seen DATETIME NOT NULL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO backend_configs (name, url, token) VALUES
+        ('legacy-direct', 'http://192.168.1.1:9090', 'mihomo-secret'),
+        ('legacy-agent',  'agent://legacy',          'agent-secret-3');
+    `);
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('backfills legacy-shaped rows even though the columns already exist', () => {
+    migrateBackendConfigsToUnifiedModel(db);
+
+    const direct = db.prepare('SELECT * FROM backend_configs WHERE name = ?').get('legacy-direct') as Record<string, string>;
+    expect(direct.api_url).toBe('http://192.168.1.1:9090');
+    expect(direct.api_secret).toBe('mihomo-secret');
+    expect(direct.agent_token).toBe('');
+    expect(direct.agent_id).toBe('');
+
+    const agent = db.prepare('SELECT * FROM backend_configs WHERE name = ?').get('legacy-agent') as Record<string, string>;
+    expect(agent.agent_token).toBe('agent-secret-3');
+    expect(agent.agent_id).toBe('');
+    expect(agent.api_url).toBe('');
+  });
+});
