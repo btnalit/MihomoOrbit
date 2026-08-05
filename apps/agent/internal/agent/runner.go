@@ -77,6 +77,10 @@ type Runner struct {
 	gatewayClient *gateway.Client
 	hostname      string
 	lockFiles     []*os.File
+	// lockDir overrides the directory lock files are created in; defaulted to
+	// os.TempDir() by NewRunner. Tests set it to a t.TempDir() to avoid
+	// colliding with other tests or leftover files under the real temp dir.
+	lockDir string
 
 	mu         sync.Mutex
 	queue      []domain.TrafficUpdate
@@ -103,6 +107,7 @@ func NewRunner(cfg config.Config) *Runner {
 		httpClient:    httpClient,
 		gatewayClient: gateway.NewClient(httpClient, cfg.GatewayType, cfg.GatewayEndpoint, cfg.GatewayToken),
 		hostname:      hostname,
+		lockDir:       os.TempDir(),
 		queue:         make([]domain.TrafficUpdate, 0, cfg.ReportBatchSize*2),
 		flows:         make(map[string]trackedFlow, 2048),
 	}
@@ -118,7 +123,10 @@ func NewRunner(cfg config.Config) *Runner {
 // legacy path during the rename would create the very double-write it looks
 // like it prevents.
 func (r *Runner) lockPaths() []string {
-	dir := os.TempDir()
+	dir := r.lockDir
+	if dir == "" {
+		dir = os.TempDir()
+	}
 	return []string{
 		filepath.Join(dir, fmt.Sprintf("orbit-agent-backend-%d.lock", r.cfg.BackendID)),
 		filepath.Join(dir, fmt.Sprintf("neko-agent-backend-%d.lock", r.cfg.BackendID)),
@@ -144,7 +152,7 @@ func (r *Runner) acquireLockAt(lockPath string) (*os.File, error) {
 		if _, err := fmt.Sscanf(string(data), "%d", &pid); err == nil {
 			// Check if process is still running
 			if pid > 0 && pid != os.Getpid() {
-				if isProcessRunning(pid) {
+				if isProcessRunningFn(pid) {
 					return nil, fmt.Errorf("another agent instance (PID %d) is already running for backend %d", pid, r.cfg.BackendID)
 				}
 				// Process is not running, stale lock file
@@ -176,12 +184,31 @@ func (r *Runner) acquireLockAt(lockPath string) (*os.File, error) {
 
 func (r *Runner) releaseLock() {
 	for _, file := range r.lockFiles {
+		if file == nil {
+			// Slot cleared by checkLockOwnership() because another live agent
+			// took the lock over — it's no longer ours to close or remove.
+			continue
+		}
 		lockPath := file.Name()
 		file.Close()
 		os.Remove(lockPath)
 	}
 	r.lockFiles = nil
 }
+
+// readProcComm reads /proc/<pid>/comm. It is a package-level var purely so
+// tests can substitute a fake comm for a real, live PID (e.g. the test
+// binary's own) without needing to spawn or impersonate real OS processes.
+// Production code always uses this default.
+var readProcComm = func(pid int) ([]byte, error) {
+	return os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+}
+
+// isProcessRunningFn is the liveness+ownership check used by acquireLockAt
+// and checkLockOwnership. It's a package-level var (defaulting to
+// isProcessRunning) so tests can drive the held-vs-stale decision
+// deterministically without depending on real process PIDs or permissions.
+var isProcessRunningFn = isProcessRunning
 
 // isProcessRunning checks whether the PID is alive AND belongs to an
 // agent process (orbit-agent, or a leftover upstream neko-agent). On Linux we cross-check /proc/<pid>/comm so that a
@@ -192,7 +219,7 @@ func isProcessRunning(pid int) bool {
 	if err := syscall.Kill(pid, 0); err != nil {
 		return false
 	}
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+	data, err := readProcComm(pid)
 	if err != nil {
 		// /proc not readable (non-Linux, restricted hidepid, etc.) — treat
 		// liveness check as authoritative.
@@ -202,6 +229,106 @@ func isProcessRunning(pid int) bool {
 	// 新旧两种进程名都算存活:锁要能挡住残留的 neko-agent(防双写),
 	// 也要能挡住另一个 orbit-agent(否则彼此判定对方为陈旧锁而并行运行)。
 	return strings.Contains(comm, "orbit-agent") || strings.Contains(comm, "neko-agent")
+}
+
+// lockSelfCheckInterval controls how often the runner re-verifies it still
+// owns every lock file acquired at startup. See I3: the lock only protects
+// double-reporting when the legacy neko-agent starts first — its own
+// isProcessRunning only matches "neko-agent", so it treats a lock held by an
+// orbit-agent PID as stale, deletes it, and takes it over. This periodic
+// check is how orbit-agent notices that happened.
+const lockSelfCheckInterval = 60 * time.Second
+
+// runLockWatchLoop periodically re-verifies lock ownership (see
+// checkLockOwnership). If a lock was taken over by another live agent
+// process and can't be reacquired, it cancels the runner's context so Run()
+// proceeds through its normal graceful-shutdown path instead of continuing
+// to run while a duplicate agent reports the same traffic.
+func (r *Runner) runLockWatchLoop(ctx context.Context, cancel context.CancelFunc, wg *sync.WaitGroup) {
+	defer wg.Done()
+	ticker := time.NewTicker(lockSelfCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if r.checkLockOwnership() {
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+// ownsLock reports whether lockPath currently contains our own PID. It also
+// returns the PID found in the file (0 if the file is missing, unreadable,
+// or doesn't parse) so callers can log it.
+func (r *Runner) ownsLock(lockPath string) (owned bool, pid int) {
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		return false, 0
+	}
+	if _, err := fmt.Sscanf(string(data), "%d", &pid); err != nil {
+		return false, 0
+	}
+	return pid == os.Getpid(), pid
+}
+
+// checkLockOwnership re-verifies every lock file this runner holds. For any
+// lock that's missing or now contains a PID other than our own, it attempts
+// to reacquire it via the same O_EXCL path used at startup (acquireLockAt),
+// which itself decides stale-vs-held via isProcessRunningFn. It returns true
+// only once a lock is confirmed held by another live agent process and
+// reacquisition failed — the caller must treat that as fatal and shut down
+// to avoid double reporting. A reacquire failure that doesn't confirm a live
+// foreign PID (e.g. transient/garbled file content) is logged and left for
+// the next check instead of exiting a healthy agent.
+func (r *Runner) checkLockOwnership() (lost bool) {
+	for i, file := range r.lockFiles {
+		if file == nil {
+			continue
+		}
+		path := file.Name()
+
+		owned, pid := r.ownsLock(path)
+		if owned {
+			continue
+		}
+
+		if pid == 0 {
+			log.Printf("[agent:%s] lock file %s is missing or unreadable — attempting to reacquire", r.cfg.AgentID, path)
+		} else {
+			log.Printf("[agent:%s] lock file %s now held by PID %d (expected our PID %d) — attempting to reacquire", r.cfg.AgentID, path, pid, os.Getpid())
+		}
+		file.Close()
+
+		newFile, err := r.acquireLockAt(path)
+		if err == nil {
+			log.Printf("[agent:%s] reacquired lock %s", r.cfg.AgentID, path)
+			r.lockFiles[i] = newFile
+			continue
+		}
+
+		// acquireLockAt failing isn't proof of a live takeover by itself: it
+		// also fails (via its own pid>0 && pid!=os.Getpid() short-circuit,
+		// then O_EXCL-exists) when the file holds unparseable content, PID 0,
+		// or — after a concurrent reacquire elsewhere — our own PID again.
+		// None of those are a foreign process holding the lock against us.
+		// Re-read the file and only treat this as a confirmed takeover, fatal
+		// to this runner, when it currently names a live PID that isn't
+		// ours; otherwise it's transient — log and retry on the next check
+		// rather than killing a healthy agent.
+		if _, confirmPID := r.ownsLock(path); confirmPID > 0 && confirmPID != os.Getpid() && isProcessRunningFn(confirmPID) {
+			log.Printf("[agent:%s] another agent has taken over lock %s — exiting to prevent double reporting", r.cfg.AgentID, path)
+			r.lockFiles[i] = nil
+			lost = true
+			continue
+		}
+		log.Printf("[agent:%s] could not reacquire lock %s yet (%v) — will retry on next check", r.cfg.AgentID, path, err)
+	}
+	return lost
 }
 
 func (r *Runner) Run(ctx context.Context) {
@@ -215,15 +342,23 @@ func (r *Runner) Run(ctx context.Context) {
 	}
 	defer r.releaseLock()
 
-	var wg sync.WaitGroup
-	wg.Add(5)
-	go r.runCollectorLoop(ctx, &wg)
-	go r.runReportLoop(ctx, &wg)
-	go r.runHeartbeatLoop(ctx, &wg)
-	go r.runConfigSyncLoop(ctx, &wg)
-	go r.runPolicyStateSyncLoop(ctx, &wg)
+	// runCtx lets runLockWatchLoop trigger the same graceful shutdown path as
+	// an external ctx cancellation (SIGINT/SIGTERM) when it detects a lock
+	// was taken over by another live agent, without reaching into the
+	// caller-owned ctx.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 
-	<-ctx.Done()
+	var wg sync.WaitGroup
+	wg.Add(6)
+	go r.runCollectorLoop(runCtx, &wg)
+	go r.runReportLoop(runCtx, &wg)
+	go r.runHeartbeatLoop(runCtx, &wg)
+	go r.runConfigSyncLoop(runCtx, &wg)
+	go r.runPolicyStateSyncLoop(runCtx, &wg)
+	go r.runLockWatchLoop(runCtx, cancelRun, &wg)
+
+	<-runCtx.Done()
 	log.Printf("[agent:%s] stopping...", r.cfg.AgentID)
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

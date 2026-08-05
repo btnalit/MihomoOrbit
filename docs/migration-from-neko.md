@@ -10,6 +10,8 @@ MihomoOrbit 硬分叉自 neko-master v1.4.5,标识符一次性全量改名,**不
 
 为此新 agent 启动时会**同时占用新旧两个锁文件**(`orbit-agent-backend-<id>.lock` 与 `neko-agent-backend-<id>.lock`),任一被占用即拒绝启动;`install.sh` 也会主动探测旧安装并拒绝继续。
 
+> ⚠️ **锁是纵深防御,不是充分条件**:它能挡住"旧 agent 先启动"的情形,但反过来不行——如果旧的 `neko-agent` 服务被重新启用并在 orbit-agent **之后**启动,旧二进制自带的存活检测只认 `neko-agent` 这个进程名,会把 orbit-agent 持有的旧锁文件误判为陈旧、直接删除并抢占,而 orbit-agent 并不会立刻发现。为此 orbit-agent 会每隔约 60 秒自检一次锁的归属,一旦发现锁被存活的其他 agent 进程抢走且无法夺回,会记录明确日志并主动退出,避免继续和抢锁方同时上报造成双写。但这只是兜底,**真正的解法仍是彻底卸载/禁用旧的 `neko-agent` 服务**——`install.sh` 已经会做这个检测。
+
 ```sh
 # 旧 agent 所在主机上执行
 nekoagent list
