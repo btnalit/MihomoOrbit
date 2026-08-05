@@ -46,6 +46,14 @@ export interface AppOptions {
   autoListen?: boolean;
   onTrafficIngested?: (backendId: number) => void;
   onBackendDataCleared?: (backendId: number) => void;
+  /**
+   * Shared AuthService instance. When provided, this app and the WS server
+   * (see index.ts) verify tokens through the same object — so updateToken()/
+   * enableAuth() cache invalidation and the pre-auth per-IP limiter apply to
+   * both surfaces immediately, not just the one that constructed it. Falls
+   * back to a fresh instance for standalone use (tests, tooling). See I2.
+   */
+  authService?: AuthService;
 }
 
 type AgentTrafficUpdatePayload = {
@@ -107,11 +115,33 @@ export async function createApp(options: AppOptions) {
     autoListen = true,
     onTrafficIngested,
     onBackendDataCleared,
+    authService: injectedAuthService,
   } = options;
-  
+
   // Create Fastify instance
   // Increase body limit to 5MB for agent config sync (large Clash/Surge configs)
-  const app = Fastify({ logger, bodyLimit: 5 * 1024 * 1024 });
+  // trustProxy is restricted to loopback (127.0.0.1 / ::1): the bundled
+  // Next.js server rewrites /api/* to this collector over localhost (see
+  // apps/web/next.config.ts), so an X-Forwarded-For set by that local
+  // rewrite is honored for request.ip. What this guarantees regardless of
+  // whether Next actually sets that header: a direct, non-loopback caller
+  // (any real LAN client hitting this port itself) can NEVER spoof
+  // X-Forwarded-For to dodge the per-IP auth limiters below — untrusted
+  // peers always resolve to their real socket address. See I1.
+  //
+  // Unverified assumption: whether the Next.js rewrite actually sets
+  // X-Forwarded-For was not confirmed (apps/web is out of scope for this
+  // change). If it does not, every browser request arrives from this
+  // process's point of view as 127.0.0.1, and the per-IP limiters below
+  // become effectively global for UI traffic instead of truly per-client —
+  // still safe, but a single stale session across many browsers could
+  // contend for the same limiter budget. Confirm by checking the request
+  // headers Next.js's rewrite proxy actually forwards.
+  const app = Fastify({
+    logger,
+    bodyLimit: 5 * 1024 * 1024,
+    trustProxy: ['127.0.0.1', '::1'],
+  });
 
   // Decompress gzip-encoded request bodies (used by the agent to reduce upload bandwidth)
   // content-length must be removed because it refers to the compressed size; after decompression
@@ -333,8 +363,10 @@ export async function createApp(options: AppOptions) {
     parseOptions: {},
   });
 
-  // Create services
-  const authService = new AuthService(db);
+  // Create services. See I2: reuse the caller-provided AuthService (shared
+  // with the WS server in index.ts) when given one; only stand up a fresh
+  // instance for standalone use (tests, tooling).
+  const authService = injectedAuthService ?? new AuthService(db);
   const backendService = new BackendService(
     db,
     realtimeStore,
@@ -1338,6 +1370,37 @@ export async function createApp(options: AppOptions) {
   // cookie/Bearer check below like any other route.
   const SETUP_ROUTES = new Set(['/api/auth/state', '/api/auth/enable']);
 
+  // Pre-auth per-IP failure limiter — registered BEFORE the mandatory-auth
+  // hook below so a locked-out IP gets 429 before authService.verifyToken()
+  // (and its scrypt cost) ever runs for it. This is deliberately a separate,
+  // looser limiter from the one guarding /api/auth/verify and /api/auth/enable
+  // (auth.controller.ts, 5 failures/15min): those two routes handle the login
+  // and first-run flows and sit on PUBLIC_ROUTES below, so this hook's own
+  // pathname/isConfigured checks mirror the mandatory-auth hook's routing so
+  // it only ever engages exactly where that hook would call verifyToken().
+  // See C1.
+  app.addHook('onRequest', async (request, reply) => {
+    const pathname = request.url.split('?')[0];
+
+    if (PUBLIC_ROUTES.has(pathname)) {
+      return;
+    }
+    if (authService.isForceAccessControlOff()) {
+      return;
+    }
+    if (!authService.isConfigured()) {
+      // Nothing scrypt-costly runs pre-setup (SETUP_ROUTES bypass, or the
+      // 401 below) — no need to rate-limit here.
+      return;
+    }
+
+    if (authService.isPreAuthLockedOut(request.ip)) {
+      return reply.status(429).send({
+        error: 'Too many failed authentication attempts from this IP. Try again later.',
+      });
+    }
+  });
+
   app.addHook('onRequest', async (request, reply) => {
     // request.url includes the query string; strip it before matching.
     const pathname = request.url.split('?')[0];
@@ -1362,11 +1425,15 @@ export async function createApp(options: AppOptions) {
     // Auth is configured: no further bypass branches past this point:
     // every remaining route requires a valid cookie or Bearer token.
 
-    // Try to get token from Cookie first
+    // Try to get token from Cookie first. A failed cookie check does NOT
+    // record a pre-auth failure by itself — only the request's final
+    // outcome does (below), so a request that fails both the cookie and the
+    // Bearer fallback counts as exactly one failure, not two.
     const cookieToken = request.cookies['orbit-session'];
     if (cookieToken) {
       const verifyResult = await authService.verifyToken(cookieToken);
       if (verifyResult.valid) {
+        authService.recordPreAuthSuccess(request.ip);
         return;
       }
     }
@@ -1374,15 +1441,19 @@ export async function createApp(options: AppOptions) {
     // Fallback: Get token from header (for backward compatibility / API clients)
     const authHeader = request.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      authService.recordPreAuthFailure(request.ip);
       return reply.status(401).send({ error: 'Authentication required' });
     }
 
     const token = authHeader.slice(7);
     const verifyResult = await authService.verifyToken(token);
-    
+
     if (!verifyResult.valid) {
+      authService.recordPreAuthFailure(request.ip);
       return reply.status(401).send({ error: verifyResult.message || 'Invalid token' });
     }
+
+    authService.recordPreAuthSuccess(request.ip);
   });
 
   // On server close: stop health checks, flush all pending agent buffers.
@@ -1425,15 +1496,19 @@ export class APIServer {
   private geoService?: GeoIPService;
   private onTrafficIngested?: (backendId: number) => void;
   private onBackendDataCleared?: (backendId: number) => void;
+  private authService?: AuthService;
 
   constructor(
-    port: number, 
-    db: StatsDatabase, 
+    port: number,
+    db: StatsDatabase,
     realtimeStore: RealtimeStore,
     policySyncService?: SurgePolicySyncService,
     geoService?: GeoIPService,
     onTrafficIngested?: (backendId: number) => void,
     onBackendDataCleared?: (backendId: number) => void,
+    // Shared AuthService (see I2) — optional and trailing for backward
+    // compatibility with existing positional call sites/tests.
+    authService?: AuthService,
   ) {
     this.port = port;
     this.db = db;
@@ -1442,6 +1517,7 @@ export class APIServer {
     this.geoService = geoService;
     this.onTrafficIngested = onTrafficIngested;
     this.onBackendDataCleared = onBackendDataCleared;
+    this.authService = authService;
   }
 
   async start() {
@@ -1453,6 +1529,7 @@ export class APIServer {
       geoService: this.geoService,
       onTrafficIngested: this.onTrafficIngested,
       onBackendDataCleared: this.onBackendDataCleared,
+      authService: this.authService,
       logger: false,
     });
     return this.app;

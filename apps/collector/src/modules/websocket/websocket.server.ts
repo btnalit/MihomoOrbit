@@ -206,22 +206,51 @@ export class StatsWebSocketServer {
     Number.parseInt(process.env.WS_MAX_BUFFERED_BYTES || '', 10) || 4 * 1024 * 1024,
   );
 
-  constructor(port: number, db: StatsDatabase, statsService: StatsService) {
+  constructor(port: number, db: StatsDatabase, statsService: StatsService, authService?: AuthService) {
     this.port = port;
     this.db = db;
     this.statsService = statsService;
-    this.authService = new AuthService(db);
+    // Shared AuthService (see I2): when the caller (index.ts) passes the same
+    // instance used by the HTTP app, updateToken()/enableAuth() cache
+    // invalidation and the pre-auth per-IP limiter apply here too, instead of
+    // a stale/independent copy that could keep accepting a revoked token for
+    // up to its own cache TTL. Falls back to a fresh instance for standalone
+    // use (tests, tooling).
+    this.authService = authService ?? new AuthService(db);
   }
 
-  start() {
-    this.wss = new WSServer({
-      port: this.port,
-      host: '0.0.0.0',
-      perMessageDeflate: false,
-    });
+  /** Bound port once the server is listening — useful when constructed with port 0. */
+  getPort(): number {
+    return this.port;
+  }
 
-    this.wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
+  /** Resolves once the underlying WebSocketServer is actually listening. */
+  start(): Promise<void> {
+    return new Promise((resolve) => {
+      this.wss = new WSServer({
+        port: this.port,
+        host: '0.0.0.0',
+        perMessageDeflate: false,
+      });
+
+      this.wss.on('listening', () => {
+        const addr = this.wss?.address();
+        if (addr && typeof addr === 'object') {
+          this.port = addr.port;
+        }
+        console.log(`[WebSocket] Server running at ws://0.0.0.0:${this.port}`);
+        resolve();
+      });
+
+      this.wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
       // Connection attempt logging removed to reduce noise
+
+      // Client IP: this WS server is connected to directly by the browser
+      // (NEXT_PUBLIC_WS_PORT), not proxied through the bundled Next.js server
+      // like the HTTP API is — so unlike Fastify's request.ip (see I1),
+      // there is no reverse proxy in front to trust/distrust here, and the
+      // raw socket address is already the real client IP.
+      const remoteIP = req.socket.remoteAddress || 'unknown';
 
       // Verify authentication. Token is read from the cookie only — a URL
       // query-string token would land in reverse-proxy access logs. See M0
@@ -248,6 +277,14 @@ export class StatsWebSocketServer {
             return;
           }
 
+          // Pre-auth per-IP limiter (shared with the HTTP app via the same
+          // AuthService instance — see I2): reject before verifyToken() so a
+          // locked-out IP never pays the scrypt cost here either. See C1.
+          if (this.authService.isPreAuthLockedOut(remoteIP)) {
+            ws.close(4029, 'Too many failed authentication attempts');
+            return;
+          }
+
           if (!token) {
             // Missing token rejected (logging removed)
             ws.close(4001, 'Authentication required');
@@ -257,9 +294,11 @@ export class StatsWebSocketServer {
           const verifyResult = await this.authService.verifyToken(token);
           if (!verifyResult.valid) {
             // Invalid token rejected (logging removed)
+            this.authService.recordPreAuthFailure(remoteIP);
             ws.close(4003, 'Invalid token');
             return;
           }
+          this.authService.recordPreAuthSuccess(remoteIP);
         }
       } catch (error) {
         console.error('[WebSocket] Error verifying auth:', error);
@@ -501,9 +540,8 @@ export class StatsWebSocketServer {
         console.error('[WebSocket] Client error:', err.message);
         this.clients.delete(ws);
       });
+      });
     });
-
-    console.log(`[WebSocket] Server running at ws://0.0.0.0:${this.port}`);
   }
 
   private parseRange(start?: string, end?: string): ClientRange | null {
