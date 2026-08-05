@@ -12,6 +12,7 @@ on:
     paths:
       - "apps/agent/**"
       - ".github/workflows/agent-build.yml"
+      - ".github/workflows/agent-release.yml"
 
 concurrency:
   # 同一分支上被取代的运行直接取消。tag 不走这个 workflow,

@@ -58,7 +58,7 @@ apps/web/
   app/[locale]/dashboard/                # main dashboard route
 apps/agent/
   internal/agent/runner.go               # main loop, retry/idempotency
-  orbitagent                              # POSIX-sh service manager (install/upgrade/systemd/procd)
+  orbitagent                             # POSIX-sh service manager (install/upgrade/systemd/procd)
 docs/
   architecture(.en).md                   # system architecture
   agent/                                 # probe docs (user-facing)
@@ -73,6 +73,8 @@ docs/
 4. **CSV column dedup** uses the delimiter-aware `INSTR(','||col||',', ','||@v||',')` pattern — never bare `INSTR`.
 5. **i18n + dark mode**: every user-facing string in both `messages/{zh,en}.json`; every light-palette Tailwind class has a `dark:` counterpart; inline SVG/chart colors switch on `resolvedTheme`.
 6. **Agent protocol**: payload changes bump `AgentProtocolVersion` (Go) and the collector's minimum in the same commit.
+7. **Auth is mandatory, no bypass**: both legacy bypass branches are closed. First run prints a one-time setup token to the collector's logs (`docker logs -f mihomo-orbit`) that must be exchanged for a real, 16+ character access token via the setup flow; the setup token regenerates on every restart and is invalidated the instant setup succeeds. `ORBIT_SETUP_TOKEN` optionally pre-sets it for scripted/automated deploys. `FORCE_ACCESS_CONTROL_OFF=true` is a rescue-only escape hatch (prints a security warning on startup), never a normal config — never reintroduce a silent bypass.
+8. **`backendCapabilities` contract**: lives in `packages/shared`, derived from backend type/version, and exposed on `GET /api/backends`. The web app gates whole features on it (mirrors zashboard's `assembly/backend.ts` capability-gating shape — see the design spec §3.2). Keep the shared computation and the API response in sync when adding a capability.
 
 ## Environment and Toolchain
 
@@ -132,7 +134,12 @@ docs/
 - Collector type check: `pnpm --filter @mihomo-orbit/collector exec tsc --noEmit`
 - Note: `.husky/pre-push` runs checks when pushing to `main`:
   - collector `tsc --noEmit`
-  - web `build`
+  - collector `test`
+  - It does **not** run a web build or web type check — that gate lives in CI (`ci.yml`), not locally. See "CI Gates" below.
+
+### CI Gates (`.github/workflows/ci.yml`)
+
+The `verify` job runs, in order: build `@mihomo-orbit/shared` → web type check (`pnpm --filter @mihomo-orbit/web exec tsc --noEmit`, hard-failing) → `pnpm check:api-routes` → collector type check → collector lint → collector test. A separate `lint-web` job runs web lint with `continue-on-error: true` (pre-existing debt inherited from neko-master — see the job's own comment in `ci.yml` for current counts; visibility only, does not block merges). `agent-build.yml` and `agent-release.yml` cover `apps/agent` independently — see the `agent-probe-dev` skill.
 
 ## Code Style Guidelines
 
