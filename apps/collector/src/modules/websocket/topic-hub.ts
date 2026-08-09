@@ -182,10 +182,12 @@ export class TopicHub {
 
   private sendSnapshotNow(key: TopicKey, set: Set<WebSocket>, json: string): void {
     this.lastSnapshotSentAt.set(key, Date.now());
+    const toDrop = new Set<WebSocket>();
     for (const ws of set) {
       // Backpressured clients are skipped, not queued — snapshot semantics.
-      this.sendGate(ws, json);
+      this.safeSend(ws, json, toDrop);
     }
+    this.flushDrops(toDrop);
   }
 
   publishAppend(topic: TopicName, backendId: number, json: string): void {
@@ -193,12 +195,16 @@ export class TopicHub {
     const set = this.subs.get(key);
     if (!set || set.size === 0) return;
 
+    const toDrop = new Set<WebSocket>();
     for (const ws of set) {
-      const sent = this.sendGate(ws, json);
-      if (!sent) {
+      const sent = this.safeSend(ws, json, toDrop);
+      // A throwing socket is about to be dropped — don't spend a queue slot
+      // on it; only a live-but-backpressured socket gets queued.
+      if (!sent && !toDrop.has(ws)) {
         this.enqueueAppend(ws, key, json);
       }
     }
+    this.flushDrops(toDrop);
   }
 
   private enqueueAppend(ws: WebSocket, topicKey: TopicKey, json: string): void {
@@ -217,6 +223,8 @@ export class TopicHub {
 
   /** Explicit flush entry point shared by the 1s timer and tests. */
   flushQueues(): void {
+    const toDrop = new Set<WebSocket>();
+
     for (const [ws, entry] of this.appendQueues) {
       if (entry.queue.length === 0 && entry.dropped === 0) {
         this.appendQueues.delete(ws);
@@ -229,7 +237,7 @@ export class TopicHub {
           if (count <= 0) continue;
           const { topic, backendId } = parseTopicKey(topicKey);
           const gap = JSON.stringify({ type: 'topic-gap', topic, backendId, dropped: count });
-          if (!this.sendGate(ws, gap)) {
+          if (!this.safeSend(ws, gap, toDrop)) {
             blocked = true;
             break;
           }
@@ -244,7 +252,7 @@ export class TopicHub {
 
       while (entry.queue.length > 0) {
         const next = entry.queue[0];
-        if (!this.sendGate(ws, next)) {
+        if (!this.safeSend(ws, next, toDrop)) {
           break;
         }
         entry.queue.shift();
@@ -254,20 +262,54 @@ export class TopicHub {
         this.appendQueues.delete(ws);
       }
     }
+
+    // Drop failed sockets only after the full map traversal is done — never
+    // mutate this.appendQueues (or any subscriber Set, via dropClient) while
+    // iterating it above.
+    this.flushDrops(toDrop);
   }
 
   sendTo(ws: WebSocket, json: string): void {
-    this.sendGate(ws, json);
+    const toDrop = new Set<WebSocket>();
+    this.safeSend(ws, json, toDrop);
+    this.flushDrops(toDrop);
   }
 
+  /** Wire shape matches m1-contracts.md's topic-error exactly: type, topic,
+   *  backendId, error, reachable — no timestamp field. */
   publishError(topic: TopicName, backendId: number, error: string): void {
     const key = topicKeyOf(topic, backendId);
     const set = this.subs.get(key);
     if (!set || set.size === 0) return;
 
-    const json = JSON.stringify({ type: 'topic-error', topic, backendId, error });
+    const json = JSON.stringify({ type: 'topic-error', topic, backendId, error, reachable: false });
+    const toDrop = new Set<WebSocket>();
     for (const ws of set) {
-      this.sendGate(ws, json);
+      this.safeSend(ws, json, toDrop);
+    }
+    this.flushDrops(toDrop);
+  }
+
+  /** Every send call site routes through here so a socket in a bad state
+   *  (ws.send() can throw, e.g. on a socket that's already erroring out)
+   *  can never take down the process from inside TopicHub's own unref()'d
+   *  flush timer, which has no external catcher. Failures are recorded, not
+   *  acted on immediately — the caller drops them via flushDrops() only
+   *  after its current iteration over subscriber sets / queue maps is fully
+   *  done, since dropClient() mutates exactly those collections. */
+  private safeSend(ws: WebSocket, json: string, toDrop: Set<WebSocket>): boolean {
+    try {
+      return this.sendGate(ws, json);
+    } catch {
+      toDrop.add(ws);
+      return false;
+    }
+  }
+
+  private flushDrops(toDrop: Set<WebSocket>): void {
+    if (toDrop.size === 0) return;
+    for (const ws of toDrop) {
+      this.dropClient(ws);
     }
   }
 }

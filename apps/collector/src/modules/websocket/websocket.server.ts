@@ -589,11 +589,15 @@ export class StatsWebSocketServer {
             const backend = backendId !== undefined ? this.db.getBackend(backendId) : undefined;
 
             if (!isValidTopic || backendId === undefined || !backend) {
+              // Wire shape matches m1-contracts.md's topic-error exactly
+              // (same shape TopicHub.publishError emits): type, topic,
+              // backendId, error, reachable — no timestamp field.
               this.gatedSend(ws, JSON.stringify({
                 type: 'topic-error',
                 topic: msg.topic,
                 backendId: msg.backendId,
                 error: 'invalid topic subscription',
+                reachable: false,
               }));
               return;
             }

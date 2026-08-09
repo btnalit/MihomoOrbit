@@ -52,7 +52,9 @@ describe('TopicHub', () => {
     const hub = new TopicHub({ maxBufferedBytes: 10 });
     const slow = fakeWs(9999);
     hub.subscribe(slow, 'logs', 1);
-    for (let i = 0; i < 250; i++) hub.publishAppend('logs', 1, `m${i}`);
+    const PUBLISH_COUNT = 250;
+    const QUEUE_CAP = 200; // matches TopicHub's internal APPEND_QUEUE_LIMIT
+    for (let i = 0; i < PUBLISH_COUNT; i++) hub.publishAppend('logs', 1, `m${i}`);
     (slow as never as { bufferedAmount: number }).bufferedAmount = 0;
     hub.flushQueues();   // 供测试与定时器共用的显式冲队列入口
     const sent = (slow as never as { sent: string[] }).sent;
@@ -60,6 +62,13 @@ describe('TopicHub', () => {
     expect(sent.some((j) => j.includes('topic-gap'))).toBe(true);
     expect(sent.some((j) => j.includes('m249'))).toBe(true); // 最新的保住了
     expect(sent.some((j) => j.includes('"m0"'))).toBe(false); // 最旧的被丢了
+
+    const gapMessage = sent.find((j) => j.includes('topic-gap'));
+    expect(gapMessage).toBeDefined();
+    const gap = JSON.parse(gapMessage as string);
+    expect(gap.dropped).toBe(PUBLISH_COUNT - QUEUE_CAP); // 50
+    expect(gap.topic).toBe('logs');
+    expect(gap.backendId).toBe(1);
   });
 
   it('publishes only to matching topic+backendId', () => {
