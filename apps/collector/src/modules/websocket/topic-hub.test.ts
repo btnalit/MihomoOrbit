@@ -71,6 +71,28 @@ describe('TopicHub', () => {
     expect(gap.backendId).toBe(1);
   });
 
+  it('a new frame is enqueued (never sent directly) while a client already has a queue, preserving order', () => {
+    const hub = new TopicHub({ maxBufferedBytes: 10 });
+    const slow = fakeWs(9999);
+    hub.subscribe(slow, 'logs', 1);
+
+    // Backpressure the client so 'm0'/'m1' queue instead of sending.
+    hub.publishAppend('logs', 1, 'm0');
+    hub.publishAppend('logs', 1, 'm1');
+    expect((slow as never as { sent: string[] }).sent).toEqual([]);
+
+    // Socket looks drained now, but the queue is still non-empty — the next
+    // publish must NOT overtake it via a direct send.
+    (slow as never as { bufferedAmount: number }).bufferedAmount = 0;
+    hub.publishAppend('logs', 1, 'm2');
+
+    // Still nothing sent directly: 'm2' went to the queue tail instead.
+    expect((slow as never as { sent: string[] }).sent).toEqual([]);
+
+    hub.flushQueues();
+    expect((slow as never as { sent: string[] }).sent).toEqual(['m0', 'm1', 'm2']);
+  });
+
   it('publishes only to matching topic+backendId', () => {
     const hub = new TopicHub({ maxBufferedBytes: 1024 });
     const a = fakeWs(), b = fakeWs();

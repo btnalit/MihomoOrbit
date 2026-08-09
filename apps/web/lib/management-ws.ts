@@ -70,6 +70,13 @@ interface Subscription {
 
 const MAX_RECONNECT_DELAY_MS = 30000;
 const BASE_RECONNECT_DELAY_MS = 3000;
+// App-level keepalive, mirroring lib/websocket.ts's useStatsWebSocket ping
+// (see its onopen pingIntervalRef): the collector runs no server-side WS
+// ping, so an idle delay/logs socket otherwise dies to a proxy's read
+// timeout, and a half-open socket (network drop with no FIN/RST observed)
+// never fires 'close' — which leaks the relay's upstream connection since
+// TopicHub never learns the subscriber is gone.
+const PING_INTERVAL_MS = 30000;
 
 export function useTopicSubscription({
   topic,
@@ -87,6 +94,7 @@ export function useTopicSubscription({
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const wsUrlIndexRef = useRef(0);
 
@@ -124,6 +132,10 @@ export function useTopicSubscription({
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
+    }
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = null;
     }
     if (wsRef.current) {
       // Nullify handlers before closing so a stale onclose/onerror from a
@@ -167,6 +179,16 @@ export function useTopicSubscription({
         subscribedRef.current = null;
         sendFrame({ type: "subscribe", stats: false });
         subscribeCurrent();
+
+        // Keepalive: see PING_INTERVAL_MS above.
+        if (pingIntervalRef.current) {
+          clearInterval(pingIntervalRef.current);
+        }
+        pingIntervalRef.current = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "ping" }));
+          }
+        }, PING_INTERVAL_MS);
       };
 
       ws.onmessage = (event) => {
@@ -199,6 +221,11 @@ export function useTopicSubscription({
       ws.onclose = () => {
         setStatus("disconnected");
         subscribedRef.current = null;
+
+        if (pingIntervalRef.current) {
+          clearInterval(pingIntervalRef.current);
+          pingIntervalRef.current = null;
+        }
 
         // Try alternate endpoint before falling back to backoff reconnect.
         if (!opened && wsUrlIndexRef.current < wsUrls.length - 1) {

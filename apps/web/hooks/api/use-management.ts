@@ -46,7 +46,10 @@ export function useSelectProxy(backendId: number | undefined) {
       selectGroupProxy(backendId as number, group, proxy),
     retry: false,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: managementGroupsQueryKey(backendId) });
+      // React Query awaits promises returned from onSuccess before settling
+      // the mutation — returning this keeps `isPending` true until the
+      // refetch itself lands, not just until the invalidation is scheduled.
+      return queryClient.invalidateQueries({ queryKey: managementGroupsQueryKey(backendId) });
     },
     onError: (error: Error) => {
       toast.error(error?.message || t("selectProxyFailed"));
@@ -111,7 +114,10 @@ export function usePatchRuntimeConfig(backendId: number | undefined) {
       patchRuntimeConfig(backendId as number, patch),
     retry: false,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: runtimeConfigQueryKey(backendId) });
+      // See useSelectProxy's onSuccess above: returning the promise keeps
+      // `isPending` true through the actual refetch, not just the
+      // invalidation call.
+      return queryClient.invalidateQueries({ queryKey: runtimeConfigQueryKey(backendId) });
     },
     onError: (error: Error) => {
       toast.error(error?.message || t("patchConfigFailed"));

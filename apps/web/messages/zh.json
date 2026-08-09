@@ -280,6 +280,7 @@
   },
   "management": {
     "delayTestRunning": "该分组正在测速,请稍候",
+    "upstreamUnauthorized": "后端 API 拒绝了凭据,请检查 api secret",
     "gate": {
       "title": "实时管理不可用",
       "agentHint": "此后端经 agent 上报,补填 API 地址即可启用实时管理",

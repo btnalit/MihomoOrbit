@@ -62,7 +62,9 @@ import { useTranslations } from "next-intl"; // Added
 interface HeaderProps {
   // Backend data
   backends: Backend[];
-  activeBackend: Backend | null;
+  /** `undefined` only during the cold-load window before `backends` has
+   *  ever resolved — see use-dashboard.ts's `activeBackend`. */
+  activeBackend: Backend | null | undefined;
   listeningBackends: Backend[];
   backendStatus: BackendStatus;
   backendStatusHint: string | null;

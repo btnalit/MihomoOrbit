@@ -41,11 +41,18 @@ async function enableAuthForTest(app: FastifyInstance, token: string): Promise<s
 
 // Minimal fake Mihomo: only the routes these tests actually exercise
 // (GET /proxies, GET /proxies/:name/delay). Can be told to hang (never
-// respond) to exercise the AbortSignal.timeout -> 504 path.
-function createFakeMihomo(state: { hang: boolean }): http.Server {
+// respond) to exercise the AbortSignal.timeout -> 504 path, or to reject
+// every request with 401 to exercise the UPSTREAM_UNAUTHORIZED -> 502 path.
+function createFakeMihomo(state: { hang: boolean; unauthorized?: boolean }): http.Server {
   return http.createServer((req, res) => {
     if (state.hang) {
       return; // never respond
+    }
+
+    if (state.unauthorized) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ message: 'Unauthorized' }));
+      return;
     }
 
     const url = req.url ?? '';
@@ -213,5 +220,44 @@ describe('management controller: auth protection + error mapping', () => {
       expect(res.json()).toMatchObject({ backendId, reachable: false });
       expect(typeof res.json().error).toBe('string');
     }, 10000);
+  });
+
+  describe('against an upstream that rejects the api_secret (401)', () => {
+    let upstream: http.Server;
+    let backendId: number;
+
+    beforeEach(async () => {
+      upstream = createFakeMihomo({ hang: false, unauthorized: true });
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', () => resolve()));
+      const port = (upstream.address() as AddressInfo).port;
+      backendId = db.createBackend({
+        name: 'mgmt-unauthorized-test',
+        url: `ws://127.0.0.1:${port}/connections`,
+        token: '',
+        apiUrl: `http://127.0.0.1:${port}`,
+        apiSecret: 'wrong-secret',
+      });
+    });
+
+    afterEach(async () => {
+      upstream.closeAllConnections?.();
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    });
+
+    // Finding 2 of the M1 final-review fix wave: a wrong api_secret must
+    // surface as a reachable-but-rejected error, not the generic "backend
+    // unreachable" 502 shape — the web side branches on `code` to show a
+    // credentials-specific message instead of the offline banner.
+    it('GET groups maps an upstream 401 to 502 { code: UPSTREAM_UNAUTHORIZED, reachable: true, upstreamStatus: 401 }', async () => {
+      const res = await authed('GET', `/api/management/${backendId}/groups`);
+      expect(res.statusCode).toBe(502);
+      expect(res.json()).toMatchObject({
+        code: 'UPSTREAM_UNAUTHORIZED',
+        backendId,
+        reachable: true,
+        upstreamStatus: 401,
+      });
+      expect(typeof res.json().error).toBe('string');
+    });
   });
 });

@@ -58,13 +58,16 @@ export function apiErrorCode(err: unknown): string | undefined {
   return typeof data?.code === "string" ? data.code : undefined;
 }
 
-/** True when the error represents an unreachable/offline upstream backend —
- *  either the parsed body's `reachable: false` (management contract) or a
- *  502/504 status as a fallback when the body didn't parse. */
+/** True when the error represents an unreachable/offline upstream backend.
+ *  Prefers the parsed body's `reachable` boolean when present — a 502 can
+ *  now also mean "upstream answered but rejected the request" (e.g.
+ *  UPSTREAM_UNAUTHORIZED), which carries `reachable: true` and must NOT be
+ *  treated as offline just because of the status code. Only falls back to
+ *  the 502/504 status when the body didn't parse or omits `reachable`. */
 export function isUnreachableError(err: unknown): boolean {
   if (!(err instanceof ApiError)) return false;
   const data = err.data as { reachable?: unknown } | undefined;
-  if (data?.reachable === false) return true;
+  if (typeof data?.reachable === "boolean") return !data.reachable;
   return err.status === 502 || err.status === 504;
 }
 

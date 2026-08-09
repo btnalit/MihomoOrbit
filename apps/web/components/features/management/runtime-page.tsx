@@ -23,17 +23,13 @@
  * pending" (task-8 brief) means exactly that: changing the mode segmented
  * control doesn't grey out the log-level select or the allow-lan switch
  * while its PATCH is in flight, and vice versa. Each control's `disabled`
- * also OR's in `configQuery.isFetching`, not just its own `isPending`:
- * `usePatchRuntimeConfig`'s `onSuccess` (Task 4, `use-management.ts`, out
- * of this task's whitelist) calls `invalidateQueries()` without awaiting
- * it, so the mutation's own `isPending` flips back to `false` a full GET
- * round-trip before the refetched value actually lands in the query cache.
- * Without the `isFetching` term a control would briefly re-enable while
- * still showing the pre-change (stale) value — visually snapping back
- * before the real server value arrives. Gating on `isFetching` too holds
- * the control disabled for that whole window. Root cause is the
- * un-awaited invalidate in the Task 4 hook; this is a page-local
- * mitigation, not a fix to that hook.
+ * also OR's in `configQuery.isFetching`, not just its own `isPending`, as a
+ * belt-and-suspenders measure: `usePatchRuntimeConfig`'s `onSuccess`
+ * (`use-management.ts`) now `return`s `invalidateQueries()`, so React Query
+ * itself holds `isPending` true until the refetch settles — but keeping the
+ * `isFetching` OR here costs nothing and also covers a refetch triggered by
+ * something other than this mutation (e.g. a manual retry) landing in the
+ * same window.
  *
  * Top warning banner (`NotPersistedBanner`) is resident on every render
  * branch — loading skeleton, hard error, offline-with-no-data, and the
@@ -57,7 +53,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { isUnreachableError } from "@/lib/api";
+import { apiErrorCode, isUnreachableError } from "@/lib/api";
 import { useRuntimeConfig, usePatchRuntimeConfig } from "@/hooks/api/use-management";
 
 const MODES = ["rule", "global", "direct"] as const;
@@ -97,6 +93,9 @@ export function RuntimePage({ backendId }: RuntimePageProps) {
   };
 
   const unreachable = configQuery.isError && isUnreachableError(configQuery.error);
+  const unauthorized =
+    configQuery.isError && apiErrorCode(configQuery.error) === "UPSTREAM_UNAUTHORIZED";
+  const showOfflineBanner = unreachable || unauthorized;
   const hasData = !!configQuery.data;
 
   // See file header: holds every control disabled through the un-awaited
@@ -108,9 +107,10 @@ export function RuntimePage({ backendId }: RuntimePageProps) {
 
   if (configQuery.isLoading) {
     body = <RuntimePageSkeleton />;
-  } else if (configQuery.isError && !unreachable && !hasData) {
-    // Any other query error (not the documented unreachable-backend shape)
-    // — ManagementGate already filters out the 404/409 cases, but don't
+  } else if (configQuery.isError && !showOfflineBanner && !hasData) {
+    // Any other query error (not the documented unreachable-backend shape,
+    // and not the upstream-rejected-credentials shape handled below) —
+    // ManagementGate already filters out the 404/409 cases, but don't
     // render nothing if some other failure slips through.
     body = (
       <div
@@ -126,8 +126,15 @@ export function RuntimePage({ backendId }: RuntimePageProps) {
         </div>
       </div>
     );
-  } else if (unreachable && !hasData) {
-    body = <OfflineBanner onRetry={handleRetry} retrying={configQuery.isRefetching} fullPage />;
+  } else if (showOfflineBanner && !hasData) {
+    body = (
+      <OfflineBanner
+        onRetry={handleRetry}
+        retrying={configQuery.isRefetching}
+        unauthorized={unauthorized}
+        fullPage
+      />
+    );
   } else {
     const data = configQuery.data;
     const mode = isKnownMode(data?.mode) ? data?.mode : undefined;
@@ -142,8 +149,12 @@ export function RuntimePage({ backendId }: RuntimePageProps) {
           {t("title")}
         </h2>
 
-        {unreachable && (
-          <OfflineBanner onRetry={handleRetry} retrying={configQuery.isRefetching} />
+        {showOfflineBanner && (
+          <OfflineBanner
+            onRetry={handleRetry}
+            retrying={configQuery.isRefetching}
+            unauthorized={unauthorized}
+          />
         )}
 
         <Card>
@@ -302,12 +313,17 @@ function OfflineBanner({
   onRetry,
   retrying,
   fullPage,
+  unauthorized,
 }: {
   onRetry: () => void;
   retrying?: boolean;
   fullPage?: boolean;
+  /** Upstream answered but rejected the api_secret (UPSTREAM_UNAUTHORIZED) —
+   *  same banner shell, different message than the generic offline case. */
+  unauthorized?: boolean;
 }) {
   const t = useTranslations("management.runtime");
+  const mt = useTranslations("management");
 
   const content = (
     <div
@@ -316,7 +332,9 @@ function OfflineBanner({
     >
       <div className="flex items-center gap-3">
         <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
-        <p className="text-sm text-amber-700 dark:text-amber-300">{t("offlineBanner")}</p>
+        <p className="text-sm text-amber-700 dark:text-amber-300">
+          {unauthorized ? mt("upstreamUnauthorized") : t("offlineBanner")}
+        </p>
       </div>
       <Button
         variant="outline"

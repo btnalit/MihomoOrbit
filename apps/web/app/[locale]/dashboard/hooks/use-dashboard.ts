@@ -55,7 +55,11 @@ export interface UseDashboardReturn {
   data: StatsSummary | null;
   countryData: CountryStats[];
   backends: Awaited<ReturnType<typeof api.getBackends>>;
-  activeBackend: Awaited<ReturnType<typeof api.getBackends>>[0] | null;
+  /** `undefined` only while `backends` has never resolved (cold load) —
+   *  `null` once resolved with zero backends configured. See ManagementGate
+   *  (M1 final-review finding 8): the two states render differently, a
+   *  loading skeleton vs. the "configure a backend" degraded card. */
+  activeBackend: Awaited<ReturnType<typeof api.getBackends>>[0] | null | undefined;
   listeningBackends: Awaited<ReturnType<typeof api.getBackends>>;
   activeBackendId: number | undefined;
   backendStatus: BackendStatus;
@@ -160,9 +164,17 @@ export function useDashboard(): UseDashboardReturn {
   });
 
   const backends = backendsQuery.data ?? [];
+  // `undefined` while backendsQuery.data has never resolved (cold load) —
+  // distinct from `null` once resolved with zero backends. Keyed on `data`
+  // itself, not `isLoading`/`isFetching`, so a background 5s poll (which
+  // keeps the previous `data` defined throughout) never flips this back to
+  // `undefined` and re-triggers ManagementGate's loading skeleton.
   const activeBackend = useMemo(
-    () => backends.find((backend) => backend.is_active) || backends[0] || null,
-    [backends]
+    () =>
+      backendsQuery.data === undefined
+        ? undefined
+        : backends.find((backend) => backend.is_active) || backends[0] || null,
+    [backends, backendsQuery.data]
   );
   const listeningBackends = useMemo(
     () => backends.filter((backend) => backend.listening),

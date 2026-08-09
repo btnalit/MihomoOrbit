@@ -57,13 +57,43 @@ function parseOptionalTimeout(value: unknown): number | undefined {
   return typeof n === 'number' && Number.isFinite(n) ? n : undefined;
 }
 
+/** `err.status` is set by two different throw sites, distinguishable only by
+ *  whether `body` also came along: `upstreamFetch` (management.service.ts)
+ *  sets `{ status }` alone for a genuine upstream non-2xx response;
+ *  `requireResolved` sets `{ status, body }` together for its own 404/409
+ *  resolve() short-circuit (backend deleted between the controller's resolve
+ *  check and the service call actually reaching it). Only the former is a
+ *  real "upstream answered with an error" case — the latter must keep
+ *  falling through to the 500 default exactly as before this fix, not get
+ *  relabeled as a reachable upstream 4xx. */
 function mapUpstreamError(err: unknown, backendId: number): { status: number; body: Record<string, unknown> } {
-  const e = err as { message?: string; timeout?: boolean; reachable?: boolean };
-  const status = e.timeout ? 504 : e.reachable === false ? 502 : 500;
-  return {
-    status,
-    body: { error: e.message ?? 'Unknown error', backendId, reachable: false },
-  };
+  const e = err as { message?: string; timeout?: boolean; reachable?: boolean; status?: number; body?: unknown };
+
+  if (e.timeout) {
+    return { status: 504, body: { error: e.message ?? 'Unknown error', backendId, reachable: false } };
+  }
+  if (e.reachable === false) {
+    return { status: 502, body: { error: e.message ?? 'Unknown error', backendId, reachable: false } };
+  }
+  if (typeof e.status === 'number' && e.body === undefined) {
+    if (e.status === 401 || e.status === 403) {
+      return {
+        status: 502,
+        body: {
+          code: 'UPSTREAM_UNAUTHORIZED',
+          backendId,
+          reachable: true,
+          upstreamStatus: e.status,
+          error: 'Upstream rejected credentials',
+        },
+      };
+    }
+    return {
+      status: 502,
+      body: { backendId, reachable: true, upstreamStatus: e.status, error: e.message ?? 'Unknown error' },
+    };
+  }
+  return { status: 500, body: { error: e.message ?? 'Unknown error', backendId, reachable: false } };
 }
 
 const managementController: FastifyPluginAsync = async (fastify: FastifyInstance): Promise<void> => {

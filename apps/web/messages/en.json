@@ -280,6 +280,7 @@
   },
   "management": {
     "delayTestRunning": "This group is already being tested — please wait",
+    "upstreamUnauthorized": "The backend API rejected the credentials — check the api secret",
     "gate": {
       "title": "Real-time Management Unavailable",
       "agentHint": "This backend reports via an agent — add its API address to enable real-time management.",

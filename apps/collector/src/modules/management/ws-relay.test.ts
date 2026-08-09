@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WebSocketServer } from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import type { AddressInfo } from 'node:net';
 import { ManagementRelay } from './ws-relay.js';
 import type { TopicHub } from '../websocket/topic-hub.js';
@@ -166,6 +166,7 @@ describe('ManagementRelay', () => {
 
   afterEach(async () => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     relay?.stop();
     relay = undefined;
     cleanupDb();
@@ -369,5 +370,53 @@ describe('ManagementRelay', () => {
     );
     expect(upstream.attemptCount - attemptsBeforeReturn).toBe(5);
     expect(errors).toHaveLength(2);
+  });
+
+  // M1 final-review fix wave, finding 6: the heartbeat watchdog itself
+  // (startHeartbeat's setInterval in ws-relay.ts) had no direct coverage —
+  // only the circuit breaker's connection-failure path was tested above.
+  // `ws`'s Receiver auto-responds to an incoming ping frame with a pong at
+  // the protocol layer regardless of application code, so a real fake-
+  // upstream WebSocketServer can't be made "silent" by simply not wiring up
+  // a message handler — lastActivity would keep resetting via the 'pong'
+  // event no matter what. Mocking WebSocket.prototype.ping to a no-op is
+  // what actually makes the channel's own ping never go out, so no pong (and
+  // no message) ever arrives and lastActivity genuinely goes stale.
+  it('terminates a silently-dead upstream via the heartbeat watchdog and reconnects', async () => {
+    const { hub } = createHubStub();
+    const pingSpy = vi.spyOn(WebSocket.prototype, 'ping').mockImplementation(() => {});
+    relay = new ManagementRelay({
+      db,
+      hub,
+      heartbeatIntervalMs: 20,
+      heartbeatTimeoutMs: 50,
+      reconnectBaseMs: 5,
+      reconnectMaxMs: 20,
+    });
+
+    relay.hooks.onFirstSubscriber('connections', backendId);
+    await vi.waitFor(() => expect(relay!.channelState(backendId, 'connections')).toBe('open'));
+    // Snapshot the count AT this observation rather than asserting it's
+    // exactly 1: `vi.waitFor` polls on an interval, and a late poll (loaded
+    // CI runner, contention from the rest of the suite) could observe
+    // 'open' only after a termination-and-reconnect cycle already bumped
+    // the count past 1 — asserting an exact value here would flake on
+    // exactly the timing this test intentionally races.
+    const countAtOpen = upstream.connectionCount;
+
+    // With ping() a no-op, no pong (and no message) ever arrives — idle
+    // time on the channel's own clock exceeds heartbeatTimeoutMs and the
+    // watchdog must terminate() the socket, which drives a reconnect.
+    // Reconnected sockets are equally silent (same mocked ping), so the
+    // channel keeps cycling open -> terminate -> reconnect indefinitely;
+    // `connectionCount` (monotonic: every accepted connection, never
+    // decremented) growing past its value at the 'open' observation is the
+    // only safe thing to assert, not a transient state like `channelState()`
+    // or `openCount`, or an exact count.
+    await vi.waitFor(() => expect(upstream.connectionCount).toBeGreaterThan(countAtOpen), {
+      timeout: 2000,
+    });
+
+    pingSpy.mockRestore();
   });
 });

@@ -33,6 +33,15 @@ export function ManagementGate({ backend, children, onBackendChange }: Managemen
   const t = useTranslations("management.gate");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  // `undefined` = the backends query hasn't resolved yet (cold load) — show
+  // a lightweight skeleton instead of the degraded "unavailable" card, which
+  // would otherwise flash on every first visit and read as a real capability
+  // failure rather than a loading state. `null` (resolved, no backend) still
+  // falls through to the degraded card below, same as before this fix.
+  if (backend === undefined) {
+    return <ManagementGateSkeleton />;
+  }
+
   const managementEnabled = backend?.capabilities?.management ?? false;
 
   if (managementEnabled) {
@@ -67,6 +76,24 @@ export function ManagementGate({ backend, children, onBackendChange }: Managemen
         isFirstTime={false}
         onBackendChange={onBackendChange}
       />
+    </div>
+  );
+}
+
+/** Same idiom as the per-page skeletons (groups-page.tsx's
+ *  GroupsPageSkeleton, runtime-page.tsx's RuntimePageSkeleton): plain pulse
+ *  blocks, no dependency on `backend` since none has resolved yet. */
+function ManagementGateSkeleton() {
+  return (
+    <div className="flex items-center justify-center min-h-[60vh] p-4">
+      <div className="w-full max-w-md rounded-xl border bg-card p-8 flex flex-col items-center gap-4">
+        <div className="w-14 h-14 rounded-2xl bg-muted/50 animate-pulse" />
+        <div className="space-y-2 w-full flex flex-col items-center">
+          <div className="h-4 w-40 rounded bg-muted/60 animate-pulse" />
+          <div className="h-3 w-56 rounded bg-muted/40 animate-pulse" />
+        </div>
+        <div className="h-9 w-36 rounded-md bg-muted/50 animate-pulse" />
+      </div>
     </div>
   );
 }

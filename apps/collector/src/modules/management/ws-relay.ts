@@ -207,7 +207,11 @@ class RelayChannel {
       headers.Authorization = `Bearer ${backend.api_secret}`;
     }
 
-    const ws = new WebSocket(url, { headers, followRedirects: true });
+    // followRedirects deliberately left at ws's default (false): Mihomo's
+    // controller never redirects, and enabling it would let the capital-A
+    // Authorization header survive ws's cross-host redirect credential scrub
+    // if a MITM / misconfigured proxy ever did redirect this request.
+    const ws = new WebSocket(url, { headers });
     this.ws = ws;
 
     ws.on('open', () => {

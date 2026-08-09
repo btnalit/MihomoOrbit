@@ -197,6 +197,19 @@ export class TopicHub {
 
     const toDrop = new Set<WebSocket>();
     for (const ws of set) {
+      // A client with anything already queued (or a pending drop count) must
+      // not get this frame sent directly, even if its socket looks drained
+      // right now — a direct send would overtake whatever's still waiting in
+      // its queue, and the browser's seq-range dedup then permanently drops
+      // the older queued frames once they finally flush (no gap marker, since
+      // nothing was actually dropped from TopicHub's point of view). Route it
+      // through the same queue instead so ordering is preserved.
+      const existing = this.appendQueues.get(ws);
+      if (existing && (existing.queue.length > 0 || existing.dropped > 0)) {
+        this.enqueueAppend(ws, key, json);
+        continue;
+      }
+
       const sent = this.safeSend(ws, json, toDrop);
       // A throwing socket is about to be dropped — don't spend a queue slot
       // on it; only a live-but-backpressured socket gets queued.

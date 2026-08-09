@@ -32,6 +32,12 @@ import type { DelayValue } from "./delay-badge";
 
 const GLOBAL_GROUP_NAME = "GLOBAL";
 const SELECT_ERROR_DISPLAY_MS = 3000;
+// Per-group watchdog (finding 5, M1 final-review fix wave): a lost `done`
+// frame — delay socket reconnecting mid-test, a click that raced onopen, or
+// an append-queue overflow dropping the frame — would otherwise strand a
+// group in `testingGroups` forever, since nothing else ever clears it.
+const TESTING_GROUP_STALE_MS = 30000;
+const TESTING_GROUP_WATCHDOG_INTERVAL_MS = 1000;
 
 interface DelayDoneData {
   group: string;
@@ -73,11 +79,40 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
   // GroupsPage so the dispatch's `key={activeBackendId}` remount resets it
   // along with everything else on a backend switch.
   const selectSeqRef = useRef<Map<string, number>>(new Map());
+  // Last time ANY delay-topic frame (result or done) was observed for a
+  // given testing group — the watchdog below clears a group whose entry
+  // goes stale. Set the moment a test starts too, so a group that receives
+  // no frames at all (not even one member result) is still bounded.
+  const lastFrameAtRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     return () => {
       if (selectErrorTimerRef.current) clearTimeout(selectErrorTimerRef.current);
     };
+  }, []);
+
+  // Watchdog: runs for the component's whole lifetime (not re-created per
+  // testingGroups change) and reads/writes state only through the
+  // functional setState form + the ref above, so it never closes over stale
+  // `testingGroups`.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setTestingGroups((prev) => {
+        if (prev.size === 0) return prev;
+        let next: Set<string> | null = null;
+        for (const group of prev) {
+          const lastFrameAt = lastFrameAtRef.current.get(group);
+          if (lastFrameAt === undefined || now - lastFrameAt > TESTING_GROUP_STALE_MS) {
+            if (!next) next = new Set(prev);
+            next.delete(group);
+            lastFrameAtRef.current.delete(group);
+          }
+        }
+        return next ?? prev;
+      });
+    }, TESTING_GROUP_WATCHDOG_INTERVAL_MS);
+    return () => clearInterval(interval);
   }, []);
 
   // `delay` is an append topic (m1-contracts.md) — frames only arrive during
@@ -102,6 +137,7 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
       // The channel that would have delivered results just died — don't
       // strand any in-flight group in a spinner it can never resolve out of.
       setTestingGroups(new Set());
+      lastFrameAtRef.current.clear();
       return;
     }
     if (message.type === "topic-gap") {
@@ -111,6 +147,13 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
     const data = message.data as DelayTopicData;
     if (!data || typeof data !== "object") return;
 
+    // Any frame for this group — a per-member result or the trailing done —
+    // proves the channel is still delivering for it, so it resets the
+    // group's watchdog clock regardless of which branch handles it below.
+    if (data.group) {
+      lastFrameAtRef.current.set(data.group, Date.now());
+    }
+
     if ("done" in data) {
       setTestingGroups((prev) => {
         if (!prev.has(data.group)) return prev;
@@ -118,6 +161,7 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
         next.delete(data.group);
         return next;
       });
+      lastFrameAtRef.current.delete(data.group);
       return;
     }
 
@@ -134,12 +178,25 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
     }
   }, []);
 
-  useTopicSubscription({
+  const { status: delayWsStatus } = useTopicSubscription({
     topic: "delay",
     backendId,
     enabled: backendId !== undefined,
     onMessage: handleTopicMessage,
   });
+
+  // Any transition away from 'connected' (reconnecting, disconnected, error)
+  // means results for whatever was in flight are lost — the socket that
+  // would deliver them no longer exists, so a group left in `testingGroups`
+  // through a reconnect would otherwise hang until the 30s watchdog above
+  // (or forever, if it never reconnects in time). Mirrors the topic-error
+  // clear above but for the "connection itself dropped" case rather than an
+  // explicit server-side error frame.
+  useEffect(() => {
+    if (delayWsStatus === "connected") return;
+    setTestingGroups((prev) => (prev.size === 0 ? prev : new Set()));
+    lastFrameAtRef.current.clear();
+  }, [delayWsStatus]);
 
   const handleToggleExpand = useCallback((name: string) => {
     setExpanded((prev) => {
@@ -214,6 +271,9 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
 
   const handleTestGroup = useCallback(
     (group: string) => {
+      // Start the watchdog clock now — a test that never receives a single
+      // delay-topic frame (not even one member result) must still be bounded.
+      lastFrameAtRef.current.set(group, Date.now());
       setTestingGroups((prev) => new Set(prev).add(group));
       groupDelayTest.mutate(
         { group },
@@ -231,6 +291,7 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
               next.delete(group);
               return next;
             });
+            lastFrameAtRef.current.delete(group);
           },
         },
       );
@@ -243,17 +304,21 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
   }, [groupsQuery]);
 
   const groupsUnreachable = groupsQuery.isError && isUnreachableError(groupsQuery.error);
+  const groupsUnauthorized =
+    groupsQuery.isError && apiErrorCode(groupsQuery.error) === "UPSTREAM_UNAUTHORIZED";
   const offline = groupsUnreachable || topicOffline;
+  const showOfflineBanner = offline || groupsUnauthorized;
   const hasData = !!groupsQuery.data;
 
   if (groupsQuery.isLoading) {
     return <GroupsPageSkeleton />;
   }
 
-  // Any other query error (not the documented unreachable-backend shape) —
-  // rare in practice since ManagementGate already filters out the 404/409
-  // cases, but don't render nothing if it happens.
-  if (groupsQuery.isError && !groupsUnreachable && !hasData) {
+  // Any other query error (not the documented unreachable-backend shape, and
+  // not the upstream-rejected-credentials shape handled below) — rare in
+  // practice since ManagementGate already filters out the 404/409 cases, but
+  // don't render nothing if it happens.
+  if (groupsQuery.isError && !showOfflineBanner && !hasData) {
     return (
       <div
         role="alert"
@@ -270,8 +335,15 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
     );
   }
 
-  if (offline && !hasData) {
-    return <OfflineBanner onRetry={handleRetry} retrying={groupsQuery.isRefetching} fullPage />;
+  if (showOfflineBanner && !hasData) {
+    return (
+      <OfflineBanner
+        onRetry={handleRetry}
+        retrying={groupsQuery.isRefetching}
+        unauthorized={groupsUnauthorized}
+        fullPage
+      />
+    );
   }
 
   const groups = groupsQuery.data?.groups ?? [];
@@ -290,7 +362,13 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
         {t("title")}
       </h2>
 
-      {offline && <OfflineBanner onRetry={handleRetry} retrying={groupsQuery.isRefetching} />}
+      {showOfflineBanner && (
+        <OfflineBanner
+          onRetry={handleRetry}
+          retrying={groupsQuery.isRefetching}
+          unauthorized={groupsUnauthorized}
+        />
+      )}
 
       {sortedGroups.length === 0 ? (
         <Card>
@@ -324,12 +402,17 @@ function OfflineBanner({
   onRetry,
   retrying,
   fullPage,
+  unauthorized,
 }: {
   onRetry: () => void;
   retrying?: boolean;
   fullPage?: boolean;
+  /** Upstream answered but rejected the api_secret (UPSTREAM_UNAUTHORIZED) —
+   *  same banner shell, different message than the generic offline case. */
+  unauthorized?: boolean;
 }) {
   const t = useTranslations("management.groups");
+  const mt = useTranslations("management");
 
   const content = (
     <div
@@ -338,7 +421,9 @@ function OfflineBanner({
     >
       <div className="flex items-center gap-3">
         <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
-        <p className="text-sm text-amber-700 dark:text-amber-300">{t("offlineBanner")}</p>
+        <p className="text-sm text-amber-700 dark:text-amber-300">
+          {unauthorized ? mt("upstreamUnauthorized") : t("offlineBanner")}
+        </p>
       </div>
       <Button
         variant="outline"
