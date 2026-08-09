@@ -11,6 +11,11 @@ import type { Backend } from "@/lib/api";
 interface ManagementGateProps {
   backend: Backend | null | undefined;
   children: ReactNode;
+  /** Forwarded to the gate's own BackendConfigDialog instance so saving an
+   *  `api_url` here refetches `backends` — without this the gate has no way
+   *  to learn its own fix landed and stays degraded until the next
+   *  unrelated refetch (or forever, with auto-refresh paused). */
+  onBackendChange?: () => void;
 }
 
 /**
@@ -24,7 +29,7 @@ interface ManagementGateProps {
  * backend settings dialog, reusing the same open/onOpenChange mechanism
  * `components/layout/navigation.tsx` uses for its own settings button.
  */
-export function ManagementGate({ backend, children }: ManagementGateProps) {
+export function ManagementGate({ backend, children, onBackendChange }: ManagementGateProps) {
   const t = useTranslations("management.gate");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -60,6 +65,7 @@ export function ManagementGate({ backend, children }: ManagementGateProps) {
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         isFirstTime={false}
+        onBackendChange={onBackendChange}
       />
     </div>
   );

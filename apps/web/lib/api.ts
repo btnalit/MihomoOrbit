@@ -49,6 +49,25 @@ function isApiStatus(error: unknown, status: number): boolean {
   return error instanceof ApiError && error.status === status;
 }
 
+/** `err.data.code` from a parsed management error body (e.g.
+ *  `NO_MANAGEMENT_CAPABILITY`, `DELAY_TEST_RUNNING`) — undefined for any
+ *  non-`ApiError` or a body without a `code` field. */
+export function apiErrorCode(err: unknown): string | undefined {
+  if (!(err instanceof ApiError)) return undefined;
+  const data = err.data as { code?: unknown } | undefined;
+  return typeof data?.code === "string" ? data.code : undefined;
+}
+
+/** True when the error represents an unreachable/offline upstream backend —
+ *  either the parsed body's `reachable: false` (management contract) or a
+ *  502/504 status as a fallback when the body didn't parse. */
+export function isUnreachableError(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  const data = err.data as { reachable?: unknown } | undefined;
+  if (data?.reachable === false) return true;
+  return err.status === 502 || err.status === 504;
+}
+
 
 
 async function fetchJson<T>(
@@ -88,7 +107,22 @@ async function fetchJson<T>(
           window.dispatchEvent(new CustomEvent("api:unauthorized"));
         }
       }
-      throw new ApiError(`API Error ${res.status}: ${url}`, res.status, { url });
+      // Error responses carry the distinguishing shape from m1-contracts.md
+      // (409 { code }, 502/504 { error, backendId, reachable: false }, etc.)
+      // — parse it when present so callers can branch on it via
+      // apiErrorCode()/isUnreachableError() below. Body may be empty or
+      // non-JSON (e.g. a proxied 502 from something upstream of collector),
+      // so this falls back to the old { url } shape on any parse failure.
+      let data: unknown = { url };
+      try {
+        const parsed = await res.json();
+        if (parsed && typeof parsed === "object") {
+          data = parsed;
+        }
+      } catch {
+        // No/invalid JSON body — keep the { url } fallback.
+      }
+      throw new ApiError(`API Error ${res.status}: ${url}`, res.status, data);
     }
     return await res.json() as T;
   })();

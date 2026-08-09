@@ -43,6 +43,7 @@ interface ContentProps {
   autoRefresh: boolean;
   activeBackendId?: number;
   activeBackend?: Backend | null;
+  onBackendChange?: () => void;
   backendStatus: BackendStatus;
   onNavigate?: (tab: string) => void;
   isLoading?: boolean;
@@ -342,6 +343,7 @@ export function Content({
   autoRefresh,
   activeBackendId,
   activeBackend,
+  onBackendChange,
   backendStatus,
   onNavigate,
   isTransitioning,
@@ -410,7 +412,7 @@ export function Content({
       case "logs":
       case "runtime":
         return (
-          <ManagementGate backend={activeBackend}>
+          <ManagementGate backend={activeBackend} onBackendChange={onBackendChange}>
             <ManagementPlaceholder />
           </ManagementGate>
         );

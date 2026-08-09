@@ -280,6 +280,7 @@
   },
   "management": {
     "comingSoon": "This feature will be implemented in a later task",
+    "delayTestRunning": "This group is already being tested — please wait",
     "gate": {
       "title": "Real-time Management Unavailable",
       "agentHint": "This backend reports via an agent — add its API address to enable real-time management.",

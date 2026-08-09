@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import {
+  apiErrorCode,
   fetchManagementGroups,
   fetchRuntimeConfig,
   killConnection,
@@ -55,6 +56,7 @@ export function useSelectProxy(backendId: number | undefined) {
 
 export function useGroupDelayTest(backendId: number | undefined) {
   const t = useTranslations("management.errors");
+  const mt = useTranslations("management");
 
   return useMutation({
     mutationFn: ({
@@ -66,6 +68,14 @@ export function useGroupDelayTest(backendId: number | undefined) {
     }) => testGroupDelay(backendId as number, group, opts),
     retry: false,
     onError: (error: Error) => {
+      // A duplicate POST for a group that's already testing is a 409
+      // DELAY_TEST_RUNNING, not a failure — the original test's results
+      // still land on the `delay` topic. Surface that distinctly instead
+      // of a generic "failed" toast.
+      if (apiErrorCode(error) === "DELAY_TEST_RUNNING") {
+        toast.error(mt("delayTestRunning"));
+        return;
+      }
       toast.error(error?.message || t("delayTestFailed"));
     },
   });
