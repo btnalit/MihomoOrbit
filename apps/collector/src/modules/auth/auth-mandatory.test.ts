@@ -89,6 +89,14 @@ describe('mandatory auth', () => {
     expect(res.json().code).not.toBe('AUTH_SETUP_REQUIRED');
   });
 
+  it('agent config-file ingest is not intercepted by the mandatory-auth hook', async () => {
+    // Same rationale as the heartbeat case above, for the M2a config-file
+    // report endpoint added to PUBLIC_ROUTES alongside the other agent
+    // ingest routes.
+    const res = await app.inject({ method: 'POST', url: '/api/agent/config-file', payload: {} });
+    expect(res.json().code).not.toBe('AUTH_SETUP_REQUIRED');
+  });
+
   it('disable route is gone', async () => {
     // Exercised under FORCE_ACCESS_CONTROL_OFF so the assertion is purely
     // about routing (no route registered at this path) rather than being

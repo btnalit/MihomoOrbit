@@ -445,6 +445,23 @@ export const SCHEMA = {
       FOREIGN KEY (backend_id) REFERENCES backend_configs(id) ON DELETE CASCADE
     );
   `,
+
+  // Config version history - agent-reported (and, from M2b, editor-applied) config
+  // file snapshots, capped to CONFIG_VERSIONS_KEEP rows per backend at write time.
+  CONFIG_VERSIONS: `
+    CREATE TABLE IF NOT EXISTS config_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      backend_id INTEGER NOT NULL,
+      hash TEXT NOT NULL,
+      content TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT 'agent-report',
+      file_path TEXT NOT NULL DEFAULT '',
+      file_mod_time_ms INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (backend_id) REFERENCES backend_configs(id) ON DELETE CASCADE
+    );
+  `,
 } as const;
 
 // Index definitions
@@ -514,6 +531,9 @@ export const INDEXES = [
   // Surge policy cache indexes
   `CREATE INDEX IF NOT EXISTS idx_surge_policy_backend ON surge_policy_cache(backend_id);`,
   `CREATE INDEX IF NOT EXISTS idx_surge_policy_updated ON surge_policy_cache(updated_at);`,
+
+  // Config versions index
+  `CREATE INDEX IF NOT EXISTS idx_config_versions_backend ON config_versions(backend_id, id DESC);`,
 ] as const;
 
 // Default app config values
@@ -566,6 +586,7 @@ export function getAllSchemaStatements(): string[] {
     SCHEMA.APP_CONFIG,
     SCHEMA.SURGE_POLICY_CACHE,
     SCHEMA.AUTH_CONFIG,
+    SCHEMA.CONFIG_VERSIONS,
     ...INDEXES,
     DEFAULT_APP_CONFIG,
     DEFAULT_AUTH_CONFIG,

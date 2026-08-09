@@ -119,6 +119,21 @@ type AgentReportPayload = {
   updates?: AgentTrafficUpdatePayload[];
 };
 
+type AgentConfigFilePayload = {
+  backendId?: number;
+  agentId?: string;
+  protocolVersion?: number;
+  agentVersion?: string;
+  configFile?: {
+    path?: string;
+    hash?: string;
+    content?: string;
+    size?: number;
+    modTimeMs?: number;
+    error?: string;
+  };
+};
+
 export async function createApp(options: AppOptions) {
   const {
     port,
@@ -968,6 +983,80 @@ export async function createApp(options: AppOptions) {
     return { success: true, backendId, timestamp: body.policyState.timestamp };
   });
 
+  // Agent config-file report endpoint (M2a): persists the agent's mihomo
+  // config.yaml as a capped per-backend version history for later viewing/
+  // editing (M2b). Auth mirrors the other agent ingest endpoints — public
+  // route + isAgentBackendAuthorized, not the admin cookie/Bearer check.
+  const CONFIG_FILE_MAX_BYTES = 256 * 1024;
+  app.post('/api/agent/config-file', async (request, reply) => {
+    const body = request.body as AgentConfigFilePayload;
+    const backendId = parseBackendId(body?.backendId);
+    if (backendId === null) {
+      return reply.status(400).send({ error: 'Invalid backendId' });
+    }
+    if (!isAgentBackendAuthorized(backendId, request, reply)) {
+      return;
+    }
+    if (!isAgentCompatible(body, reply)) {
+      return;
+    }
+
+    const agentId = parseAgentId(body.agentId);
+    if (!agentId) {
+      return reply.status(400).send({ error: 'Invalid agentId' });
+    }
+    if (!isAgentBindingAllowed(backendId, agentId, reply)) {
+      return;
+    }
+
+    const configFile = body.configFile;
+    if (!configFile || typeof configFile !== 'object') {
+      return reply.status(400).send({ error: 'Missing configFile payload' });
+    }
+
+    // Agent read the config file but hit an error (missing/too large/unreadable).
+    // Reported so the UI can surface it, but there is nothing to store.
+    if (typeof configFile.error === 'string' && configFile.error) {
+      console.warn(`[Agent:${backendId}] config file report error: ${configFile.error}`);
+      return { success: true, backendId, stored: false };
+    }
+
+    const content = configFile.content;
+    const claimedHash = configFile.hash;
+    if (typeof content !== 'string' || typeof claimedHash !== 'string' || !claimedHash) {
+      return reply.status(400).send({ error: 'Invalid configFile payload' });
+    }
+
+    // Recompute the hash server-side rather than trusting the agent's claim:
+    // M2b's baseHash matching (sentinel resubstitution + staleness gate) keys
+    // off this value, so a buggy/malicious agent whose reported hash doesn't
+    // actually cover the transmitted bytes must not be able to poison it.
+    const hash = crypto.createHash('sha256').update(content, 'utf8').digest('hex');
+    if (hash !== claimedHash) {
+      return reply.status(400).send({ error: 'hash mismatch', code: 'HASH_MISMATCH' });
+    }
+
+    if (Buffer.byteLength(content, 'utf8') > CONFIG_FILE_MAX_BYTES) {
+      return reply.status(413).send({ error: 'Config file too large' });
+    }
+
+    const { stored } = db.configVersions.insertIfChanged({
+      backendId,
+      hash,
+      content,
+      size: typeof configFile.size === 'number' && Number.isFinite(configFile.size)
+        ? configFile.size
+        : Buffer.byteLength(content, 'utf8'),
+      source: 'agent-report',
+      filePath: String(configFile.path || ''),
+      fileModTimeMs: typeof configFile.modTimeMs === 'number' && Number.isFinite(configFile.modTimeMs)
+        ? configFile.modTimeMs
+        : undefined,
+    });
+
+    return { success: true, backendId, hash, stored };
+  });
+
   // Compatibility routes: Gateway APIs
   app.get('/api/gateway/proxies', async (request, reply) => {
     const backendId = getBackendIdFromQuery(request.query as Record<string, unknown>);
@@ -1381,6 +1470,7 @@ export async function createApp(options: AppOptions) {
     '/api/agent/report',
     '/api/agent/config',
     '/api/agent/policy-state',
+    '/api/agent/config-file',
   ]);
   // Exempted only while auth has not been configured yet, so the first-run
   // setup flow (read state, then enable with the one-time setup token) is

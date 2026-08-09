@@ -22,6 +22,7 @@ import {
   DomainRepository,
   BackendRepository,
   HealthRepository,
+  ConfigVersionRepository,
 } from '../../database/repositories/index.js';
 
 export interface TrafficUpdate {
@@ -107,6 +108,7 @@ export class StatsDatabase {
     domain: DomainRepository;
     backend: BackendRepository;
     health: HealthRepository;
+    configVersion: ConfigVersionRepository;
   };
 
   constructor(dbPath = 'stats.db') {
@@ -128,7 +130,19 @@ export class StatsDatabase {
       domain: new DomainRepository(this.db),
       backend: new BackendRepository(this.db),
       health: new HealthRepository(this.db),
+      configVersion: new ConfigVersionRepository(this.db),
     };
+  }
+
+  /**
+   * Direct facade onto the config-version repository (agent-reported config
+   * file history, M2a). Exposed as a top-level property — unlike the
+   * per-method delegation used elsewhere in this class — because its four
+   * methods (insertIfChanged/getLatest/getById/listMeta) are consumed as a
+   * unit by the ingest endpoint and its tests.
+   */
+  get configVersions(): ConfigVersionRepository {
+    return this.repos.configVersion;
   }
 
   private init() {

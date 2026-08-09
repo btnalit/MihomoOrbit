@@ -265,6 +265,7 @@ export class BackendRepository {
       this.db.prepare(`DELETE FROM surge_policy_cache WHERE backend_id = ?`).run(id);
       this.db.prepare(`DELETE FROM agent_heartbeats WHERE backend_id = ?`).run(id);
       this.db.prepare(`DELETE FROM agent_snapshots WHERE backend_id = ?`).run(id);
+      this.db.prepare(`DELETE FROM config_versions WHERE backend_id = ?`).run(id);
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
