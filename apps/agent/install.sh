@@ -178,6 +178,14 @@ use_local_agent() {
 		set -- "$@" --gateway-token "$ORBIT_GATEWAY_TOKEN"
 	fi
 
+	if [ -n "${ORBIT_MIHOMO_CONFIG:-}" ]; then
+		set -- "$@" --mihomo-config "$ORBIT_MIHOMO_CONFIG"
+	fi
+
+	if [ -n "${ORBIT_CONFIG_CHECK_INTERVAL:-}" ]; then
+		set -- "$@" --config-check-interval "$ORBIT_CONFIG_CHECK_INTERVAL"
+	fi
+
 	if [ "${ORBIT_AUTO_START:-true}" != "true" ]; then
 		set -- "$@" --no-start
 	fi
@@ -437,6 +445,12 @@ main() {
 		--gateway-url "$ORBIT_GATEWAY_URL"
 	if [ -n "$ORBIT_GATEWAY_TOKEN" ]; then
 		set -- "$@" --gateway-token "$ORBIT_GATEWAY_TOKEN"
+	fi
+	if [ -n "${ORBIT_MIHOMO_CONFIG:-}" ]; then
+		set -- "$@" --mihomo-config "$ORBIT_MIHOMO_CONFIG"
+	fi
+	if [ -n "${ORBIT_CONFIG_CHECK_INTERVAL:-}" ]; then
+		set -- "$@" --config-check-interval "$ORBIT_CONFIG_CHECK_INTERVAL"
 	fi
 	if [ "$ORBIT_AUTO_START" != "true" ]; then
 		set -- "$@" --no-start

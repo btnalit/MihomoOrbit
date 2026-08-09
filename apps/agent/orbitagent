@@ -248,6 +248,8 @@ set -- "\$AGENT_BIN" \
 [ -n "\${ORBIT_REPORT_BATCH_SIZE:-}" ] && set -- "\$@" --report-batch-size "\$ORBIT_REPORT_BATCH_SIZE"
 [ -n "\${ORBIT_MAX_PENDING_UPDATES:-}" ] && set -- "\$@" --max-pending-updates "\$ORBIT_MAX_PENDING_UPDATES"
 [ -n "\${ORBIT_STALE_FLOW_TIMEOUT:-}" ] && set -- "\$@" --stale-flow-timeout "\$ORBIT_STALE_FLOW_TIMEOUT"
+[ -n "\${MIHOMO_CONFIG:-}" ] && set -- "\$@" --mihomo-config "\$MIHOMO_CONFIG"
+[ -n "\${CONFIG_CHECK_INTERVAL:-}" ] && set -- "\$@" --config-check-interval "\$CONFIG_CHECK_INTERVAL"
 
 set -- "\$@" --log="\${ORBIT_LOG:-true}"
 exec "\$@"
@@ -697,6 +699,8 @@ Quick add with flags (auto-starts by default):
     --gateway-type <clash|surge> \
     --gateway-url <url> \
     [--gateway-token <token>] \
+    [--mihomo-config <path>] \
+    [--config-check-interval <duration>] \
     [--no-start]        # skip auto-start after add
 
 Upgrade examples:
@@ -713,7 +717,8 @@ Required config keys:
 Optional keys:
   ORBIT_GATEWAY_TOKEN, ORBIT_LOG, ORBIT_AGENT_ID, ORBIT_REPORT_INTERVAL,
   ORBIT_HEARTBEAT_INTERVAL, ORBIT_GATEWAY_POLL_INTERVAL, ORBIT_REQUEST_TIMEOUT,
-  ORBIT_REPORT_BATCH_SIZE, ORBIT_MAX_PENDING_UPDATES, ORBIT_STALE_FLOW_TIMEOUT
+  ORBIT_REPORT_BATCH_SIZE, ORBIT_MAX_PENDING_UPDATES, ORBIT_STALE_FLOW_TIMEOUT,
+  MIHOMO_CONFIG, CONFIG_CHECK_INTERVAL
 
 Examples:
   # Add and start a new backend
@@ -767,6 +772,14 @@ load_config() {
   require_config_key "ORBIT_GATEWAY_URL"
 }
 
+# Wrap $1 in single quotes for safe later re-parsing (e.g. via `eval "set --
+# $args"` or a direct KEY='value' config line), escaping any embedded single
+# quotes with the standard '\'' idiom. The result is one shell-syntax token
+# that reconstructs to exactly $1, spaces/quotes/globs and all.
+shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 build_agent_args() {
   set -- \
     --server-url "$ORBIT_SERVER" \
@@ -802,11 +815,24 @@ build_agent_args() {
   if [ -n "${ORBIT_STALE_FLOW_TIMEOUT:-}" ]; then
     set -- "$@" --stale-flow-timeout "$ORBIT_STALE_FLOW_TIMEOUT"
   fi
+  if [ -n "${MIHOMO_CONFIG:-}" ]; then
+    set -- "$@" --mihomo-config "$MIHOMO_CONFIG"
+  fi
+  if [ -n "${CONFIG_CHECK_INTERVAL:-}" ]; then
+    set -- "$@" --config-check-interval "$CONFIG_CHECK_INTERVAL"
+  fi
 
   log_enabled="${ORBIT_LOG:-true}"
   set -- "$@" --log="$log_enabled"
 
-  printf '%s\n' "$*"
+  # Emit every word shell-quoted (not just space-joined) so the caller can
+  # safely reconstruct the original argv via `eval "set -- $(build_agent_args)"`
+  # even when a value (e.g. --mihomo-config's path) contains spaces.
+  out=""
+  for a in "$@"; do
+    out="$out $(shell_quote "$a")"
+  done
+  printf '%s\n' "${out# }"
 }
 
 cmd_init() {
@@ -828,12 +854,24 @@ cmd_init() {
   log "config written: $cf"
 }
 
+# Append KEY='value' to a config file with the value single-quote-wrapped (via
+# shell_quote), so values containing spaces (e.g. a mihomo config path)
+# survive both the shell word-splitting that would otherwise break
+# config_vars-style assembly and the `. "$cf"` sourcing done by
+# load_config/the generated runner script.
+append_quoted_env() {
+  key="$1"
+  value="$2"
+  file="$3"
+  printf '%s=%s\n' "$key" "$(shell_quote "$value")" >> "$file"
+}
+
 # Quick add with flags instead of KEY=VALUE pairs
 cmd_add() {
   if [ "$#" -lt 6 ]; then
     err "add requires: <name> --server-url <url> --backend-id <id> --backend-token <token> --gateway-type <type> --gateway-url <url>"
     echo ""
-    echo "Usage: $PROG add <name> --server-url <url> --backend-id <id> --backend-token <token> --gateway-type <clash|surge> --gateway-url <url> [--gateway-token <token>] [--auto-start]"
+    echo "Usage: $PROG add <name> --server-url <url> --backend-id <id> --backend-token <token> --gateway-type <clash|surge> --gateway-url <url> [--gateway-token <token>] [--mihomo-config <path>] [--config-check-interval <duration>] [--auto-start]"
     exit 1
   fi
 
@@ -847,6 +885,8 @@ cmd_add() {
   gateway_type=""
   gateway_url=""
   gateway_token=""
+  mihomo_config=""
+  config_check_interval=""
   auto_start="true"   # default: start immediately after add
 
   while [ "$#" -gt 0 ]; do
@@ -873,6 +913,14 @@ cmd_add() {
         ;;
       --gateway-token)
         gateway_token="$2"
+        shift 2
+        ;;
+      --mihomo-config)
+        mihomo_config="$2"
+        shift 2
+        ;;
+      --config-check-interval)
+        config_check_interval="$2"
         shift 2
         ;;
       --auto-start)
@@ -907,6 +955,12 @@ cmd_add() {
   if [ -n "$gateway_token" ]; then
     config_vars="$config_vars ORBIT_GATEWAY_TOKEN=$gateway_token"
   fi
+  # NOTE: mihomo_config/config_check_interval are deliberately NOT routed
+  # through config_vars (unlike the keys above): config_vars is assembled as
+  # an unquoted space-joined string and later word-split via `$config_vars`
+  # into cmd_init's args, which breaks on a path containing spaces. They are
+  # appended directly to the config file below via append_quoted_env instead,
+  # after cmd_init has written the rest of the config.
 
   # Initialize config
   cf="$(config_file "$name")"
@@ -919,6 +973,13 @@ cmd_add() {
   fi
   # shellcheck disable=SC2086
   cmd_init "$name" $config_vars
+
+  if [ -n "$mihomo_config" ]; then
+    append_quoted_env "MIHOMO_CONFIG" "$mihomo_config" "$cf"
+  fi
+  if [ -n "$config_check_interval" ]; then
+    append_quoted_env "CONFIG_CHECK_INTERVAL" "$config_check_interval" "$cf"
+  fi
 
   log "instance '$name' added successfully"
 
@@ -963,8 +1024,13 @@ cmd_start() {
   lf="$(log_file "$name")"
   pf="$(pid_file "$name")"
 
-  # shellcheck disable=SC2086
-  nohup "$AGENT_BIN" $args >> "$lf" 2>&1 &
+  # build_agent_args emits each word shell-quoted (single-quote-wrapped, via
+  # shell_quote); reassemble the real argv with eval instead of relying on
+  # unquoted word-splitting, so a value containing spaces (e.g.
+  # --mihomo-config's path) survives as one argument instead of being
+  # silently torn apart.
+  eval "set -- $args"
+  nohup "$AGENT_BIN" "$@" >> "$lf" 2>&1 &
   pid=$!
   printf '%s\n' "$pid" > "$pf"
   log "instance '$name' started, pid=$pid, log=$lf"

@@ -36,7 +36,12 @@ type Config struct {
 	ReportBatchSize     int
 	MaxPendingUpdates   int
 	StaleFlowTimeout    time.Duration
+	MihomoConfigPath    string
+	ConfigCheckInterval time.Duration
 }
+
+// MinConfigCheckInterval is the floor below which ConfigCheckInterval is clamped.
+const MinConfigCheckInterval = 10 * time.Second
 
 func Parse(args []string) (Config, error) {
 	fs := flag.NewFlagSet("orbit-agent", flag.ContinueOnError)
@@ -58,6 +63,8 @@ func Parse(args []string) (Config, error) {
 	reportBatchSize := fs.Int("report-batch-size", 1000, "Maximum updates per report request")
 	maxPending := fs.Int("max-pending-updates", 50000, "Maximum buffered updates in memory")
 	staleFlowTimeout := fs.Duration("stale-flow-timeout", 5*time.Minute, "Flow state stale timeout")
+	mihomoConfigPath := fs.String("mihomo-config", "", "Path to mihomo config.yaml to watch (optional; empty disables config visibility)")
+	configCheckInterval := fs.Duration("config-check-interval", 60*time.Second, "Interval between mihomo config file checks (clamped to a 10s floor)")
 	showVersion := fs.Bool("version", false, "Print version and exit")
 	help := fs.Bool("help", false, "Show help")
 
@@ -91,6 +98,11 @@ func Parse(args []string) (Config, error) {
 		return Config{}, errors.New("report-batch-size and max-pending-updates must be positive")
 	}
 
+	clampedConfigCheckInterval := *configCheckInterval
+	if clampedConfigCheckInterval < MinConfigCheckInterval {
+		clampedConfigCheckInterval = MinConfigCheckInterval
+	}
+
 	// Generate stable agent ID based on backend token
 	// This ensures the same agent always uses the same ID across restarts
 	backendTokenTrimmed := strings.TrimSpace(*backendToken)
@@ -122,6 +134,8 @@ func Parse(args []string) (Config, error) {
 		ReportBatchSize:     *reportBatchSize,
 		MaxPendingUpdates:   *maxPending,
 		StaleFlowTimeout:    *staleFlowTimeout,
+		MihomoConfigPath:    strings.TrimSpace(*mihomoConfigPath),
+		ConfigCheckInterval: clampedConfigCheckInterval,
 	}, nil
 }
 
@@ -148,6 +162,8 @@ func Usage() string {
 		"  --report-batch-size     default 1000",
 		"  --max-pending-updates   default 50000",
 		"  --stale-flow-timeout    default 5m",
+		"  --mihomo-config         path to mihomo config.yaml to watch (default disabled)",
+		"  --config-check-interval default 60s, clamped to a 10s floor",
 		"  --version               print version",
 	}
 	return strings.Join(lines, "\n") + "\n"
