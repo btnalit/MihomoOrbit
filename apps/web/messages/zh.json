@@ -292,6 +292,22 @@
       "delayTestFailed": "测速失败",
       "killConnectionFailed": "断开连接失败",
       "patchConfigFailed": "更新运行时配置失败"
+    },
+    "groups": {
+      "title": "代理组",
+      "test": "测速",
+      "testing": "测速中",
+      "current": "当前",
+      "noSelection": "未选择",
+      "memberCount": "{count} 个节点",
+      "expand": "展开",
+      "collapse": "收起",
+      "timeout": "超时",
+      "selectFailed": "切换到 {proxy} 失败",
+      "offlineBanner": "无法连接到该后端,实时数据暂不可用",
+      "retry": "重试",
+      "loadError": "加载代理组失败",
+      "empty": "暂无代理组"
     }
   },
   "map": {

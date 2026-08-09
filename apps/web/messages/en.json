@@ -292,6 +292,22 @@
       "delayTestFailed": "Delay test failed",
       "killConnectionFailed": "Failed to close connection",
       "patchConfigFailed": "Failed to update runtime config"
+    },
+    "groups": {
+      "title": "Proxy Groups",
+      "test": "Test",
+      "testing": "Testing",
+      "current": "Current",
+      "noSelection": "Not selected",
+      "memberCount": "{count} nodes",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "timeout": "Timeout",
+      "selectFailed": "Failed to switch to {proxy}",
+      "offlineBanner": "Can't reach this backend right now — live data is unavailable.",
+      "retry": "Retry",
+      "loadError": "Failed to load proxy groups",
+      "empty": "No proxy groups"
     }
   },
   "map": {

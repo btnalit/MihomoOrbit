@@ -15,7 +15,7 @@ import { InteractiveRuleStats } from "@/components/features/rules";
 import { HealthContent } from "@/components/features/health";
 import { WorldTrafficMap, CountryTrafficList } from "@/components/features/countries";
 import { DomainsTable, IPsTable } from "@/components/features/stats/table";
-import { ManagementGate } from "@/components/features/management";
+import { GroupsPage, ManagementGate } from "@/components/features/management";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -408,6 +408,18 @@ export function Content({
       case "health":
         return <HealthContent timeRange={timeRange} />;
       case "groups":
+        return (
+          <ManagementGate backend={activeBackend} onBackendChange={onBackendChange}>
+            {/* `key` forces a remount on backend switch — GroupsPage's local
+                override state (live delay overrides, in-flight test
+                indicators, expanded cards) is keyed by proxy/group name
+                only, not backendId, and proxy names collide across
+                backends (DIRECT, PROXY, ...). Without this, switching
+                backends would show delay numbers measured against the
+                previous backend. */}
+            <GroupsPage key={activeBackendId} backendId={activeBackendId} />
+          </ManagementGate>
+        );
       case "connections":
       case "logs":
       case "runtime":
