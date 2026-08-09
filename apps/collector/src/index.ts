@@ -1,7 +1,6 @@
 import { config } from 'dotenv';
 import path from 'path';
 import fs from 'fs';
-import { isAgentBackendUrl } from '@mihomo-orbit/shared';
 
 // Load .env.local if it exists (takes precedence over .env, but not shell)
 const envLocalPath = path.join(process.cwd(), '.env.local');
@@ -193,14 +192,17 @@ async function manageBackends() {
     for (const backend of backends) {
       const existingCollector = collectors.get(backend.id);
       const lastConfig = lastBackendConfigs.get(backend.id);
-      const isAgentBackend = isAgentBackendUrl(backend.url);
+      const isAgentBackend = backend.agent_token !== '';
 
       // Check if we need to start or restart this backend connection
       const needsStart = backend.listening && backend.enabled && !existingCollector && !isAgentBackend;
       const changedFields: string[] = [];
       if (existingCollector && lastConfig) {
-        if (lastConfig.url !== backend.url) changedFields.push('url');
-        if (lastConfig.token !== backend.token) changedFields.push('token');
+        // Compare unified-model fields only — url/token are write-only rollback
+        // mirrors (see semantic contract) and must never drive collector restarts.
+        if (lastConfig.api_url !== backend.api_url) changedFields.push('api_url');
+        if (lastConfig.api_secret !== backend.api_secret) changedFields.push('api_secret');
+        if (lastConfig.agent_token !== backend.agent_token) changedFields.push('agent_token');
         if (lastConfig.type !== backend.type) changedFields.push('type');
         if (lastConfig.listening !== backend.listening) changedFields.push('listening');
         if (lastConfig.enabled !== backend.enabled) changedFields.push('enabled');
@@ -244,8 +246,8 @@ async function manageBackends() {
 
 // Start a collector for a specific backend
 function startCollector(backend: BackendConfig) {
-  if (isAgentBackendUrl(backend.url)) {
-    console.log(`[Collector] Backend "${backend.name}" (ID: ${backend.id}) is agent mode, skip direct pulling`);
+  if (backend.agent_token !== '') {
+    console.log(`[Collector] Backend "${backend.name}" (ID: ${backend.id}) is agent-sourced (agent_token set), skip direct pulling`);
     return;
   }
 
@@ -254,18 +256,26 @@ function startCollector(backend: BackendConfig) {
     return;
   }
 
-  console.log(`[Collector] Starting ${backend.type || 'clash'} collector for backend "${backend.name}" (ID: ${backend.id}) at ${backend.url}`);
+  if (backend.api_url === '') {
+    // Unified model: an API-created backend always has api_url and/or agent_token
+    // set. This row has neither — unreachable via the current API, but skip
+    // defensively rather than crash on an empty connection URL.
+    console.warn(`[Collector] Backend "${backend.name}" (ID: ${backend.id}) has no api_url and no agent_token, skipping`);
+    return;
+  }
+
+  console.log(`[Collector] Starting ${backend.type || 'clash'} collector for backend "${backend.name}" (ID: ${backend.id}) at ${backend.api_url}`);
 
   if (backend.type === 'surge') {
     // Start policy sync service for Surge
-    const baseUrl = backend.url.replace(/\/$/, '');
-    policySyncService.startSync(backend.id, baseUrl, backend.token || undefined);
+    const baseUrl = backend.api_url.replace(/\/$/, '');
+    policySyncService.startSync(backend.id, baseUrl, backend.api_secret || undefined);
 
     // Create and start Surge collector (REST API polling)
     const collector = createSurgeCollector(
       db,
-      backend.url,
-      backend.token || undefined,
+      backend.api_url,
+      backend.api_secret || undefined,
       geoService,
       () => {
         // Broadcast stats update via WebSocket when new data arrives
@@ -278,7 +288,7 @@ function startCollector(backend: BackendConfig) {
     collector.start();
   } else {
     // Create and start Clash collector (WebSocket)
-    let wsUrl = backend.url.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://');
+    let wsUrl = backend.api_url.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://');
     if (!wsUrl.endsWith('/connections')) {
       wsUrl = `${wsUrl}/connections`;
     }
@@ -286,7 +296,7 @@ function startCollector(backend: BackendConfig) {
     const collector = createCollector(
       db,
       wsUrl,
-      backend.token || undefined,
+      backend.api_secret || undefined,
       geoService,
       () => {
         // Broadcast stats update via WebSocket when new data arrives
