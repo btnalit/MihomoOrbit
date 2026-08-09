@@ -18,6 +18,10 @@ import {
   X,
   ShieldAlert,
   HeartPulse,
+  Network,
+  ArrowLeftRight,
+  ScrollText,
+  SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -53,6 +57,10 @@ const NAV_ITEMS = [
   { id: "proxies", icon: Server },
   { id: "devices", icon: Smartphone },
   { id: "health", icon: HeartPulse },
+  { id: "groups", icon: Network },
+  { id: "connections", icon: ArrowLeftRight },
+  { id: "logs", icon: ScrollText },
+  { id: "runtime", icon: SlidersHorizontal },
 ];
 
 export function Navigation({

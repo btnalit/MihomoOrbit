@@ -106,6 +106,7 @@ export default function DashboardPage() {
             isTransitioning={isTransitioning}
             autoRefresh={autoRefresh}
             activeBackendId={activeBackendId}
+            activeBackend={activeBackend}
             backendStatus={backendStatus}
             onNavigate={(tab) => setActiveTab(tab as TabId)}
           />

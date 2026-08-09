@@ -13,7 +13,11 @@
     "network": "网络",
     "health": "健康",
     "settings": "设置",
-    "showcaseMode": "演示模式"
+    "showcaseMode": "演示模式",
+    "groups": "代理组",
+    "connections": "连接",
+    "logs": "日志",
+    "runtime": "运行时设置"
   },
   "header": {
     "title": "MihomoOrbit",
@@ -273,6 +277,21 @@
   "network": {
     "title": "网络",
     "comingSoon": "实时连接监控功能开发中..."
+  },
+  "management": {
+    "comingSoon": "该功能将在后续任务中实现",
+    "gate": {
+      "title": "实时管理不可用",
+      "agentHint": "此后端经 agent 上报,补填 API 地址即可启用实时管理",
+      "unavailable": "该后端暂不支持实时管理",
+      "openSettings": "打开后端设置"
+    },
+    "errors": {
+      "selectProxyFailed": "切换代理失败",
+      "delayTestFailed": "测速失败",
+      "killConnectionFailed": "断开连接失败",
+      "patchConfigFailed": "更新运行时配置失败"
+    }
   },
   "map": {
     "title": "全球地区流量",

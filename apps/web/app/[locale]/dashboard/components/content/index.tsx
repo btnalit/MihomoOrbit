@@ -15,11 +15,12 @@ import { InteractiveRuleStats } from "@/components/features/rules";
 import { HealthContent } from "@/components/features/health";
 import { WorldTrafficMap, CountryTrafficList } from "@/components/features/countries";
 import { DomainsTable, IPsTable } from "@/components/features/stats/table";
+import { ManagementGate } from "@/components/features/management";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { InsightThreePanelSkeleton } from "@/components/ui/insight-skeleton";
-import { api, type TimeRange } from "@/lib/api";
+import { api, type Backend, type TimeRange } from "@/lib/api";
 import { getDevicesQueryKey } from "@/lib/stats-query-keys";
 import { useStableTimeRange } from "@/lib/hooks/use-stable-time-range";
 import { cn } from "@/lib/utils";
@@ -41,6 +42,7 @@ interface ContentProps {
   timePreset: TimePreset;
   autoRefresh: boolean;
   activeBackendId?: number;
+  activeBackend?: Backend | null;
   backendStatus: BackendStatus;
   onNavigate?: (tab: string) => void;
   isLoading?: boolean;
@@ -316,6 +318,20 @@ const NetworkContent = memo(function NetworkContent() {
   );
 });
 
+// Management Placeholder Content Component — groups/connections/logs/runtime
+// pages land in Tasks 5-8; this stub only exists so the capability gate
+// (ManagementGate) is live from this task onward.
+const ManagementPlaceholder = memo(function ManagementPlaceholder() {
+  const t = useTranslations("management");
+  return (
+    <div className="space-y-6">
+      <div className="p-12 text-center text-muted-foreground border rounded-xl">
+        <p>{t("comingSoon")}</p>
+      </div>
+    </div>
+  );
+});
+
 export function Content({
   activeTab,
   data,
@@ -325,6 +341,7 @@ export function Content({
   timePreset,
   autoRefresh,
   activeBackendId,
+  activeBackend,
   backendStatus,
   onNavigate,
   isTransitioning,
@@ -388,6 +405,15 @@ export function Content({
         return <NetworkContent />;
       case "health":
         return <HealthContent timeRange={timeRange} />;
+      case "groups":
+      case "connections":
+      case "logs":
+      case "runtime":
+        return (
+          <ManagementGate backend={activeBackend}>
+            <ManagementPlaceholder />
+          </ManagementGate>
+        );
       default:
         return (
           <OverviewContent

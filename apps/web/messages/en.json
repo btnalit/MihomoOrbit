@@ -13,7 +13,11 @@
     "network": "Network",
     "health": "Health",
     "settings": "Settings",
-    "showcaseMode": "Showcase Mode"
+    "showcaseMode": "Showcase Mode",
+    "groups": "Proxy Groups",
+    "connections": "Connections",
+    "logs": "Logs",
+    "runtime": "Runtime Settings"
   },
   "header": {
     "title": "MihomoOrbit",
@@ -273,6 +277,21 @@
   "network": {
     "title": "Network",
     "comingSoon": "Real-time connection monitoring coming soon..."
+  },
+  "management": {
+    "comingSoon": "This feature will be implemented in a later task",
+    "gate": {
+      "title": "Real-time Management Unavailable",
+      "agentHint": "This backend reports via an agent — add its API address to enable real-time management.",
+      "unavailable": "Real-time management isn't available for this backend.",
+      "openSettings": "Open Backend Settings"
+    },
+    "errors": {
+      "selectProxyFailed": "Failed to switch proxy",
+      "delayTestFailed": "Delay test failed",
+      "killConnectionFailed": "Failed to close connection",
+      "patchConfigFailed": "Failed to update runtime config"
+    }
   },
   "map": {
     "title": "Global Regional Traffic",

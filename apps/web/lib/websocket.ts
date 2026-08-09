@@ -122,7 +122,7 @@ function normalizeWsUrl(rawUrl: string, runtime?: RuntimeConfig): string {
   return trimmed;
 }
 
-function getWsUrlCandidates(): string[] {
+export function getWsUrlCandidates(): string[] {
   const runtime = getRuntimeConfig();
   const wsPort = runtime?.WS_PORT || process.env.NEXT_PUBLIC_WS_PORT || '3002';
 

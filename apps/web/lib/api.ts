@@ -53,7 +53,7 @@ function isApiStatus(error: unknown, status: number): boolean {
 
 async function fetchJson<T>(
   url: string,
-  method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET",
   body?: unknown,
 ): Promise<T> {
   if (method === "GET") {
@@ -651,6 +651,124 @@ export const api = {
   updateToken: (currentToken: string, newToken: string) =>
     fetchJson<{ success: boolean; message: string }>(`${API_BASE}/auth/token`, 'PUT', { currentToken, newToken }),
 };
+
+// ── Management (M1 real-time management surface) ────────────────────────
+// REST contract: m1-contracts.md §REST 契约. Every URL is a template
+// literal on API_BASE so `pnpm check:api-routes` can pair it with the
+// collector's management.controller.ts routes.
+
+export interface MihomoProxyHistoryEntry {
+  time: string;
+  delay: number;
+}
+
+/** Mihomo `/proxies` entry — passed through from upstream, shape varies by
+ *  proxy/group type, so unknown extra fields are preserved rather than dropped. */
+export interface MihomoProxy {
+  name: string;
+  type: string;
+  alive?: boolean;
+  now?: string;
+  all?: string[];
+  history?: MihomoProxyHistoryEntry[];
+  udp?: boolean;
+  xudp?: boolean;
+  tfo?: boolean;
+  mptcp?: boolean;
+  smux?: boolean;
+  id?: string;
+  extra?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementGroupsResponse {
+  groups: MihomoProxy[];
+  proxies: Record<string, MihomoProxy>;
+}
+
+export interface DelayTestResult {
+  delay: number;
+}
+
+export interface GroupDelayTestAccepted {
+  accepted: true;
+  group: string;
+  total: number;
+}
+
+/** Mihomo `/configs` — passed through verbatim; known fields are typed,
+ *  everything else survives via the index signature. */
+export interface MihomoRuntimeConfig {
+  port?: number;
+  "socks-port"?: number;
+  "redir-port"?: number;
+  "tproxy-port"?: number;
+  "mixed-port"?: number;
+  mode?: string;
+  "log-level"?: string;
+  "allow-lan"?: boolean;
+  "bind-address"?: string;
+  ipv6?: boolean;
+  tun?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export function fetchManagementGroups(backendId: number) {
+  return fetchJson<ManagementGroupsResponse>(`${API_BASE}/management/${backendId}/groups`);
+}
+
+export function selectGroupProxy(backendId: number, group: string, proxy: string) {
+  return fetchJson<{ success: true }>(
+    `${API_BASE}/management/${backendId}/groups/${encodeURIComponent(group)}`,
+    "PUT",
+    { proxy },
+  );
+}
+
+export function testProxyDelay(
+  backendId: number,
+  proxy: string,
+  opts?: { url?: string; timeout?: number },
+) {
+  return fetchJson<DelayTestResult>(
+    buildUrl(`${API_BASE}/management/${backendId}/delay/${encodeURIComponent(proxy)}`, {
+      url: opts?.url,
+      timeout: opts?.timeout,
+    }),
+  );
+}
+
+export function testGroupDelay(
+  backendId: number,
+  group: string,
+  opts?: { url?: string; timeout?: number },
+) {
+  const body = opts && (opts.url !== undefined || opts.timeout !== undefined) ? opts : undefined;
+  return fetchJson<GroupDelayTestAccepted>(
+    `${API_BASE}/management/${backendId}/delay-group/${encodeURIComponent(group)}`,
+    "POST",
+    body,
+  );
+}
+
+export function killConnection(backendId: number, connId: string) {
+  return fetchJson<{ success: true }>(
+    `${API_BASE}/management/${backendId}/connections/${encodeURIComponent(connId)}`,
+    "DELETE",
+  );
+}
+
+export function fetchRuntimeConfig(backendId: number) {
+  return fetchJson<MihomoRuntimeConfig>(`${API_BASE}/management/${backendId}/configs`);
+}
+
+export function patchRuntimeConfig(backendId: number, patch: Partial<MihomoRuntimeConfig>) {
+  return fetchJson<{ success: true }>(
+    `${API_BASE}/management/${backendId}/configs`,
+    "PATCH",
+    patch,
+  );
+}
 
 // Helper functions for time range
 export function getPresetTimeRange(

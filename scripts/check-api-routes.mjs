@@ -42,7 +42,7 @@ function extractFrontendRoutes(code) {
 
 function extractBackendRoutes(code, prefix) {
   const routes = new Set();
-  const routePattern = /(?:app|fastify)\.(?:get|post|put|delete)(?:<[^>\n\r]*>)?\(\s*['"]([^'"]+)['"]/g;
+  const routePattern = /(?:app|fastify)\.(?:get|post|put|delete|patch)(?:<[^>\n\r]*>)?\(\s*['"]([^'"]+)['"]/g;
 
   for (const match of code.matchAll(routePattern)) {
     const raw = `${prefix}${match[1]}`;
