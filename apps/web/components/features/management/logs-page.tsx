@@ -13,16 +13,26 @@
  * anything inside that range is a duplicate and dropped silently. A seq
  * *below* everything we hold (not just less than the max) means the
  * collector restarted and its seq counter began again from a low value;
- * that's treated as a brand new stream and clears the list, per the task
- * brief. The list itself is capped at 1000 rows (drop oldest) as a
- * browser-side second bound over the server's 500-entry ring.
+ * that's treated as a brand new stream and clears the list.
+ *
+ * Two caps, not one: `SOFT_CAP` (1000) is the normal browser-side bound —
+ * applied whenever the view is stuck to the bottom (`autoStick`), a second
+ * bound over the server's 500-entry ring. While paused (`!autoStick`),
+ * evicting under the soft cap would shift the paused user's scroll
+ * position toward newer entries on every incoming line — browsers don't
+ * compensate `scrollTop` for content removed above the viewport, so the
+ * "frozen" view would silently drift. Only `HARD_CAP` (2000) evicts while
+ * paused, a safety valve rather than a steady-state bound; resuming
+ * (scrolling back to the bottom, or the "back to latest" button) trims the
+ * buffered burst back down to `SOFT_CAP` immediately. Hitting `HARD_CAP`
+ * while paused surfaces an inline notice that clears on resume.
  *
  * The level filter is local/client-only — it never unsubscribes or asks
  * the server to stop sending a level. All levels (including debug, hidden
  * by default since the upstream tail is debug-level) are always received,
- * stored, and counted against the 1000-row cap; only rendering is
- * filtered. Unknown levels (anything outside debug/info/warning/error)
- * always render, regardless of filter chip state.
+ * stored, and counted against the caps above; only rendering is filtered.
+ * Unknown levels (anything outside debug/info/warning/error) always
+ * render, regardless of filter chip state.
  *
  * Auto-scroll ("stick to bottom") is measurement-based, not event-driven:
  * `handleScroll` only *measures* distance-from-bottom to decide whether to
@@ -31,9 +41,17 @@
  * `scroll` event, which re-enters `handleScroll`, but that re-measurement
  * lands back at ~0 distance and confirms `autoStick` should stay true —
  * it settles rather than oscillating, so there's no feedback loop.
+ *
+ * `rowsRef`/`autoStickRef` mirror the corresponding state so
+ * `handleTopicMessage` (a stable, zero-dependency callback — worth keeping
+ * stable since it fires on every single log line, unlike the throttled
+ * `connections` snapshot) can read the latest accumulated rows and
+ * stickiness without depending on render-scoped state; `EntryRow`/`GapRow`
+ * are memoized so an appended line only renders itself, not the other
+ * ~1000 rows already on screen.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AlertTriangle, ArrowDown, Terminal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -50,13 +68,17 @@ interface LogTopicData {
 }
 
 type LogRow =
-  | { kind: "entry"; seq: number; level: string; payload: string; ts: number }
+  | { kind: "entry"; seq: number; level: string; payload: string; ts: number; timeLabel: string }
   | { kind: "gap"; id: number; dropped: number };
 
 const ALL_LEVELS = ["debug", "info", "warning", "error"] as const;
 type KnownLevel = (typeof ALL_LEVELS)[number];
 
-const MAX_ROWS = 1000;
+// Normal cap while stuck to the bottom, vs. the paused safety valve — see
+// file header comment.
+const SOFT_CAP = 1000;
+const HARD_CAP = 2000;
+
 // Only the four documented levels are known to the filter chips; anything
 // else (a level string the upstream might add later) always renders — see
 // file header comment.
@@ -74,9 +96,9 @@ function isKnownLevel(level: string): level is KnownLevel {
   return KNOWN_LEVEL_SET.has(level);
 }
 
-function trimRows(rows: LogRow[]): LogRow[] {
-  if (rows.length <= MAX_ROWS) return rows;
-  return rows.slice(rows.length - MAX_ROWS);
+function trimToCap(rows: LogRow[], cap: number): LogRow[] {
+  if (rows.length <= cap) return rows;
+  return rows.slice(rows.length - cap);
 }
 
 /** Range of seqs currently retained among `entry` rows (gap rows carry no
@@ -94,28 +116,38 @@ function findSeqBounds(rows: LogRow[]): { min: number; max: number } | null {
   return { min, max };
 }
 
-function appendLogEntry(prev: LogRow[], data: LogTopicData): LogRow[] {
+interface AppendResult {
+  rows: LogRow[];
+  /** False for a duplicate replay — `rows` is the same reference as input. */
+  changed: boolean;
+  /** True when this frame started a brand new stream (collector restart). */
+  reset: boolean;
+}
+
+function appendLogEntry(prev: LogRow[], data: LogTopicData): AppendResult {
   const entryRow: LogRow = {
     kind: "entry",
     seq: data.seq,
     level: data.level,
     payload: data.payload,
     ts: data.ts,
+    // Precomputed once here, not in render — see EntryRow's own comment.
+    timeLabel: formatLogTime(data.ts),
   };
   const bounds = findSeqBounds(prev);
 
   if (!bounds || data.seq > bounds.max) {
-    return trimRows([...prev, entryRow]);
+    return { rows: [...prev, entryRow], changed: true, reset: false };
   }
   if (data.seq >= bounds.min) {
     // Already covered by what we're holding — a ring replay after a plain
     // reconnect re-sending history we already have. Drop silently.
-    return prev;
+    return { rows: prev, changed: false, reset: false };
   }
   // Lower than everything we hold, and not covered by the dedup window:
   // the collector restarted and seq numbering began again from a low
   // value. Treat this frame as the start of a brand new stream.
-  return [entryRow];
+  return { rows: [entryRow], changed: true, reset: true };
 }
 
 function formatLogTime(ts: number): string {
@@ -137,26 +169,50 @@ export function LogsPage({ backendId }: LogsPageProps) {
   );
   const [topicOffline, setTopicOffline] = useState(false);
   const [autoStick, setAutoStick] = useState(true);
+  const [bufferOverflowed, setBufferOverflowed] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const gapIdRef = useRef(0);
+  // Mirrors `rows`/`autoStick` for the zero-dependency message handler
+  // below — see file header comment.
+  const rowsRef = useRef<LogRow[]>([]);
+  const autoStickRef = useRef(true);
 
   const handleTopicMessage = useCallback((message: TopicMessage) => {
     if (message.type === "topic-error") {
       setTopicOffline(true);
       return;
     }
+
+    let next: LogRow[];
+
     if (message.type === "topic-gap") {
       gapIdRef.current += 1;
-      const gapRow: LogRow = { kind: "gap", id: gapIdRef.current, dropped: message.dropped };
-      setRows((prev) => trimRows([...(prev ?? []), gapRow]));
-      return;
+      next = [
+        ...rowsRef.current,
+        { kind: "gap", id: gapIdRef.current, dropped: message.dropped },
+      ];
+    } else {
+      const data = message.data as LogTopicData | undefined;
+      if (!data || typeof data.seq !== "number") return;
+      const result = appendLogEntry(rowsRef.current, data);
+      setTopicOffline(false);
+      if (!result.changed) return; // duplicate replay — nothing to do
+      next = result.rows;
+      if (result.reset) setBufferOverflowed(false);
     }
 
-    const data = message.data as LogTopicData | undefined;
-    if (!data || typeof data.seq !== "number") return;
-    setRows((prev) => appendLogEntry(prev ?? [], data));
-    setTopicOffline(false);
+    const sticking = autoStickRef.current;
+    const cap = sticking ? SOFT_CAP : HARD_CAP;
+    // While paused, only the hard cap evicts — see file header: evicting
+    // under the soft cap here would shift the paused user's scroll
+    // position with nothing to compensate it.
+    if (!sticking && next.length > HARD_CAP) {
+      setBufferOverflowed(true);
+    }
+    const trimmed = trimToCap(next, cap);
+    rowsRef.current = trimmed;
+    setRows(trimmed);
   }, []);
 
   const { status: wsStatus } = useTopicSubscription({
@@ -188,14 +244,34 @@ export function LogsPage({ backendId }: LogsPageProps) {
     });
   }, [rows, visibleLevels]);
 
+  // Resume stickiness (scrolled back to bottom, or "back to latest"
+  // clicked): trims the paused burst (buffered up to HARD_CAP while
+  // paused) back down to the steady-state cap immediately.
+  const resumeSticking = useCallback(() => {
+    autoStickRef.current = true;
+    setAutoStick(true);
+    setBufferOverflowed(false);
+    const trimmed = trimToCap(rowsRef.current, SOFT_CAP);
+    if (trimmed !== rowsRef.current) {
+      rowsRef.current = trimmed;
+      setRows(trimmed);
+    }
+  }, []);
+
   // Measurement-based stickiness — see file header comment for why this
   // can't feedback-loop with the scroll-to-bottom effect below.
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setAutoStick(distanceFromBottom <= 48);
-  }, []);
+    const atBottom = distanceFromBottom <= 48;
+    if (atBottom) {
+      if (!autoStickRef.current) resumeSticking();
+    } else if (autoStickRef.current) {
+      autoStickRef.current = false;
+      setAutoStick(false);
+    }
+  }, [resumeSticking]);
 
   useEffect(() => {
     if (!autoStick) return;
@@ -205,14 +281,19 @@ export function LogsPage({ backendId }: LogsPageProps) {
   }, [visibleRows, autoStick]);
 
   const handleBackToLatest = useCallback(() => {
-    setAutoStick(true);
+    resumeSticking();
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, []);
+  }, [resumeSticking]);
 
   const hasData = rows !== null;
+  // Quiet backend (freshly created ring, nothing published yet): once the
+  // socket is actually connected, treat "no frames yet" as the empty
+  // state, not an indefinite skeleton. Skeleton is reserved for the
+  // connecting/initial phase only.
+  const stillConnecting = !hasData && !topicOffline && wsStatus !== "connected";
 
-  if (!hasData && !topicOffline) {
+  if (stillConnecting) {
     return <LogsPageSkeleton />;
   }
 
@@ -254,6 +335,7 @@ export function LogsPage({ backendId }: LogsPageProps) {
           bare `wsOffline` (our socket to the collector is momentarily
           down) in what the banner says — same treatment as connections-page. */}
       {(topicOffline || wsOffline) && <OfflineBanner reconnecting={!topicOffline} />}
+      {!autoStick && bufferOverflowed && <BufferOverflowNotice />}
 
       <Card className="relative">
         <CardContent className="p-0">
@@ -294,7 +376,15 @@ export function LogsPage({ backendId }: LogsPageProps) {
   );
 }
 
-function EntryRow({ row }: { row: Extract<LogRow, { kind: "entry" }> }) {
+// Memoized: with per-line publishes (unlike the 1s-throttled `connections`
+// snapshot), an unmemoized row component would re-render every row on
+// every single incoming line. Row objects are immutable once appended
+// (a duplicate frame returns the very same array reference and never
+// reaches a fresh row object; a reset replaces the whole array), so a
+// shallow prop comparison correctly skips every row except the ones that
+// actually changed. `timeLabel` is precomputed once at append time
+// (`appendLogEntry`) rather than formatted here on every render.
+const EntryRow = memo(function EntryRow({ row }: { row: Extract<LogRow, { kind: "entry" }> }) {
   const cls = isKnownLevel(row.level) ? LEVEL_CLASSES[row.level] : UNKNOWN_LEVEL_CLASS;
   return (
     <div className="flex items-start gap-2 px-3 py-1.5 font-mono text-xs hover:bg-muted/30">
@@ -304,19 +394,30 @@ function EntryRow({ row }: { row: Extract<LogRow, { kind: "entry" }> }) {
       >
         {row.level}
       </Badge>
-      <span className="shrink-0 text-muted-foreground tabular-nums">
-        {formatLogTime(row.ts)}
-      </span>
+      <span className="shrink-0 text-muted-foreground tabular-nums">{row.timeLabel}</span>
       <span className="flex-1 whitespace-pre-wrap break-all">{row.payload}</span>
     </div>
   );
-}
+});
 
-function GapRow({ dropped }: { dropped: number }) {
+const GapRow = memo(function GapRow({ dropped }: { dropped: number }) {
   const t = useTranslations("management.logs");
   return (
     <div className="flex items-center justify-center px-3 py-1.5 text-xs text-muted-foreground bg-muted/20">
       {t("gapMarker", { count: dropped })}
+    </div>
+  );
+});
+
+function BufferOverflowNotice() {
+  const t = useTranslations("management.logs");
+  return (
+    <div
+      role="status"
+      className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 flex items-center gap-2"
+    >
+      <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+      <p className="text-sm text-amber-700 dark:text-amber-300">{t("bufferOverflow")}</p>
     </div>
   );
 }

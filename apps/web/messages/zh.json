@@ -350,7 +350,8 @@
       "backToLatest": "回到最新",
       "empty": "暂无日志",
       "offlineBanner": "无法连接到该后端,实时数据暂不可用",
-      "reconnectingBanner": "与实时数据的连接已断开,正在重新连接…"
+      "reconnectingBanner": "与实时数据的连接已断开,正在重新连接…",
+      "bufferOverflow": "暂停期间日志过多,已丢弃部分较旧条目"
     }
   },
   "map": {
