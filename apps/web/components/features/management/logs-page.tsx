@@ -76,6 +76,13 @@ type KnownLevel = (typeof ALL_LEVELS)[number];
 
 // Normal cap while stuck to the bottom, vs. the paused safety valve — see
 // file header comment.
+//
+// Invariant shared with the server (ws-relay.ts's LOG_RING_CAPACITY=500 and
+// topic-hub.ts's APPEND_QUEUE_LIMIT=200): SOFT_CAP must stay >=
+// LOG_RING_CAPACITY + APPEND_QUEUE_LIMIT, or a ring replay plus a lagging
+// client's queued backlog could exceed what this page retains, and
+// appendLogEntry's seq-range dedup (findSeqBounds) would misread the
+// resulting gap as a brand-new stream and spuriously reset the view.
 const SOFT_CAP = 1000;
 const HARD_CAP = 2000;
 
@@ -124,7 +131,10 @@ interface AppendResult {
   reset: boolean;
 }
 
-function appendLogEntry(prev: LogRow[], data: LogTopicData): AppendResult {
+/** `nextGapId` mints the same monotonic id space `handleTopicMessage` uses
+ *  for server-reported `topic-gap` frames (`gapIdRef`), so React keys never
+ *  collide between the two gap sources. */
+function appendLogEntry(prev: LogRow[], data: LogTopicData, nextGapId: () => number): AppendResult {
   const entryRow: LogRow = {
     kind: "entry",
     seq: data.seq,
@@ -134,10 +144,27 @@ function appendLogEntry(prev: LogRow[], data: LogTopicData): AppendResult {
     // Precomputed once here, not in render — see EntryRow's own comment.
     timeLabel: formatLogTime(data.ts),
   };
-  const bounds = findSeqBounds(prev);
 
+  const bounds = findSeqBounds(prev);
   if (!bounds || data.seq > bounds.max) {
-    return { rows: [...prev, entryRow], changed: true, reset: false };
+    // Forward tail-append (including the very first frame of a session,
+    // where `bounds` is null and there's nothing to compare against). A gap
+    // (seq > max+1) means frames were lost in-stream — not a reset, the
+    // collector never restarted — and must be surfaced, unless it was
+    // already reported: a server `topic-gap` frame (handled separately in
+    // handleTopicMessage) appends its own gap row but carries no seq, so
+    // `findSeqBounds` — which only tracks `entry` rows — still reports
+    // `bounds.max` as the last entry *before* that gap. The very next entry
+    // frame would otherwise look like a second, unrelated forward jump and
+    // double-report the same loss.
+    const gapSize = bounds ? data.seq - bounds.max - 1 : 0;
+    const lastRow = prev[prev.length - 1];
+    const alreadyReported = lastRow?.kind === "gap";
+    const rows =
+      gapSize > 0 && !alreadyReported
+        ? [...prev, { kind: "gap", id: nextGapId(), dropped: gapSize } as LogRow, entryRow]
+        : [...prev, entryRow];
+    return { rows, changed: true, reset: false };
   }
   if (data.seq >= bounds.min) {
     // Already covered by what we're holding — a ring replay after a plain
@@ -195,7 +222,7 @@ export function LogsPage({ backendId }: LogsPageProps) {
     } else {
       const data = message.data as LogTopicData | undefined;
       if (!data || typeof data.seq !== "number") return;
-      const result = appendLogEntry(rowsRef.current, data);
+      const result = appendLogEntry(rowsRef.current, data, () => (gapIdRef.current += 1));
       setTopicOffline(false);
       if (!result.changed) return; // duplicate replay — nothing to do
       next = result.rows;
@@ -345,7 +372,12 @@ export function LogsPage({ backendId }: LogsPageProps) {
             className="h-[65vh] min-h-[320px] overflow-y-auto"
           >
             {visibleRows.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">{t("empty")}</div>
+              <div className="text-center py-12 text-muted-foreground">
+                {/* Distinguish "nothing has arrived yet" from "the level
+                    filter hid everything we have" — `rows` (unfiltered) vs
+                    `visibleRows` (filtered) diverging means the latter. */}
+                {rows && rows.length > 0 ? t("emptyFiltered") : t("empty")}
+              </div>
             ) : (
               <div className="divide-y divide-border/50">
                 {visibleRows.map((row) =>
@@ -385,14 +417,20 @@ export function LogsPage({ backendId }: LogsPageProps) {
 // actually changed. `timeLabel` is precomputed once at append time
 // (`appendLogEntry`) rather than formatted here on every render.
 const EntryRow = memo(function EntryRow({ row }: { row: Extract<LogRow, { kind: "entry" }> }) {
-  const cls = isKnownLevel(row.level) ? LEVEL_CLASSES[row.level] : UNKNOWN_LEVEL_CLASS;
+  const t = useTranslations("management.logs");
+  const known = isKnownLevel(row.level);
+  const cls = known ? LEVEL_CLASSES[row.level as KnownLevel] : UNKNOWN_LEVEL_CLASS;
+  // Unknown levels (anything the upstream might add later, outside the four
+  // documented ones) have no translation key — fall back to the raw string
+  // rather than a missing-key error.
+  const label = known ? t(`levels.${row.level as KnownLevel}`) : row.level;
   return (
     <div className="flex items-start gap-2 px-3 py-1.5 font-mono text-xs hover:bg-muted/30">
       <Badge
         variant="outline"
         className={cn(cls, "shrink-0 w-16 justify-center uppercase text-[10px]")}
       >
-        {row.level}
+        {label}
       </Badge>
       <span className="shrink-0 text-muted-foreground tabular-nums">{row.timeLabel}</span>
       <span className="flex-1 whitespace-pre-wrap break-all">{row.payload}</span>

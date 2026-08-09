@@ -61,8 +61,9 @@ home-surge   running   backend-id=2  gateway=surge
 ## 安全模型
 
 - 面板为每个 Agent 后端生成唯一 token
-- `agentId` 由 backend token 派生：`"agent-" + sha256(token)[:16]`，重启后保持稳定，无需手动指定
-- Token 与 `agentId` 绑定，同一 token 不能以不同 `agentId` 注册（服务端拒绝）
-- 如需使用 `--agent-id` 自定义，需保持一致——修改后会破坏绑定关系
+- `agentId` 默认由 `orbitagent` 本地生成：`"agent-" + sha256(backend-token)[:16]`（也可用 `--agent-id` 手动指定），重启后保持稳定；面板从不自行推导这个值
+- **绑定是"先到先得"**：携带某个 token 的第一次合法心跳会原子性地把它带来的 `agentId` 与该后端绑定；此后同一后端收到携带不同 `agentId` 的心跳，一律返回 `409 AGENT_BINDING_FIXED`——即便 token 相同
+- 重新绑定是显式的管理操作，只有两种途径：在后端设置中解绑（保留 token、清空绑定，下一次心跳可重新认领），或轮换 token（同时清空绑定）
+- 如需使用 `--agent-id` 自定义，需在同一 token 下保持一致——中途更换会撞上 `AGENT_BINDING_FIXED`
 - Token 轮换后旧进程的请求立即被拒绝（需重新配置新 token 再启动）
 - 配置同步与策略同步均有 MD5 去重，减少无效 POST

@@ -10,6 +10,7 @@ import type {
   BackendConfigFromDb,
   CreateBackendInput,
   UpdateBackendInput,
+  UpdateBackendResult,
   BackendResponse,
   BackendHealthInfo,
   BackendHealthHistory,
@@ -248,7 +249,13 @@ export class BackendService {
       listening: backend.listening,
       apiUrl: isShowcase ? maskUrl(backend.api_url) : backend.api_url,
       hasAgent: backend.agent_token !== '',
-      agentId: backend.agent_id,
+      // Blanked in showcase mode: by default this is a deterministic
+      // sha256(agent_token)[:16] derivative (apps/agent/internal/config/config.go),
+      // so exposing it on a public demo would leak a fingerprint of the
+      // otherwise-secret agent token. `hasAgent` above already conveys
+      // whatever showcase needs to show (agent channel configured or not).
+      agentId: isShowcase ? '' : backend.agent_id,
+      hasApiSecret: backend.api_secret !== '',
       created_at: backend.created_at,
       updated_at: backend.updated_at,
     };
@@ -406,9 +413,14 @@ export class BackendService {
   }
 
   /**
-   * Update a backend
+   * Update a backend. `apiSecret` follows a tri-state contract: a string
+   * input (including `''`) sets/clears api_secret; `undefined` preserves
+   * whatever is already stored — the edit form relies on this to submit an
+   * empty field as "leave unchanged" while still allowing an explicit clear
+   * via a deliberate empty-string send (see backend-config-dialog.tsx's
+   * clear affordance).
    */
-  updateBackend(id: number, input: UpdateBackendInput): { message: string } {
+  updateBackend(id: number, input: UpdateBackendInput): UpdateBackendResult {
     const existing = this.db.getBackend(id);
     if (!existing) {
       throw new Error('Backend not found');
@@ -426,12 +438,17 @@ export class BackendService {
 
     let nextAgentToken = existing.agent_token;
     let nextAgentId = existing.agent_id;
+    // Plaintext-once, mirroring createBackend: only set when this update is
+    // the one that actually generates a fresh token, never on a later PUT
+    // that leaves an already-configured agent channel untouched.
+    let newlyGeneratedAgentToken: string | undefined;
     if (input.withAgent === false) {
       // Removing the agent channel entirely: clear both token and binding.
       nextAgentToken = '';
       nextAgentId = '';
     } else if (input.withAgent === true && !existing.agent_token) {
       nextAgentToken = generateAgentBackendToken();
+      newlyGeneratedAgentToken = nextAgentToken;
     }
 
     if (!nextApiUrl && nextAgentToken === '') {
@@ -467,7 +484,10 @@ export class BackendService {
       });
     }
 
-    return { message: 'Backend updated successfully' };
+    return {
+      message: 'Backend updated successfully',
+      ...(newlyGeneratedAgentToken ? { agentToken: newlyGeneratedAgentToken } : {}),
+    };
   }
 
   /**

@@ -7,6 +7,13 @@ export interface TopicHubHooks {
   onLastUnsubscriber(topic: TopicName, backendId: number): void;
 }
 
+// Invariant shared with ws-relay.ts's LOG_RING_CAPACITY (500) and
+// logs-page.tsx's SOFT_CAP/HARD_CAP (1000/2000): this bounds how far a
+// single client's append backlog can lag before frames start dropping. It
+// must stay small enough that LOG_RING_CAPACITY + APPEND_QUEUE_LIMIT <=
+// SOFT_CAP, or a slow client's replay-plus-catch-up could exceed what the
+// web client's seq-range dedup window can absorb, misfiring a spurious
+// stream reset — see ws-relay.ts's comment for the full chain.
 const APPEND_QUEUE_LIMIT = 200;
 const DEFAULT_SNAPSHOT_THROTTLE_MS = 1000;
 const FLUSH_INTERVAL_MS = 1000;

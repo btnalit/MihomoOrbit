@@ -38,6 +38,14 @@ export interface UpdateBackendInput {
   listening?: boolean;
 }
 
+export interface UpdateBackendResult {
+  message: string;
+  /** Only present when this update newly generated an agent token
+   *  (withAgent:true on a backend that previously had none) — plaintext,
+   *  returned exactly once, same contract as CreateBackendResult.agentToken. */
+  agentToken?: string;
+}
+
 export interface BackendHealthInfo {
   status: 'healthy' | 'unhealthy' | 'unknown';
   lastChecked: number;
@@ -59,8 +67,16 @@ export interface BackendResponse {
   apiUrl: string;
   /** M1c: whether an agent token is configured for this backend (not the token itself). */
   hasAgent: boolean;
-  /** M1c: explicitly bound agent id. '' = unbound. */
+  /** M1c: explicitly bound agent id. '' = unbound. Blanked in showcase mode
+   *  (see toResponse) — by default this value is a sha256(token)-derived
+   *  string (see apps/agent/internal/config/config.go), so exposing it
+   *  publicly would leak a fingerprint of the (otherwise secret) agent
+   *  token. */
   agentId: string;
+  /** Whether an api_secret is currently set for this backend (not the
+   *  secret itself) — lets the edit UI offer an explicit "clear" action
+   *  only when there is something to clear. */
+  hasApiSecret: boolean;
   created_at: string;
   updated_at: string;
   health?: BackendHealthInfo;

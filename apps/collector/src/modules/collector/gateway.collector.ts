@@ -84,9 +84,13 @@ export class GatewayCollector {
       headers["Authorization"] = `Bearer ${this.token}`;
     }
 
+    // followRedirects deliberately left at ws's default (false): a redirect
+    // response from the backend would otherwise let the capital-A
+    // Authorization header survive ws's cross-host redirect credential
+    // scrub if a MITM / misconfigured proxy ever redirected this request.
+    // Same fix as ws-relay.ts's RelayChannel.connect() — see its comment.
     this.ws = new WebSocket(this.url, {
       headers,
-      followRedirects: true,
     });
 
     this.ws.on("open", () => {

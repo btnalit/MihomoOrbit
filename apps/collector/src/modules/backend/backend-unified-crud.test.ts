@@ -81,7 +81,7 @@ describe('unified backend CRUD', () => {
   it('creates an agent-only backend and returns the token exactly once', async () => {
     const res = await inject('POST', '/api/backends', { name: 'n2', withAgent: true });
     expect(res.statusCode).toBe(200);
-    expect(res.json().agentToken).toMatch(/\w{16,}/);
+    expect(res.json().agentToken).toMatch(/^ag_[\w-]{16,}$/);
     const b = (await inject('GET', '/api/backends')).json().find((x: { name: string }) => x.name === 'n2');
     expect(b.hasAgent).toBe(true);
     expect(b.capabilities.management).toBe(false);         // api_url 未填，管理置灰
@@ -206,6 +206,69 @@ describe('unified backend CRUD', () => {
       const row = db.getBackend(id)!;
       expect(row.token).toBe(newToken);
       expect(row.url).toBe(`agent://${encodeURIComponent('mirror-rotate')}`);
+    });
+  });
+
+  // M1 follow-ups item 2: PUT /:id with withAgent:true must return the
+  // freshly-generated token exactly once, same contract as POST /backends —
+  // the web edit dialog opens the agent bootstrap dialog with it directly
+  // instead of the empty-token "rotate to reveal" fallback.
+  describe('PUT withAgent:true returns the newly-generated agent token exactly once', () => {
+    it('first PUT enabling the agent channel returns a non-empty agentToken; a second PUT does not', async () => {
+      const create = await inject('POST', '/api/backends', {
+        name: 'put-agent-once',
+        apiUrl: 'http://10.0.0.30:9090',
+      });
+      const id = create.json().id;
+
+      const first = await inject('PUT', `/api/backends/${id}`, { withAgent: true });
+      expect(first.statusCode).toBe(200);
+      expect(first.json().agentToken).toMatch(/^ag_[\w-]{16,}$/);
+
+      // Agent channel already has a token now — this PUT is a no-op for it
+      // and must neither mint nor return a second one.
+      const second = await inject('PUT', `/api/backends/${id}`, { withAgent: true });
+      expect(second.statusCode).toBe(200);
+      expect(second.json().agentToken).toBeUndefined();
+    });
+  });
+
+  // M1 follow-ups item 8b: verifies (rather than assumes) the tri-state
+  // contract on UpdateBackendInput.apiSecret documented on
+  // backend.service.ts's updateBackend — a string input (including '')
+  // sets/clears api_secret; undefined (the field simply absent from the
+  // PUT body) preserves whatever is already stored.
+  describe('apiSecret tri-state: undefined preserves, explicit "" clears', () => {
+    it('omitting apiSecret on update preserves the existing secret', async () => {
+      const create = await inject('POST', '/api/backends', {
+        name: 'secret-preserve',
+        apiUrl: 'http://10.0.0.31:9090',
+        apiSecret: 'keep-me-secret',
+      });
+      const id = create.json().id;
+
+      const update = await inject('PUT', `/api/backends/${id}`, { name: 'secret-preserve-renamed' });
+      expect(update.statusCode).toBe(200);
+      expect(db.getBackend(id)!.api_secret).toBe('keep-me-secret');
+
+      const b = (await inject('GET', '/api/backends')).json().find((x: { id: number }) => x.id === id);
+      expect(b.hasApiSecret).toBe(true);
+    });
+
+    it('explicit apiSecret: "" clears the existing secret', async () => {
+      const create = await inject('POST', '/api/backends', {
+        name: 'secret-clear',
+        apiUrl: 'http://10.0.0.32:9090',
+        apiSecret: 'clear-me-secret',
+      });
+      const id = create.json().id;
+
+      const update = await inject('PUT', `/api/backends/${id}`, { apiSecret: '' });
+      expect(update.statusCode).toBe(200);
+      expect(db.getBackend(id)!.api_secret).toBe('');
+
+      const b = (await inject('GET', '/api/backends')).json().find((x: { id: number }) => x.id === id);
+      expect(b.hasApiSecret).toBe(false);
     });
   });
 });

@@ -35,9 +35,10 @@ This is ideal for multi-site homes/labs and distributed deployments.
 
 - Agent backend token is system-generated and treated as a credential
 - Token rotation invalidates old running agents
-- `agentId` is derived from the backend token: `"agent-" + sha256(token)[:16]` — stable across restarts, unique per token
-- A backend token is bound to one `agentId`; using the same token from a different host with a different custom `--agent-id` will be rejected
-- To use `--agent-id` explicitly, set it consistently — changing it breaks the binding
+- `agentId` defaults to a value `orbitagent` generates locally — `"agent-" + sha256(backend-token)[:16]`, stable across restarts — or can be set explicitly with `--agent-id`; the panel never derives this value itself
+- **Binding is first-come, first-served**: the first heartbeat that presents a valid token atomically claims the `agentId` it carries for that backend. Any later heartbeat for the same backend carrying a different `agentId` is rejected with `409 AGENT_BINDING_FIXED` — even if the token matches
+- Rebinding is an explicit admin operation, with exactly two paths: unbind in backend settings (keeps the token, clears the binding — the next heartbeat claims it again), or rotate the token (also clears the binding)
+- To use `--agent-id` explicitly, keep it consistent for a given token — changing it mid-flight hits the same `AGENT_BINDING_FIXED` rejection
 
 ## Gateway type support
 

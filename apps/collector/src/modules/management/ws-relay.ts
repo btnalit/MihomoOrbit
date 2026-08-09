@@ -27,6 +27,13 @@ import type { TopicHub, TopicHubHooks, TopicName } from '../websocket/topic-hub.
 
 export type ChannelState = 'idle' | 'connecting' | 'open' | 'circuit-open';
 
+// Invariant shared with the web client (logs-page.tsx's SOFT_CAP/HARD_CAP)
+// and the hub's own APPEND_QUEUE_LIMIT (topic-hub.ts): this ring must stay
+// <= SOFT_CAP (1000) minus the max append-queue lag (200) a client can
+// accumulate before a queue-limit drop. If this ring ever grew past that
+// margin, a replay after a client's queue overflow could hand back more
+// history than the client's own seq-range dedup window can absorb,
+// misfiring a spurious "stream reset" on logs-page.tsx.
 const LOG_RING_CAPACITY = 500;
 const CIRCUIT_BREAKER_THRESHOLD = 5;
 const DEFAULT_RECONNECT_BASE_MS = 2000;

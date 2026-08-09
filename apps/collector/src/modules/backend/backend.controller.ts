@@ -87,6 +87,9 @@ const backendController: FastifyPluginAsync = async (fastify: FastifyInstance): 
     }
 
     try {
+      // Passthrough: service.updateBackend's result already carries
+      // `agentToken` (plaintext, once) when this PUT is the one that newly
+      // generates it — see UpdateBackendResult.
       const result = service.updateBackend(backendId, request.body);
       return result;
     } catch (error: any) {

@@ -49,12 +49,23 @@ interface DelayGroupBody {
 
 type PatchConfigsBody = Record<string, unknown>;
 
-/** Query/body timeout values arrive as untyped user input — a garbage value
- *  must not reach AbortSignal.timeout(NaN), which throws a TypeError that
- *  the generic catch below would misclassify as a 502 unreachable error. */
+// Mirrors management.service.ts's own clampDelayTimeout — belt-and-suspenders
+// so a caller that reaches the service directly (bypassing this parse) is
+// still protected.
+const MIN_DELAY_TIMEOUT_MS = 100;
+const MAX_DELAY_TIMEOUT_MS = 30_000;
+
+/** Query/body timeout values arrive as untyped user input — a garbage,
+ *  negative, or non-finite value must not reach AbortSignal.timeout, which
+ *  throws a RangeError/TypeError that the generic catch below would
+ *  misclassify as a 502 unreachable error. NaN/non-finite/zero/negative
+ *  values are treated as "not specified" (undefined) so the service's own
+ *  default (5000ms) applies; anything else is clamped into
+ *  [MIN_DELAY_TIMEOUT_MS, MAX_DELAY_TIMEOUT_MS]. */
 function parseOptionalTimeout(value: unknown): number | undefined {
   const n = typeof value === 'string' ? Number(value) : value;
-  return typeof n === 'number' && Number.isFinite(n) ? n : undefined;
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return undefined;
+  return Math.min(MAX_DELAY_TIMEOUT_MS, Math.max(MIN_DELAY_TIMEOUT_MS, n));
 }
 
 /** `err.status` is set by two different throw sites, distinguishable only by

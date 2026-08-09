@@ -183,8 +183,12 @@ export interface Backend {
   apiUrl: string;
   /** M1c: whether an agent token is configured (not the token itself). */
   hasAgent: boolean;
-  /** M1c: explicitly bound agent id. '' = unbound. */
+  /** M1c: explicitly bound agent id. '' = unbound. Blanked in showcase mode. */
   agentId: string;
+  /** Whether an api_secret is currently set (not the secret itself) — lets
+   *  the edit dialog offer an explicit "clear" action. Optional for
+   *  forward-compat with any response shape that predates this field. */
+  hasApiSecret?: boolean;
   /** M1c: only populated by getBackends() (list route). */
   capabilities?: BackendCapabilities;
   health?: BackendHealth;
@@ -586,8 +590,11 @@ export const api = {
   createBackend: (backend: { name: string; apiUrl?: string; apiSecret?: string; withAgent?: boolean; type?: 'clash' | 'surge' }) =>
     fetchJson<{ id: number; isActive?: boolean; message: string; agentToken?: string }>(`${API_BASE}/backends`, 'POST', backend),
 
+  // `agentToken` is only present when this PUT is the one that newly
+  // generates it (withAgent:true on a backend that previously had none) —
+  // plaintext, returned exactly once, same contract as createBackend.
   updateBackend: (id: number, backend: { name?: string; apiUrl?: string; apiSecret?: string; withAgent?: boolean; type?: 'clash' | 'surge'; enabled?: boolean; listening?: boolean }) =>
-    fetchJson<{ message: string }>(`${API_BASE}/backends/${id}`, 'PUT', backend),
+    fetchJson<{ message: string; agentToken?: string }>(`${API_BASE}/backends/${id}`, 'PUT', backend),
 
   deleteBackend: (id: number) =>
     fetchJson<{ message: string }>(`${API_BASE}/backends/${id}`, 'DELETE'),

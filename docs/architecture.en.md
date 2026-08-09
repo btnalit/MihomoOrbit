@@ -318,8 +318,9 @@ without requiring direct collector-to-gateway network access.
 ### Security Model
 
 - Panel generates a unique token per Agent backend
-- `agentId` is derived from the backend token: `"agent-" + sha256(token)[:16]` — stable across restarts, no manual configuration needed
-- A token is bound to one `agentId`; registering with the same token under a different `agentId` is rejected by the server
+- `agentId` defaults to a value `orbitagent` generates locally — `"agent-" + sha256(backend-token)[:16]`, stable across restarts — or can be set explicitly with `--agent-id`; the panel never derives this value itself
+- **Binding is first-come, first-served**: the first heartbeat that presents a valid token atomically claims the `agentId` it carries for that backend. Any later heartbeat for the same backend carrying a different `agentId` is rejected with `409 AGENT_BINDING_FIXED` — even if the token matches (see `docs/agent/troubleshooting.en.md`)
+- Rebinding is an explicit admin operation, with exactly two paths: unbind in backend settings (keeps the token, clears the binding — the next heartbeat claims it again), or rotate the token (also clears the binding)
 - Token rotation immediately invalidates old agent processes (must reconfigure with new token before restarting)
 - Config sync and policy sync use MD5 dedup to skip unchanged POSTs
 

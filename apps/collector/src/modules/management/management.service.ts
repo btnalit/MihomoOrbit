@@ -37,11 +37,29 @@ export type StartGroupDelayTestResult =
 
 const DEFAULT_DELAY_TEST_URL = 'https://www.gstatic.com/generate_204';
 const DEFAULT_DELAY_TEST_TIMEOUT_MS = 5000;
+// Belt-and-suspenders clamp mirroring management.controller.ts's
+// parseOptionalTimeout: protects any caller that reaches the service
+// directly with an out-of-range value (bypassing the controller's own
+// clamp), so a negative/zero/absurd timeout can never reach
+// AbortSignal.timeout via upstreamFetch.
+const MIN_DELAY_TEST_TIMEOUT_MS = 100;
+const MAX_DELAY_TEST_TIMEOUT_MS = 30_000;
 // Upstream's own per-proxy delay test can legitimately take up to the
 // requested `timeout`; our own AbortSignal.timeout for that call must give
 // it room to answer instead of racing it.
 const DELAY_FETCH_TIMEOUT_BUFFER_MS = 3000;
 const PER_BACKEND_DELAY_CONCURRENCY = 5;
+// Default per-request upstream timeout for calls that don't override it
+// (matches upstreamFetch's own default parameter) — named here so the
+// expectBody:false call sites below don't repeat the bare literal.
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 5000;
+
+function clampDelayTimeout(timeout: number | undefined): number {
+  if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
+    return DEFAULT_DELAY_TEST_TIMEOUT_MS;
+  }
+  return Math.min(MAX_DELAY_TEST_TIMEOUT_MS, Math.max(MIN_DELAY_TEST_TIMEOUT_MS, timeout));
+}
 
 // Module-scope, process-wide cap: shared across every ManagementService
 // instance and every backend, so one busy backend's group test can't starve
@@ -96,6 +114,12 @@ export class ManagementService {
     const global = proxies.GLOBAL as { all?: unknown } | undefined;
     const order: string[] = Array.isArray(global?.all) ? (global!.all as string[]) : [];
     const orderIndex = new Map(order.map((name, i) => [name, i]));
+    // Contract order (m1-contracts.md): GLOBAL first, stable for API
+    // consumers — this is the REST response's own ordering guarantee and is
+    // independent of groups-page.tsx's *display-only* re-sort, which moves
+    // GLOBAL last for the dashboard's UX (zashboard precedent). Both
+    // orderings are intentional; neither should be "fixed" to match the
+    // other.
     const rank = (name: string): number => (name === 'GLOBAL' ? -1 : orderIndex.get(name) ?? Infinity);
 
     const groups = Object.entries(proxies)
@@ -108,11 +132,17 @@ export class ManagementService {
 
   async selectProxy(backendId: number, group: string, proxy: string): Promise<void> {
     const r = this.requireResolved(backendId);
-    await this.upstreamFetch(r, `/proxies/${encodeURIComponent(group)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: proxy }),
-    });
+    await this.upstreamFetch(
+      r,
+      `/proxies/${encodeURIComponent(group)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: proxy }),
+      },
+      DEFAULT_UPSTREAM_TIMEOUT_MS,
+      { expectBody: false },
+    );
   }
 
   async testDelay(
@@ -122,7 +152,7 @@ export class ManagementService {
   ): Promise<{ delay: number }> {
     const r = this.requireResolved(backendId);
     const url = opts.url ?? DEFAULT_DELAY_TEST_URL;
-    const timeout = opts.timeout ?? DEFAULT_DELAY_TEST_TIMEOUT_MS;
+    const timeout = clampDelayTimeout(opts.timeout);
     const delay = await this.fetchProxyDelay(r, proxy, url, timeout);
     return { delay };
   }
@@ -163,7 +193,13 @@ export class ManagementService {
 
   async killConnection(backendId: number, connId: string): Promise<void> {
     const r = this.requireResolved(backendId);
-    await this.upstreamFetch(r, `/connections/${encodeURIComponent(connId)}`, { method: 'DELETE' });
+    await this.upstreamFetch(
+      r,
+      `/connections/${encodeURIComponent(connId)}`,
+      { method: 'DELETE' },
+      DEFAULT_UPSTREAM_TIMEOUT_MS,
+      { expectBody: false },
+    );
   }
 
   async getConfigs(backendId: number): Promise<unknown> {
@@ -174,11 +210,17 @@ export class ManagementService {
 
   async patchConfigs(backendId: number, patch: Record<string, unknown>): Promise<void> {
     const r = this.requireResolved(backendId);
-    await this.upstreamFetch(r, '/configs', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
+    await this.upstreamFetch(
+      r,
+      '/configs',
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      },
+      DEFAULT_UPSTREAM_TIMEOUT_MS,
+      { expectBody: false },
+    );
   }
 
   private requireResolved(backendId: number): ResolvedOk {
@@ -210,12 +252,27 @@ export class ManagementService {
     return limiter;
   }
 
+  /** Best-effort: cancels an unread response body so undici can release the
+   *  connection back to its pool instead of leaving it dangling until GC.
+   *  Guarded — cancel() can itself throw (e.g. an already-consumed or
+   *  errored stream) and the caller never needs this to succeed, only to
+   *  not throw. */
+  private async cancelResponseBody(res: Response): Promise<void> {
+    try {
+      await res.body?.cancel();
+    } catch {
+      // Ignore — see doc comment above.
+    }
+  }
+
   private async upstreamFetch(
     r: ResolvedOk,
     path: string,
     init: RequestInit = {},
-    timeoutMs = 5000,
+    timeoutMs = DEFAULT_UPSTREAM_TIMEOUT_MS,
+    opts: { expectBody?: boolean } = {},
   ): Promise<Response> {
+    const expectBody = opts.expectBody ?? true;
     try {
       const res = await fetch(`${r.baseUrl}${path}`, {
         ...init,
@@ -223,7 +280,16 @@ export class ManagementService {
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) {
+        // Nobody reads the body on the error path (callers only ever get
+        // the thrown Error) — cancel it so the connection isn't held open
+        // waiting for a read that will never come.
+        await this.cancelResponseBody(res);
         throw Object.assign(new Error(`Upstream ${res.status}`), { status: res.status });
+      }
+      if (!expectBody) {
+        // 2xx response the caller has no intention of reading (selectProxy /
+        // killConnection / patchConfigs) — same reasoning as above.
+        await this.cancelResponseBody(res);
       }
       return res;
     } catch (err) {
@@ -270,7 +336,7 @@ export class ManagementService {
     running: Set<string>,
   ): Promise<void> {
     const url = opts.url ?? DEFAULT_DELAY_TEST_URL;
-    const timeout = opts.timeout ?? DEFAULT_DELAY_TEST_TIMEOUT_MS;
+    const timeout = clampDelayTimeout(opts.timeout);
     const perBackendLimit = this.getBackendLimiter(backendId);
 
     try {

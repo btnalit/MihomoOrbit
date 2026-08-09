@@ -154,6 +154,25 @@ describe('management controller: auth protection + error mapping', () => {
       expect(second.statusCode).toBe(409);
       expect(second.json()).toEqual({ code: 'DELAY_TEST_RUNNING' });
     });
+
+    // M1 follow-ups item 3: pre-fix, a negative timeout reached
+    // AbortSignal.timeout(-5) synchronously — a RangeError the generic catch
+    // in upstreamFetch/mapUpstreamError could only classify as a 500. Both
+    // cases must now resolve normally against the live fake upstream: the
+    // clamp (not merely "no 500") is what's under test, so asserting the
+    // actual 200 + { delay: 42 } body is the only way this would fail
+    // pre-fix and pass post-fix.
+    it('GET delay with a negative timeout is clamped to the service default instead of erroring', async () => {
+      const res = await authed('GET', `/api/management/${backendId}/delay/N1?timeout=-5`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ delay: 42 });
+    });
+
+    it('GET delay with an absurdly large timeout is clamped to the max instead of erroring', async () => {
+      const res = await authed('GET', `/api/management/${backendId}/delay/N1?timeout=600000`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ delay: 42 });
+    });
   });
 
   describe('against an unreachable upstream (connection refused)', () => {

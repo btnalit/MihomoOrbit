@@ -292,10 +292,18 @@ interface RetentionConfig {
   autoCleanup: boolean;
 }
 
+// `http`/`https` and `ws`/`wss` are separate scheme *families* — ssl only
+// toggles within a family (http<->https, ws<->wss). A backend's apiUrl can
+// legitimately be ws(s): (management.service.ts's validateApiUrl allows
+// http/https/ws/wss), and rebuilding it must never silently cross families —
+// see parseApiUrl/buildApiUrl below.
+type ApiUrlSchemeFamily = "http" | "ws";
+
 interface ParsedApiUrl {
   host: string;
   port: string;
   ssl: boolean;
+  family: ApiUrlSchemeFamily;
 }
 
 interface BackendFormState {
@@ -410,24 +418,36 @@ function getInitialFormState(): BackendFormState {
 }
 
 // Parse an apiUrl for form/view rendering. '' = no API channel configured.
+// Recognizes all four schemes validateApiUrl allows (http/https/ws/wss) —
+// treating an unrecognized/unparseable URL's family as "http" only affects
+// the no-prior-URL fallback in buildApiUrl below, never a URL that actually
+// parsed as ws(s):.
 function parseApiUrl(url: string): ParsedApiUrl {
   if (!url) {
-    return { host: "", port: DEFAULT_BACKEND_PORT, ssl: false };
+    return { host: "", port: DEFAULT_BACKEND_PORT, ssl: false, family: "http" };
   }
   try {
     const urlObj = new URL(url);
+    const isWsFamily = urlObj.protocol === "ws:" || urlObj.protocol === "wss:";
+    const ssl = urlObj.protocol === "https:" || urlObj.protocol === "wss:";
     return {
       host: decodeURIComponent(urlObj.hostname),
-      port: urlObj.port || (urlObj.protocol === "https:" ? "443" : "80"),
-      ssl: urlObj.protocol === "https:",
+      port: urlObj.port || (ssl ? "443" : "80"),
+      ssl,
+      family: isWsFamily ? "ws" : "http",
     };
   } catch {
-    return { host: "", port: DEFAULT_BACKEND_PORT, ssl: false };
+    return { host: "", port: DEFAULT_BACKEND_PORT, ssl: false, family: "http" };
   }
 }
 
-function buildApiUrl(host: string, port: string, ssl: boolean): string {
-  const protocol = ssl ? "https" : "http";
+// `family` defaults to "http" for the case building a brand-new apiUrl with
+// no prior URL to preserve a scheme from (see handleUpdate's `else` branch).
+// When rebuilding an *existing* apiUrl, callers must pass the family parsed
+// from that original URL — otherwise editing host/port/ssl on a ws(s):
+// backend would silently rewrite it to http(s): (a TLS downgrade for wss:).
+function buildApiUrl(host: string, port: string, ssl: boolean, family: ApiUrlSchemeFamily = "http"): string {
+  const protocol = family === "ws" ? (ssl ? "wss" : "ws") : ssl ? "https" : "http";
   return `${protocol}://${host}:${port}`;
 }
 
@@ -670,6 +690,12 @@ export function BackendConfigDialog({
   const [editFormData, setEditFormData] = useState<BackendFormState>(
     getInitialFormState(),
   );
+  // Explicit-clear affordance for api_secret (empty input alone means
+  // "unchanged" — see backend.service.ts's updateBackend doc comment). Set
+  // by the "清除"/"Clear" action next to the token field; cleared again the
+  // moment the user types a real value, since typing implies "set", not
+  // "clear".
+  const [clearApiSecretOnSave, setClearApiSecretOnSave] = useState(false);
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [autoOpenedAddDialog, setAutoOpenedAddDialog] = useState(false);
@@ -1011,10 +1037,14 @@ export function BackendConfigDialog({
       const hostUnchanged = parsed.host === host;
       const portUnchanged = parsed.port === editFormData.port.trim();
       const sslUnchanged = parsed.ssl === editFormData.ssl;
+      // Rebuild with the ORIGINAL scheme family (ws stays ws/wss, http stays
+      // http/https) — ssl only toggles within that family. Defaulting to
+      // http(s) here would silently downgrade a wss: backend to https: (or
+      // worse, ws: to http:) on any host/port/ssl edit — see buildApiUrl.
       apiUrl =
         hostUnchanged && portUnchanged && sslUnchanged
           ? current.apiUrl
-          : buildApiUrl(host, editFormData.port, editFormData.ssl);
+          : buildApiUrl(host, editFormData.port, editFormData.ssl, parsed.family);
     } else {
       apiUrl = buildApiUrl(host, editFormData.port, editFormData.ssl);
     }
@@ -1030,25 +1060,31 @@ export function BackendConfigDialog({
 
     setLoading(true);
     try {
-      await api.updateBackend(id, {
+      const result = await api.updateBackend(id, {
         name,
         apiUrl,
-        apiSecret: apiSecret ? apiSecret : undefined,
+        // Tri-state: explicit clear (clearApiSecretOnSave) sends '', a typed
+        // value sends that value, and an untouched/blank field sends
+        // undefined so the collector preserves whatever is already stored —
+        // see backend.service.ts's updateBackend doc comment.
+        apiSecret: clearApiSecretOnSave ? "" : apiSecret ? apiSecret : undefined,
         withAgent,
         type: editFormData.type,
       });
       setEditingId(null);
       setEditFormData(getInitialFormState());
+      setClearApiSecretOnSave(false);
       await loadBackends();
       await onBackendChange?.();
 
-      // PUT doesn't return a token when it enables the agent channel for the
-      // first time (only POST /backends and rotate-agent-token do). Open the
-      // bootstrap dialog with an empty token and let the user rotate it —
-      // the dialog already prompts for that state.
+      // PUT now returns the freshly-generated agent token exactly once
+      // (same contract as POST /backends) when this update is the one that
+      // enables the agent channel for the first time. Open the bootstrap
+      // dialog with it directly instead of the empty-token + "rotate to
+      // reveal" fallback path.
       if (wasBootstrappingAgent) {
         const gatewayConfig = loadAgentGatewayConfig(id, editFormData.type);
-        openAgentBootstrap(id, "", "", editFormData.type, gatewayConfig);
+        openAgentBootstrap(id, "", result.agentToken ?? "", editFormData.type, gatewayConfig);
       }
     } catch (error: any) {
       setErrorMessage(error.message || "Failed to update backend");
@@ -1348,12 +1384,14 @@ export function BackendConfigDialog({
       agentGatewaySsl: false,
       agentGatewayToken: "",
     });
+    setClearApiSecretOnSave(false);
     setShowAddForm(false);
   };
 
   const cancelEdit = () => {
     setEditingId(null);
     setEditFormData(getInitialFormState());
+    setClearApiSecretOnSave(false);
   };
 
   if (!open) return null;
@@ -2120,16 +2158,32 @@ export function BackendConfigDialog({
                 <label className="text-sm">{t("useSsl")}</label>
               </div>
               <div>
-                <label className="text-xs font-medium">{t("token")}</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium">{t("token")}</label>
+                  {editingBackend?.hasApiSecret && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditFormData({ ...editFormData, apiSecret: "" });
+                        setClearApiSecretOnSave(true);
+                      }}
+                      className="text-[11px] text-muted-foreground hover:text-destructive transition-colors"
+                    >
+                      {t("clearApiSecret")}
+                    </button>
+                  )}
+                </div>
                 <Input
                   type="password"
                   value={editFormData.apiSecret}
-                  onChange={(e) =>
+                  onChange={(e) => {
                     setEditFormData({
                       ...editFormData,
                       apiSecret: e.target.value,
-                    })
-                  }
+                    });
+                    // Typing a real value overrides an earlier "clear" click.
+                    setClearApiSecretOnSave(false);
+                  }}
                   placeholder={
                     editingBackend?.apiUrl
                       ? t("tokenKeepPlaceholder")
@@ -2139,6 +2193,11 @@ export function BackendConfigDialog({
                   }
                   className="h-9 mt-1"
                 />
+                {clearApiSecretOnSave && (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                    {t("apiSecretWillClearHint")}
+                  </p>
+                )}
               </div>
               {!editFormData.host.trim() && (
                 <p className="text-[11px] text-amber-600 dark:text-amber-400">

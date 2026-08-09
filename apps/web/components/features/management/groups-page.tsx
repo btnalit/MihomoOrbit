@@ -349,6 +349,12 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
   const groups = groupsQuery.data?.groups ?? [];
   const proxies = groupsQuery.data?.proxies ?? {};
 
+  // Display-only reorder: the REST response itself already orders GLOBAL
+  // first (management.service.ts's fetchGroups — contract order, stable for
+  // API consumers). This re-sort is purely local to this page's rendering
+  // and moves GLOBAL last for the dashboard UX (zashboard precedent, see
+  // file header comment); it never mutates the query cache, so any other
+  // consumer of `groupsQuery.data` still sees the contract order.
   const sortedGroups = [...groups].sort((a, b) => {
     if (a.name === GLOBAL_GROUP_NAME) return 1;
     if (b.name === GLOBAL_GROUP_NAME) return -1;
