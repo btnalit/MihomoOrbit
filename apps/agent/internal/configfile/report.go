@@ -11,33 +11,46 @@ import (
 // recover state without waiting for config.yaml to actually change.
 const ForceReportAfter = time.Hour
 
-// maxReportDelay caps the 404 backoff curve. Once a collector doesn't
-// recognize the config-file endpoint (not yet upgraded), retries settle onto
-// this quiet, bounded cadence instead of climbing forever.
+// maxReportDelay is the floor for the backoff curve's ceiling. Once a
+// collector is persistently failing (unrecognized config-file endpoint,
+// 5xx, network error, ...), retries settle onto this quiet, bounded cadence
+// instead of climbing forever — see NextReportDelay for how it combines with
+// base.
 const maxReportDelay = time.Hour
 
 // NextReportDelay computes the delay before the next report attempt given
-// consecutive404 consecutive 404 responses from the collector. It doubles
-// from base on every consecutive 404 and caps at maxReportDelay (1h), so an
-// agent talking to an unupgraded collector backs off to a fixed quiet
-// cadence rather than retrying at full speed forever or overflowing on an
-// unbounded run of 404s.
-func NextReportDelay(base time.Duration, consecutive404 int) time.Duration {
-	if consecutive404 <= 0 {
-		if base > maxReportDelay {
-			return maxReportDelay
-		}
+// consecutiveFailures consecutive failed report attempts (of any kind — 404,
+// other HTTP status, network error; see Reporter.RunOnce).
+//
+// The 1h ceiling applies to the BACKOFF CURVE only, not to the operator's
+// configured base interval:
+//   - consecutiveFailures <= 0 (no backoff in effect): returns base
+//     unchanged, even if base > 1h. An operator who explicitly configured a
+//     longer check interval gets exactly that interval back — the ceiling
+//     exists to bound how far failures can push the delay, not to second-
+//     guess a deliberately slow base.
+//   - consecutiveFailures > 0: the curve doubles from base on every
+//     consecutive failure and caps at max(maxReportDelay, base), so it can
+//     never produce a delay smaller than the operator's own base (which
+//     would look like backoff going backwards) while still bounding runaway
+//     growth for the common case of base <= 1h.
+func NextReportDelay(base time.Duration, consecutiveFailures int) time.Duration {
+	if consecutiveFailures <= 0 {
 		return base
 	}
+	ceiling := maxReportDelay
+	if base > ceiling {
+		ceiling = base
+	}
 	delay := base
-	for i := 0; i < consecutive404; i++ {
-		if delay >= maxReportDelay {
-			return maxReportDelay
+	for i := 0; i < consecutiveFailures; i++ {
+		if delay >= ceiling {
+			return ceiling
 		}
 		delay *= 2
 	}
-	if delay > maxReportDelay {
-		return maxReportDelay
+	if delay > ceiling {
+		return ceiling
 	}
 	return delay
 }
@@ -74,6 +87,7 @@ type ConfigFileField struct {
 type ConfigFilePayload struct {
 	BackendID       int             `json:"backendId"`
 	AgentID         string          `json:"agentId"`
+	AgentVersion    string          `json:"agentVersion,omitempty"`
 	ProtocolVersion int             `json:"protocolVersion"`
 	ConfigFile      ConfigFileField `json:"configFile"`
 }
@@ -102,18 +116,32 @@ type Reporter struct {
 	ConfigPath string
 	// Path is the collector POST path, e.g. "/agent/config-file".
 	Path string
-	// Base is the interval between report attempts before any 404 backoff
-	// is applied (normally cfg.ConfigCheckInterval).
+	// Base is the interval between report attempts before any backoff is
+	// applied (normally cfg.ConfigCheckInterval).
 	Base time.Duration
 	// Post performs the actual network POST; see PostFunc.
 	Post PostFunc
+	// Logf is an optional injectable logger. Nil (the default, and what
+	// every test leaves it as) means silent — no logging occurs. The runner
+	// wires this to log.Printf, matching the rest of runner.go: log output
+	// is gated globally (main.go redirects it to io.Discard when
+	// !cfg.LogEnabled), not by a per-call-site check here.
+	Logf func(format string, args ...interface{})
 
 	BackendID       int
 	AgentID         string
+	AgentVersion    string
 	ProtocolVersion int
 
-	tracker        Tracker
-	consecutive404 int
+	tracker             Tracker
+	consecutiveFailures int
+	// lastOutcomeKnown/lastOutcomeOK track the previous POST attempt's
+	// result so RunOnce can log only the FIRST failure and each state
+	// transition (fail->ok, ok->fail) — never every tick, which would spam
+	// the log at the configured check interval for as long as a collector
+	// stays down.
+	lastOutcomeKnown bool
+	lastOutcomeOK    bool
 }
 
 // RunOnce reads the config file once, reports it upstream if the Tracker
@@ -122,31 +150,49 @@ type Reporter struct {
 //
 //   - If the snapshot is unchanged (and forceAfter hasn't elapsed), nothing
 //     is posted and the current (non-backed-off) delay is returned.
-//   - On a successful POST, the snapshot is marked reported and the 404
-//     counter resets to 0.
-//   - On a 404 response, the 404 counter increments and the snapshot is NOT
-//     marked reported, so the same content is retried on the next attempt.
-//   - On any other POST failure, the 404 counter resets to 0 (backoff is
-//     specifically for "collector not upgraded yet", not transient errors)
-//     and the snapshot is NOT marked reported.
+//   - On a successful POST, the snapshot is marked reported and the
+//     consecutive-failure counter resets to 0.
+//   - On ANY POST failure — a 404 (collector not yet upgraded) or any other
+//     error (5xx, network error, ...) alike — the consecutive-failure
+//     counter increments and the snapshot is NOT marked reported, so the
+//     same content is retried on the next attempt. A single shared counter
+//     backs off on persistent failure of any kind, not just 404, since a
+//     collector that's merely down or erroring deserves the same quiet
+//     retry cadence as one that hasn't been upgraded yet.
 func (r *Reporter) RunOnce(ctx context.Context, now time.Time) (nextDelay time.Duration) {
 	snap := Read(r.ConfigPath)
 
 	if r.tracker.ShouldReport(snap, now, ForceReportAfter) {
 		payload := r.buildPayload(snap)
 		status404, err := r.Post(ctx, r.Path, payload)
-		switch {
-		case err == nil:
-			r.consecutive404 = 0
+		if err == nil {
+			r.consecutiveFailures = 0
 			r.tracker.MarkReported(snap, now)
-		case status404:
-			r.consecutive404++
-		default:
-			r.consecutive404 = 0
+			if r.lastOutcomeKnown && !r.lastOutcomeOK {
+				r.logf("configfile: report recovered (path=%s)", r.ConfigPath)
+			}
+			r.lastOutcomeKnown = true
+			r.lastOutcomeOK = true
+		} else {
+			r.consecutiveFailures++
+			if !r.lastOutcomeKnown || r.lastOutcomeOK {
+				r.logf("configfile: report failed (path=%s status404=%v): %v", r.ConfigPath, status404, err)
+			}
+			r.lastOutcomeKnown = true
+			r.lastOutcomeOK = false
 		}
 	}
 
-	return NextReportDelay(r.Base, r.consecutive404)
+	return NextReportDelay(r.Base, r.consecutiveFailures)
+}
+
+// logf calls Logf if set, else does nothing (default no-op — every existing
+// test leaves Logf nil and relies on this).
+func (r *Reporter) logf(format string, args ...interface{}) {
+	if r.Logf == nil {
+		return
+	}
+	r.Logf(format, args...)
 }
 
 // buildPayload assembles the wire envelope for snap, using the reduced
@@ -164,6 +210,7 @@ func (r *Reporter) buildPayload(snap Snapshot) ConfigFilePayload {
 	return ConfigFilePayload{
 		BackendID:       r.BackendID,
 		AgentID:         r.AgentID,
+		AgentVersion:    r.AgentVersion,
 		ProtocolVersion: r.ProtocolVersion,
 		ConfigFile:      field,
 	}

@@ -76,3 +76,67 @@ describe('tiered retention', () => {
     expect(count(db, 'hourly_dim_stats')).toBe(1);
   });
 });
+
+describe('cleanupOldData purge-all (days === 0)', () => {
+  // M2 regression: config_versions holds plaintext secrets (agent-reported
+  // config.yaml content, pre-masking). The purge-all path must clear it
+  // along with every other stats table, both scoped to one backend and
+  // globally (backendId === null).
+  let db: Database.Database;
+  let repo: ConfigRepository;
+
+  beforeEach(() => {
+    db = createRawDb();
+    repo = new ConfigRepository(db, ':memory:');
+  });
+
+  function seedConfigVersion(backendId: number, hash: string) {
+    db.prepare(`
+      INSERT INTO config_versions (backend_id, hash, content, size, source, file_path)
+      VALUES (?, ?, 'port: 7890', 11, 'agent-report', '/etc/mihomo/config.yaml')
+    `).run(backendId, hash);
+  }
+
+  it('clears config_versions for the scoped backend', () => {
+    seedConfigVersion(BACKEND_ID, 'h1');
+    expect(count(db, 'config_versions')).toBe(1);
+
+    repo.cleanupOldData(BACKEND_ID, 0);
+
+    expect(count(db, 'config_versions')).toBe(0);
+  });
+
+  it('does not touch other backends when scoped', () => {
+    const otherId = db.prepare(`
+      INSERT INTO backend_configs (name, url, token, enabled, is_active, listening)
+      VALUES ('other', 'http://127.0.0.1:9091', '', 1, 1, 1)
+    `).run().lastInsertRowid as number;
+    seedConfigVersion(BACKEND_ID, 'h1');
+    seedConfigVersion(otherId, 'h2');
+
+    repo.cleanupOldData(BACKEND_ID, 0);
+
+    expect(count(db, 'config_versions')).toBe(1);
+  });
+
+  it('clears config_versions across all backends when unscoped (backendId=null)', () => {
+    const otherId = db.prepare(`
+      INSERT INTO backend_configs (name, url, token, enabled, is_active, listening)
+      VALUES ('other', 'http://127.0.0.1:9091', '', 1, 1, 1)
+    `).run().lastInsertRowid as number;
+    seedConfigVersion(BACKEND_ID, 'h1');
+    seedConfigVersion(otherId, 'h2');
+
+    repo.cleanupOldData(null, 0);
+
+    expect(count(db, 'config_versions')).toBe(0);
+  });
+
+  it('the day-windowed (non-purge) path leaves config_versions untouched', () => {
+    seedConfigVersion(BACKEND_ID, 'h1');
+
+    repo.cleanupOldData(BACKEND_ID, 7);
+
+    expect(count(db, 'config_versions')).toBe(1);
+  });
+});

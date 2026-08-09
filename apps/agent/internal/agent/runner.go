@@ -625,10 +625,14 @@ func (r *Runner) syncPolicyState(ctx context.Context) error {
 }
 
 // runConfigFileReportLoop reports the mihomo config file (identified by
-// cfg.MihomoConfigPath) to the collector by hash change, backing off on 404
-// (an unupgraded collector). Only started when MihomoConfigPath != "" (see
-// Run). All state (Tracker, 404 counter) lives in the configfile.Reporter
-// this loop owns exclusively, so no locking is needed here.
+// cfg.MihomoConfigPath) to the collector by hash change, backing off on any
+// persistent POST failure (404 from an unupgraded collector, 5xx, network
+// error, ...). Only started when MihomoConfigPath != "" (see Run). All state
+// (Tracker, consecutive-failure counter) lives in the configfile.Reporter
+// this loop owns exclusively, so no locking is needed here. Logf is wired to
+// log.Printf, same as every other log call in this file — output is gated
+// globally via main.go's cfg.LogEnabled check (log.SetOutput(io.Discard)
+// when disabled), not per call site.
 func (r *Runner) runConfigFileReportLoop(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -638,8 +642,10 @@ func (r *Runner) runConfigFileReportLoop(ctx context.Context, wg *sync.WaitGroup
 		Base:            r.cfg.ConfigCheckInterval,
 		BackendID:       r.cfg.BackendID,
 		AgentID:         r.cfg.AgentID,
+		AgentVersion:    config.AgentVersion,
 		ProtocolVersion: config.AgentProtocolVersion,
 		Post:            r.postConfigFile,
+		Logf:            log.Printf,
 	}
 
 	for {

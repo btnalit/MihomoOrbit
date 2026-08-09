@@ -1028,6 +1028,15 @@ export async function createApp(options: AppOptions) {
       return reply.status(400).send({ error: 'Invalid configFile payload' });
     }
 
+    // Size check BEFORE the hash recompute: hashing is wasted work (and a
+    // needless CPU cost on an otherwise-rejected oversized payload) if the
+    // content is going to be rejected anyway — check the cheap byte-length
+    // guard first.
+    const contentByteLength = Buffer.byteLength(content, 'utf8');
+    if (contentByteLength > CONFIG_FILE_MAX_BYTES) {
+      return reply.status(413).send({ error: 'Config file too large' });
+    }
+
     // Recompute the hash server-side rather than trusting the agent's claim:
     // M2b's baseHash matching (sentinel resubstitution + staleness gate) keys
     // off this value, so a buggy/malicious agent whose reported hash doesn't
@@ -1037,19 +1046,16 @@ export async function createApp(options: AppOptions) {
       return reply.status(400).send({ error: 'hash mismatch', code: 'HASH_MISMATCH' });
     }
 
-    if (Buffer.byteLength(content, 'utf8') > CONFIG_FILE_MAX_BYTES) {
-      return reply.status(413).send({ error: 'Config file too large' });
-    }
-
     const { stored } = db.configVersions.insertIfChanged({
       backendId,
       hash,
       content,
-      size: typeof configFile.size === 'number' && Number.isFinite(configFile.size)
-        ? configFile.size
-        : Buffer.byteLength(content, 'utf8'),
+      // Derived from the content actually hashed above, not trusted from the
+      // agent's self-reported configFile.size — a lying/buggy agent must not
+      // be able to desync the stored size from the stored bytes.
+      size: contentByteLength,
       source: 'agent-report',
-      filePath: String(configFile.path || ''),
+      filePath: String(configFile.path || '').trim().slice(0, 512),
       fileModTimeMs: typeof configFile.modTimeMs === 'number' && Number.isFinite(configFile.modTimeMs)
         ? configFile.modTimeMs
         : undefined,

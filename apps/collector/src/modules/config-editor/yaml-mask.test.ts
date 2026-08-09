@@ -140,6 +140,180 @@ describe('maskYamlSecrets', () => {
     expect(r.maskedContent).toContain(longValue);
   });
 
+  it('a scalar alias landing directly in a sequence element (not under any key) is masked (reviewer repro I1)', () => {
+    // `allow:\n  - *pw` puts the alias string directly as an array element,
+    // with no key of its own — the array branch of the value-propagation
+    // walker must check the element itself against secretValues, not just
+    // recurse into it (recursing into a string is a no-op).
+    const r = maskYamlSecrets([
+      'password: &pw longsecretvalue123',
+      'allow:',
+      '  - *pw',
+    ].join('\n'));
+    expect(r.parseError).toBe(false);
+    expect(r.maskedContent).not.toMatch(/longsecretvalue123/);
+    expect(r.maskedPaths).toEqual(expect.arrayContaining(['password', 'allow[0]']));
+  });
+
+  it('a scalar alias landing directly in a NESTED array element is masked (I1 nested-array variant)', () => {
+    const r = maskYamlSecrets([
+      'password: &pw longsecretvalue123',
+      'groups:',
+      '  - name: g1',
+      '    members:',
+      '      - *pw',
+      '      - other',
+    ].join('\n'));
+    expect(r.parseError).toBe(false);
+    expect(r.maskedContent).not.toMatch(/longsecretvalue123/);
+    expect(r.maskedPaths).toEqual(expect.arrayContaining(['password', 'groups[0].members[0]']));
+    expect(r.maskedContent).toContain('other');
+  });
+
+  it('masks hysteria2 obfs-password (I2)', () => {
+    const r = maskYamlSecrets([
+      'proxies:',
+      '  - name: hy2',
+      '    type: hysteria2',
+      '    obfs: salamander',
+      '    obfs-password: obfssecretvalue',
+    ].join('\n'));
+    expect(r.parseError).toBe(false);
+    expect(r.maskedContent).not.toMatch(/obfssecretvalue/);
+    expect(r.maskedPaths).toContain('proxies[0].obfs-password');
+  });
+
+  it('masks an authentication list wholesale (array under a sensitive key, I2)', () => {
+    const r = maskYamlSecrets([
+      'listeners:',
+      '  - name: mixed',
+      '    type: mixed',
+      '    authentication:',
+      '      - user1:pass1',
+      '      - user2:pass2',
+    ].join('\n'));
+    expect(r.parseError).toBe(false);
+    expect(r.maskedContent).not.toMatch(/user1:pass1|user2:pass2/);
+    expect(r.maskedPaths).toContain('listeners[0].authentication');
+  });
+
+  it('masks proxy-providers.*.url and rule-providers.*.url (subscription tokens, I2)', () => {
+    const r = maskYamlSecrets([
+      'proxy-providers:',
+      '  provider1:',
+      '    type: http',
+      '    url: "https://sub.example.com/link?token=abcdef123456"',
+      '    path: ./proxies/provider1.yaml',
+      '    interval: 3600',
+      'rule-providers:',
+      '  ruleset1:',
+      '    type: http',
+      '    url: "https://rules.example.com/set?token=zzzzzz999999"',
+      '    behavior: classical',
+      '    path: ./rules/ruleset1.yaml',
+    ].join('\n'));
+    expect(r.parseError).toBe(false);
+    expect(r.maskedContent).not.toMatch(/token=abcdef123456|token=zzzzzz999999/);
+    expect(r.maskedPaths).toEqual(expect.arrayContaining([
+      'proxy-providers.provider1.url',
+      'rule-providers.ruleset1.url',
+    ]));
+    // Sibling fields on the same provider entries must survive untouched.
+    expect(r.maskedContent).toContain('./proxies/provider1.yaml');
+    expect(r.maskedContent).toContain('classical');
+  });
+
+  it('masks a provider URL when the provider name itself contains a dot (reviewer repro, residual leak fix)', () => {
+    // Path-string matching (`proxy-providers.<name>.url`, re-parsed against
+    // a regex) silently under-masks here: a provider named `sub.example`
+    // makes the joined path `proxy-providers.sub.example.url`, which is
+    // structurally indistinguishable from an extra nesting level. The fix
+    // is structural traversal (real object keys, not path strings) — this
+    // pins the exact repro from the re-review.
+    const r = maskYamlSecrets([
+      'proxy-providers:',
+      '  sub.example:',
+      '    type: http',
+      '    url: "https://sub.example.com/link?token=abcdef123456"',
+      '    path: ./proxies/sub.example.yaml',
+    ].join('\n'));
+    expect(r.parseError).toBe(false);
+    expect(r.maskedContent).not.toMatch(/token=abcdef123456/);
+    expect(r.maskedPaths).toContain('proxy-providers.sub.example.url');
+    expect(r.maskedContent).toContain('./proxies/sub.example.yaml');
+  });
+
+  it('masks a provider URL when the provider name contains brackets', () => {
+    const r = maskYamlSecrets([
+      'rule-providers:',
+      '  "ruleset[1]":',
+      '    type: http',
+      '    url: "https://rules.example.com/set?token=zzzzzz999999"',
+      '    behavior: classical',
+    ].join('\n'));
+    expect(r.parseError).toBe(false);
+    expect(r.maskedContent).not.toMatch(/token=zzzzzz999999/);
+    expect(r.maskedPaths).toContain('rule-providers.ruleset[1].url');
+    expect(r.maskedContent).toContain('classical');
+  });
+
+  it('does NOT mask a url under a top-level map that is not proxy-providers/rule-providers (scope check)', () => {
+    // The structural pass only ever looks at the actual top-level
+    // proxy-providers/rule-providers value — an unrelated top-level map
+    // whose entries also happen to have a `url` field (e.g. a hypothetical
+    // `listeners`/`webhooks`-style block) must not be touched by it.
+    const r = maskYamlSecrets([
+      'webhooks:',
+      '  hook1:',
+      '    url: "https://not-a-provider.example.com/should-survive"',
+      '    method: POST',
+    ].join('\n'));
+    expect(r.parseError).toBe(false);
+    expect(r.maskedContent).toContain('https://not-a-provider.example.com/should-survive');
+    expect(r.maskedPaths).not.toContain('webhooks.hook1.url');
+  });
+
+  it('does NOT mask a url under a NESTED map that happens to be named proxy-providers (scope check)', () => {
+    // Structural scoping is on the TOP-LEVEL value specifically, not "any
+    // map named proxy-providers anywhere in the document".
+    const r = maskYamlSecrets([
+      'some-other-block:',
+      '  proxy-providers:',
+      '    nested1:',
+      '      url: "https://nested.example.com/should-survive"',
+    ].join('\n'));
+    expect(r.parseError).toBe(false);
+    expect(r.maskedContent).toContain('https://nested.example.com/should-survive');
+    expect(r.maskedPaths).not.toContain('some-other-block.proxy-providers.nested1.url');
+  });
+
+  it('does NOT mask a WireGuard public-key (I2 negative case — no substring match on "key")', () => {
+    const r = maskYamlSecrets([
+      'proxies:',
+      '  - name: wg',
+      '    type: wireguard',
+      '    public-key: pubkeyvaluethatlookslikeasecret=',
+      '    private-key: privkeyvaluethatlookslikeasecret=',
+    ].join('\n'));
+    expect(r.parseError).toBe(false);
+    // public-key must survive verbatim...
+    expect(r.maskedContent).toContain('pubkeyvaluethatlookslikeasecret=');
+    expect(r.maskedPaths).not.toContain('proxies[0].public-key');
+    // ...while private-key (an exact SENSITIVE_KEYS match) is masked.
+    expect(r.maskedContent).not.toMatch(/privkeyvaluethatlookslikeasecret=/);
+    expect(r.maskedPaths).toContain('proxies[0].private-key');
+  });
+
+  it('an empty document is a valid empty result, not a parse error (M1)', () => {
+    const r = maskYamlSecrets('');
+    expect(r).toEqual({ maskedContent: '', maskedPaths: [], parseError: false });
+  });
+
+  it('a comment-only document is a valid empty result, not a parse error (M1)', () => {
+    const r = maskYamlSecrets('# comment only\n');
+    expect(r).toEqual({ maskedContent: '', maskedPaths: [], parseError: false });
+  });
+
   it('a masked aliased mapping (shared object reference) must not leak through the alias', () => {
     // Anchoring a whole mapping and aliasing it makes js-yaml hand back the
     // *same* object reference at both sites. maskByKey mutates in place, so

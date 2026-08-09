@@ -113,6 +113,58 @@ describe('POST /api/agent/config-file', () => {
     expect(res.statusCode).toBe(413);
   });
 
+  it('rejects an oversized payload with 413 even when its hash is tampered (M3: size check runs before hash recompute)', async () => {
+    // If the hash recompute ran first, a mismatched hash on oversized
+    // content would surface as 400 HASH_MISMATCH — masking the fact that
+    // the request was going to be rejected as too-large regardless, and
+    // burning a full sha256 pass over up-to-256K+ bytes for nothing.
+    const id = mkAgentBackend('t10');
+    const payload = payloadFor(id, 'a'.repeat(256 * 1024 + 1));
+    payload.configFile.hash = 'a'.repeat(64); // wrong sha256
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agent/config-file',
+      headers: { authorization: 'Bearer t10' },
+      payload,
+    });
+    expect(res.statusCode).toBe(413);
+    expect(db.configVersions.listMeta(id)).toHaveLength(0);
+  });
+
+  it('stores size derived from the actual content bytes, ignoring a lying configFile.size (M4)', async () => {
+    const id = mkAgentBackend('t11');
+    const content = 'port: 7890\nmode: rule\n';
+    const payload = payloadFor(id, content);
+    payload.configFile.size = 999999; // lying claim, must not be trusted
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agent/config-file',
+      headers: { authorization: 'Bearer t11' },
+      payload,
+    });
+    expect(res.statusCode).toBe(200);
+    const stored = db.configVersions.getLatest(id);
+    expect(stored?.size).toBe(Buffer.byteLength(content, 'utf8'));
+    expect(stored?.size).not.toBe(999999);
+  });
+
+  it('caps a stored filePath at 512 chars (M4)', async () => {
+    const id = mkAgentBackend('t12');
+    const longPath = '/etc/mihomo/' + 'a'.repeat(600) + '.yaml';
+    const payload = payloadFor(id, 'port: 7890\n');
+    payload.configFile.path = longPath;
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agent/config-file',
+      headers: { authorization: 'Bearer t12' },
+      payload,
+    });
+    expect(res.statusCode).toBe(200);
+    const stored = db.configVersions.getLatest(id);
+    expect(stored?.file_path.length).toBe(512);
+    expect(longPath.startsWith(stored!.file_path)).toBe(true);
+  });
+
   it('recomputes the hash server-side: a tampered hash is rejected and nothing is stored', async () => {
     const id = mkAgentBackend('t7');
     const payload = payloadFor(id, 'port: 7890\n');

@@ -239,6 +239,10 @@ export class ConfigRepository extends BaseRepository {
         this.db.prepare(`DELETE FROM device_ip_stats WHERE backend_id = ?`).run(backendId);
         this.db.prepare(`DELETE FROM hourly_stats WHERE backend_id = ?`).run(backendId);
         this.db.prepare(`DELETE FROM backend_health_logs WHERE backend_id = ?`).run(backendId);
+        // config_versions holds plaintext secrets (agent-reported config.yaml
+        // content, pre-masking) — the purge-all path must clear it along with
+        // everything else, not just the stats tables.
+        this.db.prepare(`DELETE FROM config_versions WHERE backend_id = ?`).run(backendId);
       } else {
         const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
         const minuteCutoff = cutoff.toISOString().slice(0, 16) + ':00';
@@ -282,6 +286,10 @@ export class ConfigRepository extends BaseRepository {
         this.db.prepare(`DELETE FROM device_ip_stats`).run();
         this.db.prepare(`DELETE FROM hourly_stats`).run();
         this.db.prepare(`DELETE FROM backend_health_logs`).run();
+        // config_versions holds plaintext secrets (agent-reported config.yaml
+        // content, pre-masking) — the purge-all path must clear it along with
+        // everything else, not just the stats tables.
+        this.db.prepare(`DELETE FROM config_versions`).run();
       } else {
         const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
         const minuteCutoff = cutoff.toISOString().slice(0, 16) + ':00';

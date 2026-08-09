@@ -248,8 +248,8 @@ set -- "\$AGENT_BIN" \
 [ -n "\${ORBIT_REPORT_BATCH_SIZE:-}" ] && set -- "\$@" --report-batch-size "\$ORBIT_REPORT_BATCH_SIZE"
 [ -n "\${ORBIT_MAX_PENDING_UPDATES:-}" ] && set -- "\$@" --max-pending-updates "\$ORBIT_MAX_PENDING_UPDATES"
 [ -n "\${ORBIT_STALE_FLOW_TIMEOUT:-}" ] && set -- "\$@" --stale-flow-timeout "\$ORBIT_STALE_FLOW_TIMEOUT"
-[ -n "\${MIHOMO_CONFIG:-}" ] && set -- "\$@" --mihomo-config "\$MIHOMO_CONFIG"
-[ -n "\${CONFIG_CHECK_INTERVAL:-}" ] && set -- "\$@" --config-check-interval "\$CONFIG_CHECK_INTERVAL"
+[ -n "\${ORBIT_MIHOMO_CONFIG:-}" ] && set -- "\$@" --mihomo-config "\$ORBIT_MIHOMO_CONFIG"
+[ -n "\${ORBIT_CONFIG_CHECK_INTERVAL:-}" ] && set -- "\$@" --config-check-interval "\$ORBIT_CONFIG_CHECK_INTERVAL"
 
 set -- "\$@" --log="\${ORBIT_LOG:-true}"
 exec "\$@"
@@ -718,7 +718,7 @@ Optional keys:
   ORBIT_GATEWAY_TOKEN, ORBIT_LOG, ORBIT_AGENT_ID, ORBIT_REPORT_INTERVAL,
   ORBIT_HEARTBEAT_INTERVAL, ORBIT_GATEWAY_POLL_INTERVAL, ORBIT_REQUEST_TIMEOUT,
   ORBIT_REPORT_BATCH_SIZE, ORBIT_MAX_PENDING_UPDATES, ORBIT_STALE_FLOW_TIMEOUT,
-  MIHOMO_CONFIG, CONFIG_CHECK_INTERVAL
+  ORBIT_MIHOMO_CONFIG, ORBIT_CONFIG_CHECK_INTERVAL
 
 Examples:
   # Add and start a new backend
@@ -815,11 +815,11 @@ build_agent_args() {
   if [ -n "${ORBIT_STALE_FLOW_TIMEOUT:-}" ]; then
     set -- "$@" --stale-flow-timeout "$ORBIT_STALE_FLOW_TIMEOUT"
   fi
-  if [ -n "${MIHOMO_CONFIG:-}" ]; then
-    set -- "$@" --mihomo-config "$MIHOMO_CONFIG"
+  if [ -n "${ORBIT_MIHOMO_CONFIG:-}" ]; then
+    set -- "$@" --mihomo-config "$ORBIT_MIHOMO_CONFIG"
   fi
-  if [ -n "${CONFIG_CHECK_INTERVAL:-}" ]; then
-    set -- "$@" --config-check-interval "$CONFIG_CHECK_INTERVAL"
+  if [ -n "${ORBIT_CONFIG_CHECK_INTERVAL:-}" ]; then
+    set -- "$@" --config-check-interval "$ORBIT_CONFIG_CHECK_INTERVAL"
   fi
 
   log_enabled="${ORBIT_LOG:-true}"
@@ -975,10 +975,10 @@ cmd_add() {
   cmd_init "$name" $config_vars
 
   if [ -n "$mihomo_config" ]; then
-    append_quoted_env "MIHOMO_CONFIG" "$mihomo_config" "$cf"
+    append_quoted_env "ORBIT_MIHOMO_CONFIG" "$mihomo_config" "$cf"
   fi
   if [ -n "$config_check_interval" ]; then
-    append_quoted_env "CONFIG_CHECK_INTERVAL" "$config_check_interval" "$cf"
+    append_quoted_env "ORBIT_CONFIG_CHECK_INTERVAL" "$config_check_interval" "$cf"
   fi
 
   log "instance '$name' added successfully"

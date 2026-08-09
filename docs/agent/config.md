@@ -21,6 +21,8 @@
 - `--report-batch-size`：每次上报最大条目数（默认 `1000`）
 - `--max-pending-updates`：内存队列上限（默认 `50000`）
 - `--stale-flow-timeout`：过期流量清除超时（默认 `5m`）
+- `--mihomo-config`：要监视的 mihomo `config.yaml` 路径（可选；留空则禁用配置可见性上报）
+- `--config-check-interval`：配置文件检查间隔（默认 `60s`，下限钳制为 `10s`）
 - `--log`：启用日志，`--log=false` 为静默模式
 - `--version`：打印版本号
 

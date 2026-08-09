@@ -21,6 +21,8 @@
 - `--report-batch-size`: max updates per report (default `1000`)
 - `--max-pending-updates`: memory queue cap (default `50000`)
 - `--stale-flow-timeout`: stale flow eviction timeout (default `5m`)
+- `--mihomo-config`: path to the mihomo `config.yaml` to watch (optional; empty disables config visibility reporting)
+- `--config-check-interval`: interval between config file checks (default `60s`, clamped to a `10s` floor)
 - `--log`: enable logs, set `--log=false` to quiet mode
 - `--version`: print version
 

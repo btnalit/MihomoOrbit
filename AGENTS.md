@@ -49,6 +49,7 @@ apps/collector/src/
   modules/websocket/websocket.server.ts  # web-client WS: subscriptions, broadcast, backpressure
   modules/stats/stats.service.ts         # SQLite/ClickHouse read routing (*WithRouting)
   modules/clickhouse/                    # CH writer/reader/config (parity with SQLite reads)
+  modules/config-editor/                 # YAML secret masking (js-yaml) read/mask API
   modules/app/app.ts                     # Fastify composition root + agent ingest endpoints
 apps/web/
   lib/api.ts, lib/websocket.ts           # HTTP client + stats WS hook (backendId-tagged pushes)
@@ -58,6 +59,7 @@ apps/web/
   app/[locale]/dashboard/                # main dashboard route
 apps/agent/
   internal/agent/runner.go               # main loop, retry/idempotency
+  internal/configfile/                   # config.yaml read/hash/report tracker (agent-side)
   orbitagent                             # POSIX-sh service manager (install/upgrade/systemd/procd)
 docs/
   architecture(.en).md                   # system architecture

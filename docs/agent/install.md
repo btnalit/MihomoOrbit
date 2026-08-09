@@ -39,6 +39,8 @@ curl -fsSL https://raw.githubusercontent.com/btnalit/MihomoOrbit/main/apps/agent
 - `ORBIT_INSTANCE_NAME`：`orbitagent` 管理器中的实例名（默认 `backend-<id>`）
 - `ORBIT_BIN_LINK_MODE`：全局 bin 目录软链模式（`auto|true|false`，默认 `auto`）
 - `ORBIT_LINK_DIR`：软链目标目录（默认 `/usr/local/bin`）
+- `ORBIT_MIHOMO_CONFIG`：要监视的 mihomo `config.yaml` 路径（可选；留空则禁用配置可见性上报）
+- `ORBIT_CONFIG_CHECK_INTERVAL`：配置文件检查间隔（默认 `60s`，下限钳制为 `10s`）
 
 安装完成后，使用以下命令管理 Agent：
 
@@ -116,6 +118,15 @@ WantedBy=multi-user.target
 ExecStart=/usr/local/bin/orbit-agent \
   ...
   --gateway-token ${ORBIT_GATEWAY_TOKEN}
+```
+
+若设置了 `ORBIT_MIHOMO_CONFIG` / `ORBIT_CONFIG_CHECK_INTERVAL`（启用配置文件可见性上报），同样在 `ExecStart` 末尾追加：
+
+```ini
+ExecStart=/usr/local/bin/orbit-agent \
+  ...
+  --mihomo-config ${ORBIT_MIHOMO_CONFIG} \
+  --config-check-interval ${ORBIT_CONFIG_CHECK_INTERVAL}
 ```
 
 启用并启动：
@@ -213,6 +224,10 @@ start_service() {
         --gateway-url "$ORBIT_GATEWAY_URL"
     [ -n "$ORBIT_GATEWAY_TOKEN" ] && \
         procd_append_param command --gateway-token "$ORBIT_GATEWAY_TOKEN"
+    [ -n "$ORBIT_MIHOMO_CONFIG" ] && \
+        procd_append_param command --mihomo-config "$ORBIT_MIHOMO_CONFIG"
+    [ -n "$ORBIT_CONFIG_CHECK_INTERVAL" ] && \
+        procd_append_param command --config-check-interval "$ORBIT_CONFIG_CHECK_INTERVAL"
     procd_set_param respawn 3600 5 5
     procd_set_param stdout 1
     procd_set_param stderr 1

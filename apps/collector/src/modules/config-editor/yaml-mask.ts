@@ -49,7 +49,17 @@
  *   guarantee of this module — re-run the alias/merge-key tests in
  *   yaml-mask.test.ts on any js-yaml version bump.
  */
-import { dump, load } from 'js-yaml';
+import { dump, load, YAMLException } from 'js-yaml';
+
+// js-yaml 5.x's load() throws (rather than returning undefined, as 4.x did)
+// when a document contains no content at all — an empty string, or a
+// whitespace/comment-only body that resolves to zero YAML documents — and
+// this exact reason string is the only call site that throws it (see
+// js-yaml's loader: `if (documents.length === 0) throw new
+// YAMLException("expected a document, but the input is empty")`). That is a
+// VALID empty document (nothing to mask), not malformed input, so it must
+// not surface as parseError: true.
+const EMPTY_DOCUMENT_REASON = 'expected a document, but the input is empty';
 
 export const MASK_SENTINEL = '__ORBIT_MASKED__';
 
@@ -63,6 +73,10 @@ export interface MaskResult {
 // (e.g. `-` vs `_` are distinct literals, hence both `auth-str` and
 // `auth_str` are listed explicitly). Any nesting depth, including array
 // elements.
+//
+// Exact-match only — never substring-match a fragment like "key", which
+// would also catch WireGuard's `public-key` (not a secret; must survive
+// masking so M2b's editor can display it).
 const SENSITIVE_KEYS = new Set([
   'password',
   'passwords',
@@ -74,7 +88,70 @@ const SENSITIVE_KEYS = new Set([
   'auth-str',
   'auth_str',
   'psk',
+  'obfs-password',
+  'private-key-passphrase',
+  'authentication',
+  'obfs-param',
+  'protocol-param',
 ]);
+
+// Top-level keys under which every entry is a provider config map keyed by
+// an arbitrary, user-chosen provider name. The provider's `url` (a
+// subscription link that routinely embeds an auth token as a query param)
+// lives at PROVIDERS_KEY.<name>.url — see maskProviderMapUrls, which handles
+// this STRUCTURALLY (real object traversal, keyed off the actual top-level
+// object) rather than by reconstructing/matching the `.`-joined path
+// string. A path-string regex was tried first and rejected: maskedPaths
+// entries join keys with `.` purely for human-readable reporting, and a
+// provider name containing a literal `.` (e.g. `sub.example`) or `[`/`]`
+// makes the joined string structurally ambiguous — indistinguishable from
+// an extra nesting level — so re-parsing it to decide "is this a provider
+// entry" silently under-masks any provider name that isn't a single clean
+// path segment. Structural traversal has no such blind spot: provider names
+// may contain any character at all.
+const PROVIDERS_KEYS = ['proxy-providers', 'rule-providers'] as const;
+
+/**
+ * Masks the `url` field of every entry in a top-level providers map
+ * (`proxy-providers` / `rule-providers`), structurally: iterates the map's
+ * actual own keys (provider names) rather than matching against a
+ * reconstructed path string, so provider names containing dots, brackets,
+ * or anything else are handled correctly. Only `providersMap` itself needs
+ * to be the top-level value — the caller is responsible for only invoking
+ * this on the actual top-level `proxy-providers`/`rule-providers` value,
+ * which is what keeps this scoped and out of reach of an unrelated
+ * same-named nested map elsewhere in the document.
+ *
+ * Runs after the generic key-based pass (maskByKey) so it can still add the
+ * original url to secretValues for pass 2's alias propagation, same as any
+ * other masked secret.
+ */
+function maskProviderMapUrls(
+  providersMap: unknown,
+  parentKey: string,
+  maskedPaths: string[],
+  secretValues: Set<string>,
+): void {
+  if (providersMap === null || typeof providersMap !== 'object' || Array.isArray(providersMap)) {
+    return;
+  }
+  for (const providerName of Object.keys(providersMap as Record<string, unknown>)) {
+    const entry = (providersMap as Record<string, unknown>)[providerName];
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+      continue;
+    }
+    const entryRecord = entry as Record<string, unknown>;
+    const urlValue = entryRecord.url;
+    if (typeof urlValue !== 'string' || urlValue === MASK_SENTINEL) {
+      continue;
+    }
+    if (urlValue.length >= MIN_SECRET_VALUE_LENGTH) {
+      secretValues.add(urlValue);
+    }
+    entryRecord.url = MASK_SENTINEL;
+    maskedPaths.push(`${parentKey}.${providerName}.url`);
+  }
+}
 
 // Floor for cross-site value-equality propagation (pass 2 below) — a
 // collected secret shorter than this is judged too likely to collide with
@@ -98,7 +175,20 @@ const MIN_SECRET_VALUE_LENGTH = 6;
 function maskByKey(node: unknown, path: string, maskedPaths: string[], secretValues: Set<string>): unknown {
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {
-      node[i] = maskByKey(node[i], `${path}[${i}]`, maskedPaths, secretValues);
+      const item = node[i];
+      // A string array element that already matches a secret collected
+      // earlier in this same top-down pass (e.g. a scalar alias appearing
+      // after its anchor) is masked directly rather than recursed into —
+      // recursing would no-op on a string and leave it untouched. This
+      // mirrors the identical check in maskByValue's array branch, which is
+      // what actually closes this gap in the common case (pass 2 runs after
+      // ALL secrets are collected, not just the ones visited so far).
+      if (typeof item === 'string' && item !== MASK_SENTINEL && secretValues.has(item)) {
+        node[i] = MASK_SENTINEL;
+        maskedPaths.push(`${path}[${i}]`);
+      } else {
+        node[i] = maskByKey(item, `${path}[${i}]`, maskedPaths, secretValues);
+      }
     }
     return node;
   }
@@ -134,7 +224,19 @@ function maskByKey(node: unknown, path: string, maskedPaths: string[], secretVal
 function maskByValue(node: unknown, path: string, maskedPaths: string[], secretValues: Set<string>): unknown {
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {
-      node[i] = maskByValue(node[i], `${path}[${i}]`, maskedPaths, secretValues);
+      const item = node[i];
+      // A string element sitting directly in a sequence (e.g. `allow:\n  -
+      // *pw`) has no key of its own, so the object-branch's `typeof value
+      // === 'string' && secretValues.has(value)` check below never runs for
+      // it — recursing into a string is a no-op (falls through to the final
+      // `return node` with nothing matched). Without this check, a scalar
+      // alias landing directly in a sequence leaks the plaintext verbatim.
+      if (typeof item === 'string' && secretValues.has(item)) {
+        node[i] = MASK_SENTINEL;
+        maskedPaths.push(`${path}[${i}]`);
+      } else {
+        node[i] = maskByValue(item, `${path}[${i}]`, maskedPaths, secretValues);
+      }
     }
     return node;
   }
@@ -160,8 +262,20 @@ export function maskYamlSecrets(content: string): MaskResult {
   let parsed: unknown;
   try {
     parsed = load(content);
-  } catch {
+  } catch (err) {
+    if (err instanceof YAMLException && err.reason === EMPTY_DOCUMENT_REASON) {
+      return { maskedContent: '', maskedPaths: [], parseError: false };
+    }
     return { maskedContent: '', maskedPaths: [], parseError: true };
+  }
+
+  // Defense in depth: parsed can also come back undefined directly (rather
+  // than load() throwing) on some inputs/schema configurations — same "valid
+  // empty document" verdict applies. dump(undefined) is not exercised as a
+  // substitute for "" here since its behavior isn't part of this module's
+  // contract.
+  if (parsed === undefined) {
+    return { maskedContent: '', maskedPaths: [], parseError: false };
   }
 
   // dump() lives in this same try/catch (not just load()) so an unexpected
@@ -172,6 +286,17 @@ export function maskYamlSecrets(content: string): MaskResult {
     const secretValues = new Set<string>();
 
     maskByKey(parsed, '', maskedPaths, secretValues);
+
+    // Structural pass: proxy-providers/rule-providers subscription URLs.
+    // Deliberately scoped to the actual TOP-LEVEL value only (never a
+    // same-named map nested elsewhere) — see maskProviderMapUrls.
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const root = parsed as Record<string, unknown>;
+      for (const providersKey of PROVIDERS_KEYS) {
+        maskProviderMapUrls(root[providersKey], providersKey, maskedPaths, secretValues);
+      }
+    }
+
     if (secretValues.size > 0) {
       maskByValue(parsed, '', maskedPaths, secretValues);
     }
