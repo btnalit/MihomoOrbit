@@ -15,7 +15,7 @@ import { InteractiveRuleStats } from "@/components/features/rules";
 import { HealthContent } from "@/components/features/health";
 import { WorldTrafficMap, CountryTrafficList } from "@/components/features/countries";
 import { DomainsTable, IPsTable } from "@/components/features/stats/table";
-import { ConnectionsPage, GroupsPage, ManagementGate } from "@/components/features/management";
+import { ConnectionsPage, GroupsPage, LogsPage, ManagementGate } from "@/components/features/management";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -431,6 +431,15 @@ export function Content({
           </ManagementGate>
         );
       case "logs":
+        return (
+          <ManagementGate backend={activeBackend} onBackendChange={onBackendChange}>
+            {/* Same remount-on-backend-switch rationale as groups/connections
+                above: LogsPage's local state (accumulated ring, seq dedup
+                window, level filter, scroll stickiness) is per-backend and
+                must not survive a switch to a different backend. */}
+            <LogsPage key={activeBackendId} backendId={activeBackendId} />
+          </ManagementGate>
+        );
       case "runtime":
         return (
           <ManagementGate backend={activeBackend} onBackendChange={onBackendChange}>

@@ -337,6 +337,20 @@
       "noResults": "未找到匹配的连接",
       "offlineBanner": "无法连接到该后端,实时数据暂不可用",
       "reconnectingBanner": "与实时数据的连接已断开,正在重新连接…"
+    },
+    "logs": {
+      "title": "实时日志",
+      "levels": {
+        "debug": "调试",
+        "info": "信息",
+        "warning": "警告",
+        "error": "错误"
+      },
+      "gapMarker": "丢弃了 {count} 条(推送积压)",
+      "backToLatest": "回到最新",
+      "empty": "暂无日志",
+      "offlineBanner": "无法连接到该后端,实时数据暂不可用",
+      "reconnectingBanner": "与实时数据的连接已断开,正在重新连接…"
     }
   },
   "map": {
