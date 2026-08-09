@@ -20,9 +20,16 @@ import (
 	"time"
 
 	"github.com/btnalit/MihomoOrbit/apps/agent/internal/config"
+	"github.com/btnalit/MihomoOrbit/apps/agent/internal/configfile"
 	"github.com/btnalit/MihomoOrbit/apps/agent/internal/domain"
 	"github.com/btnalit/MihomoOrbit/apps/agent/internal/gateway"
 )
+
+// configFileReportPath is the collector endpoint agents POST config-file
+// reports to (relative to cfg.ServerAPIBase, same convention as
+// "/agent/report", "/agent/heartbeat", etc.). See docs/superpowers/plans/
+// 2026-08-09-m2a-agent-config-visibility.md, "契约速查".
+const configFileReportPath = "/agent/config-file"
 
 type trackedFlow struct {
 	LastUpload  int64
@@ -358,6 +365,15 @@ func (r *Runner) Run(ctx context.Context) {
 	go r.runPolicyStateSyncLoop(runCtx, &wg)
 	go r.runLockWatchLoop(runCtx, cancelRun, &wg)
 
+	// Config-file visibility is opt-in: MihomoConfigPath is empty unless the
+	// operator declared -mihomo-config, and an unconfigured agent must have
+	// exactly zero behavioral change from before this feature existed — no
+	// extra goroutine, no ticking, no reads of a path nobody set.
+	if r.cfg.MihomoConfigPath != "" {
+		wg.Add(1)
+		go r.runConfigFileReportLoop(runCtx, &wg)
+	}
+
 	<-runCtx.Done()
 	log.Printf("[agent:%s] stopping...", r.cfg.AgentID)
 
@@ -606,6 +622,50 @@ func (r *Runner) syncPolicyState(ctx context.Context) error {
 	r.lastPolicyHash = hash
 	r.mu.Unlock()
 	return nil
+}
+
+// runConfigFileReportLoop reports the mihomo config file (identified by
+// cfg.MihomoConfigPath) to the collector by hash change, backing off on 404
+// (an unupgraded collector). Only started when MihomoConfigPath != "" (see
+// Run). All state (Tracker, 404 counter) lives in the configfile.Reporter
+// this loop owns exclusively, so no locking is needed here.
+func (r *Runner) runConfigFileReportLoop(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	rep := &configfile.Reporter{
+		ConfigPath:      r.cfg.MihomoConfigPath,
+		Path:            configFileReportPath,
+		Base:            r.cfg.ConfigCheckInterval,
+		BackendID:       r.cfg.BackendID,
+		AgentID:         r.cfg.AgentID,
+		ProtocolVersion: config.AgentProtocolVersion,
+		Post:            r.postConfigFile,
+	}
+
+	for {
+		delay := rep.RunOnce(ctx, time.Now())
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+	}
+}
+
+// postConfigFile is the configfile.PostFunc closure the config-file report
+// loop uses to reach the collector. It reuses postJSONWithLatency exactly
+// as-is (gzip + Bearer auth, unchanged) rather than duplicating that
+// wiring — postJSONWithLatency's return-body contract is untouched here per
+// the task brief; M2b is expected to refactor it to return structured
+// errors. Until then, 404 is detected by matching postJSONWithLatency's
+// non-2xx error string ("server http %d: %s"), the only signal currently
+// available without changing that function's signature or behavior.
+func (r *Runner) postConfigFile(ctx context.Context, path string, payload interface{}) (status404 bool, err error) {
+	_, err = r.postJSONWithLatency(ctx, path, payload)
+	if err == nil {
+		return false, nil
+	}
+	return strings.Contains(err.Error(), "server http 404:"), err
 }
 
 func (r *Runner) ingestSnapshots(snapshots []domain.FlowSnapshot, nowMs int64) {

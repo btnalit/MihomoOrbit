@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"time"
+	"unicode/utf8"
 )
 
 // MaxConfigBytes caps how large a config file the agent will hold in memory.
@@ -27,7 +28,7 @@ type Snapshot struct {
 	Content   []byte
 	Size      int64
 	ModTimeMs int64
-	Err       string // "" | "too-large" | "read-failed: <detail>"
+	Err       string // "" | "too-large" | "read-failed: <detail>" | "not-utf8"
 }
 
 // Read reads path and returns a snapshot. If the file is oversized or
@@ -67,6 +68,17 @@ func Read(path string) Snapshot {
 	}
 	if len(content) > MaxConfigBytes {
 		return Snapshot{Path: path, Err: "too-large"}
+	}
+
+	// The wire payload carries Content as a JSON string (see
+	// configfile.ConfigFileField); json.Marshal silently substitutes invalid
+	// UTF-8 byte sequences with U+FFFD, which would desync the reported hash
+	// (computed below, over these true raw bytes) from whatever actually
+	// reaches the collector — corrupt content, no error anywhere. Route a
+	// non-UTF-8 file through the same error-report path as
+	// too-large/read-failed instead of ever hashing/returning it as content.
+	if !utf8.Valid(content) {
+		return Snapshot{Path: path, Err: "not-utf8"}
 	}
 
 	sum := sha256.Sum256(content)

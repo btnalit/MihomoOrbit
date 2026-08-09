@@ -90,6 +90,61 @@ func TestReadBoundarySizes(t *testing.T) {
 	}
 }
 
+// TestReadRejectsNonUTF8 pins the invariant that Read never returns a
+// successful Snapshot whose Content isn't valid UTF-8: the wire payload
+// carries Content as a JSON string, and json.Marshal silently substitutes
+// invalid byte sequences with U+FFFD — which would desync the reported hash
+// (computed over the true raw bytes) from what actually reaches the
+// collector, with no error anywhere. A non-UTF-8 file must instead route
+// through the same error-report path as "too-large"/"read-failed" (Err set,
+// Content/Hash left zero).
+func TestReadRejectsNonUTF8(t *testing.T) {
+	tests := []struct {
+		name    string
+		content []byte
+		wantErr string
+	}{
+		{
+			name:    "invalid byte sequence rejected",
+			content: []byte{0xff, 0xfe, 'a'},
+			wantErr: "not-utf8",
+		},
+		{
+			name:    "valid multibyte UTF-8 passes",
+			content: []byte("port: 7890\n# 中文注释\n"),
+			wantErr: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(p, tt.content, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			s := Read(p)
+			if s.Err != tt.wantErr {
+				t.Fatalf("Err = %q, want %q", s.Err, tt.wantErr)
+			}
+			if tt.wantErr == "" {
+				want := sha256.Sum256(tt.content)
+				if s.Hash != hex.EncodeToString(want[:]) {
+					t.Fatal("hash mismatch for valid UTF-8 content")
+				}
+				if !bytes.Equal(s.Content, tt.content) {
+					t.Fatal("content mismatch for valid UTF-8 content")
+				}
+			} else {
+				if s.Content != nil || s.Hash != "" {
+					t.Fatalf("non-utf8 snapshot must not carry Content/Hash, got Content=%q Hash=%q", s.Content, s.Hash)
+				}
+			}
+		})
+	}
+}
+
 func TestTrackerReportsOnChangeOnly(t *testing.T) {
 	now := time.Unix(1000, 0)
 	tr := &Tracker{}
