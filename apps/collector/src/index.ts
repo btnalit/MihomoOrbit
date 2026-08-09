@@ -137,6 +137,10 @@ async function main() {
       wsServer.broadcastStats(backendId, true);
     },
     authService,
+    // Same TopicHub instance the WS server's clients subscribe on (see M1
+    // Task 2 / m1-contracts.md) — ManagementService's group-delay-test
+    // results must publish onto it, not a disconnected standalone hub.
+    wsServer.getTopicHub(),
   );
   const apiFastifyApp = await apiServer.start();
 

@@ -17,12 +17,14 @@ import { SurgePolicySyncService } from '../surge/surge-policy-sync.js';
 import type { GeoIPService } from '../geo/geo.service.js';
 import { BatchBuffer } from '../collector/batch-buffer.js';
 import { TrafficWriteError } from '../clickhouse/clickhouse.writer.js';
+import { TopicHub } from '../websocket/topic-hub.js';
 
 // Import modules
 import { BackendService, backendController } from '../backend/index.js';
 import { StatsService, statsController } from '../stats/index.js';
 import { AuthService, authController } from '../auth/index.js';
 import { configController } from '../config/index.js';
+import { ManagementService, managementController } from '../management/index.js';
 
 // Extend Fastify instance to include services
 declare module 'fastify' {
@@ -31,6 +33,7 @@ declare module 'fastify' {
     realtimeStore: RealtimeStore;
     backendService: BackendService;
     statsService: StatsService;
+    managementService: ManagementService;
     clearAgentRuntimeState?: (backendId?: number) => void;
     notifyBackendDataCleared?: (backendId: number) => void;
   }
@@ -54,6 +57,18 @@ export interface AppOptions {
    * back to a fresh instance for standalone use (tests, tooling). See I2.
    */
   authService?: AuthService;
+  /**
+   * Shared TopicHub instance — same precedent as authService above. Task 2
+   * deviates from its brief's stated Files list (app.ts only) by threading
+   * this through here and through APIServer/index.ts: ManagementService's
+   * group-delay-test results must publish onto the *same* hub instance the
+   * WS server's clients subscribe on (see websocket.server.ts's
+   * `getTopicHub()`), which app.ts previously had no path to. Falls back to
+   * a fresh, disconnected instance for standalone use (tests, tooling) —
+   * nothing subscribes to it there, so delay events are simply unread, not
+   * incorrect.
+   */
+  hub?: TopicHub;
 }
 
 type AgentTrafficUpdatePayload = {
@@ -116,6 +131,7 @@ export async function createApp(options: AppOptions) {
     onTrafficIngested,
     onBackendDataCleared,
     authService: injectedAuthService,
+    hub: injectedHub,
   } = options;
 
   // Create Fastify instance
@@ -374,10 +390,16 @@ export async function createApp(options: AppOptions) {
     onBackendDataCleared,
   );
   const statsService = new StatsService(db, realtimeStore);
+  // See I2/hub doc above: reuse the caller-provided TopicHub (shared with the
+  // WS server in index.ts) when given one; only stand up a fresh, otherwise
+  // disconnected instance for standalone use (tests, tooling).
+  const hub = injectedHub ?? new TopicHub({ maxBufferedBytes: 4 * 1024 * 1024 });
+  const managementService = new ManagementService({ db, hub });
 
   // Decorate Fastify instance with services
   app.decorate('backendService', backendService);
   app.decorate('statsService', statsService);
+  app.decorate('managementService', managementService);
   app.decorate('authService', authService);
   app.decorate('db', db);
   app.decorate('realtimeStore', realtimeStore);
@@ -1470,6 +1492,9 @@ export async function createApp(options: AppOptions) {
   await app.register(statsController, { prefix: '/api/stats' });
   await app.register(authController, { prefix: '/api/auth' });
   await app.register(configController, { prefix: '/api/db' });
+  // NOT added to PUBLIC_ROUTES above — management endpoints sit behind the
+  // same mandatory-auth hooks as every other route registered in this block.
+  await app.register(managementController, { prefix: '/api/management' });
 
   if (autoListen) {
     // Start server
@@ -1493,6 +1518,7 @@ export class APIServer {
   private onTrafficIngested?: (backendId: number) => void;
   private onBackendDataCleared?: (backendId: number) => void;
   private authService?: AuthService;
+  private hub?: TopicHub;
 
   constructor(
     port: number,
@@ -1505,6 +1531,10 @@ export class APIServer {
     // Shared AuthService (see I2) — optional and trailing for backward
     // compatibility with existing positional call sites/tests.
     authService?: AuthService,
+    // Shared TopicHub (see the AppOptions.hub doc above) — same optional,
+    // trailing convention as authService, for the same reason: existing
+    // positional call sites/tests keep compiling unchanged.
+    hub?: TopicHub,
   ) {
     this.port = port;
     this.db = db;
@@ -1514,6 +1544,7 @@ export class APIServer {
     this.onTrafficIngested = onTrafficIngested;
     this.onBackendDataCleared = onBackendDataCleared;
     this.authService = authService;
+    this.hub = hub;
   }
 
   async start() {
@@ -1526,6 +1557,7 @@ export class APIServer {
       onTrafficIngested: this.onTrafficIngested,
       onBackendDataCleared: this.onBackendDataCleared,
       authService: this.authService,
+      hub: this.hub,
       logger: false,
     });
     return this.app;
