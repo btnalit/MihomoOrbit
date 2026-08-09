@@ -18,8 +18,10 @@ import { isAgentSourced, shouldStartDirectCollector } from './modules/collector/
 import { StatsWebSocketServer } from './modules/websocket/websocket.server.js';
 import { realtimeStore } from './modules/realtime/realtime.store.js';
 import { SurgePolicySyncService } from './modules/surge/surge-policy-sync.js';
+import { ManagementRelay } from './modules/management/ws-relay.js';
 
 let wsServer: StatsWebSocketServer;
+let managementRelay: ManagementRelay;
 
 import { APIServer } from './modules/app/app.js';
 import { AuthService } from './modules/auth/index.js';
@@ -112,6 +114,14 @@ async function main() {
   const statsService = new StatsService(db, realtimeStore);
   wsServer = new StatsWebSocketServer(COLLECTOR_WS_PORT, db, statsService, authService);
   wsServer.start();
+
+  // Management relay (M1 Task 3): per-backend connections/logs upstream
+  // fan-out over the same TopicHub the WS server's clients subscribe on.
+  managementRelay = new ManagementRelay({ db, hub: wsServer.getTopicHub() });
+  wsServer.setTopicHooks(managementRelay.hooks);
+  wsServer.setSubscriberJoinedHook((ws, topic, backendId) =>
+    managementRelay.onSubscriberJoined(ws, topic, backendId),
+  );
 
   // Initialize policy sync service
   policySyncService = new SurgePolicySyncService(db);
@@ -350,6 +360,7 @@ async function shutdown() {
 
   // Stop servers — await the API server so its onClose hook can flush
   // pending agent buffers before the database is closed.
+  managementRelay?.stop();
   wsServer?.stop();
   try {
     await apiServer?.stop();

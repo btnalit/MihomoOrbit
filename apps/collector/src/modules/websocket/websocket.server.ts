@@ -213,6 +213,12 @@ export class StatsWebSocketServer {
   );
 
   private topicHub: TopicHub;
+  // Task 3's log-history replay entry point. Deliberately not folded into
+  // TopicHubHooks (which stays a Task-1-owned contract) — this is a second,
+  // independent injection point set via setSubscriberJoinedHook(), called
+  // synchronously right after a successful topic-subscribe so replay always
+  // precedes any later publishAppend for that socket.
+  private subscriberJoinedHook?: (ws: WebSocket, topic: TopicName, backendId: number) => void;
 
   constructor(port: number, db: StatsDatabase, statsService: StatsService, authService?: AuthService) {
     this.port = port;
@@ -243,6 +249,11 @@ export class StatsWebSocketServer {
 
   getTopicHub(): TopicHub {
     return this.topicHub;
+  }
+
+  /** Injects Task 3's log-history replay callback (ManagementRelay#onSubscriberJoined). No-op until set. */
+  setSubscriberJoinedHook(hook: (ws: WebSocket, topic: TopicName, backendId: number) => void): void {
+    this.subscriberJoinedHook = hook;
   }
 
   /** Single backpressure gate shared by the stats broadcast path and
@@ -604,6 +615,10 @@ export class StatsWebSocketServer {
 
             if (msg.type === 'topic-subscribe') {
               this.topicHub.subscribe(ws, topic, backendId);
+              // Same synchronous call stack as the subscribe above, so
+              // history replay (Task 3: buffered logs) always lands before
+              // any later publishAppend reaches this socket.
+              this.subscriberJoinedHook?.(ws, topic, backendId);
             } else {
               this.topicHub.unsubscribe(ws, topic, backendId);
             }
@@ -1461,6 +1476,7 @@ export class StatsWebSocketServer {
         // accumulate and get re-broadcast forever if 'close' never fires.
         if (ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
           this.clients.delete(ws);
+          this.topicHub.dropClient(ws);
         }
       }
     }
