@@ -8,6 +8,7 @@ import type {
   TrafficTrendPoint,
   ProxyTrafficStats,
   DeviceStats,
+  BackendCapabilities,
 } from "@mihomo-orbit/shared";
 import { getAuthHeaders } from "./auth-queries";
 
@@ -141,7 +142,14 @@ export interface Backend {
   enabled: boolean;
   is_active: boolean;
   listening: boolean;
-  hasToken?: boolean;
+  /** M1c: management API address (masked in showcase mode). '' = no API channel. */
+  apiUrl: string;
+  /** M1c: whether an agent token is configured (not the token itself). */
+  hasAgent: boolean;
+  /** M1c: explicitly bound agent id. '' = unbound. */
+  agentId: string;
+  /** M1c: only populated by getBackends() (list route). */
+  capabilities?: BackendCapabilities;
   health?: BackendHealth;
   created_at: string;
   updated_at: string;
@@ -538,12 +546,12 @@ export const api = {
   getBackends: () =>
     fetchJson<Backend[]>(`${API_BASE}/backends`),
     
-  createBackend: (backend: { name: string; url: string; token?: string; type?: 'clash' | 'surge' }) =>
+  createBackend: (backend: { name: string; apiUrl?: string; apiSecret?: string; withAgent?: boolean; type?: 'clash' | 'surge' }) =>
     fetchJson<{ id: number; isActive?: boolean; message: string; agentToken?: string }>(`${API_BASE}/backends`, 'POST', backend),
-    
-  updateBackend: (id: number, backend: { name?: string; url?: string; token?: string; type?: 'clash' | 'surge'; enabled?: boolean; listening?: boolean }) =>
+
+  updateBackend: (id: number, backend: { name?: string; apiUrl?: string; apiSecret?: string; withAgent?: boolean; type?: 'clash' | 'surge'; enabled?: boolean; listening?: boolean }) =>
     fetchJson<{ message: string }>(`${API_BASE}/backends/${id}`, 'PUT', backend),
-    
+
   deleteBackend: (id: number) =>
     fetchJson<{ message: string }>(`${API_BASE}/backends/${id}`, 'DELETE'),
     
@@ -564,6 +572,9 @@ export const api = {
 
   rotateAgentToken: (id: number) =>
     fetchJson<{ message: string; agentToken: string }>(`${API_BASE}/backends/${id}/rotate-agent-token`, 'POST'),
+
+  unbindAgent: (id: number) =>
+    fetchJson<{ message: string }>(`${API_BASE}/backends/${id}/agent/unbind`, 'POST'),
 
   getBackendHealthHistory: (opts?: { from?: string; to?: string; backendId?: number }) =>
     fetchJson<BackendHealthHistory[]>(

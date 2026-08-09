@@ -58,8 +58,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn, formatBytes, formatNumber } from "@/lib/utils";
-import { api, type GeoLookupConfig, type GeoLookupProvider } from "@/lib/api";
-import { isAgentBackendUrl } from "@mihomo-orbit/shared";
+import {
+  api,
+  type Backend,
+  type BackendHealth,
+  type GeoLookupConfig,
+  type GeoLookupProvider,
+} from "@/lib/api";
 import { toast } from "sonner";
 import { BackendVerifyAnimation } from "@/components/features/backend/backend-verify-animation";
 import { BackendListSkeleton } from "@/components/ui/insight-skeleton";
@@ -244,31 +249,6 @@ function FaviconProviderPreview({
   );
 }
 
-interface BackendHealth {
-  status: 'healthy' | 'unhealthy' | 'unknown';
-  lastChecked: number;
-  message?: string;
-  latency?: number;
-}
-
-interface Backend {
-  id: number;
-  name: string;
-  url: string;
-  host: string;
-  port?: number;
-  mode: BackendMode;
-  agentId: string;
-  token: string;
-  type?: 'clash' | 'surge';
-  enabled: boolean;
-  is_active: boolean;
-  listening: boolean;
-  hasToken?: boolean;
-  health?: BackendHealth;
-  created_at: string;
-}
-
 interface BackendConfigDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -312,25 +292,20 @@ interface RetentionConfig {
   autoCleanup: boolean;
 }
 
-type BackendMode = "direct" | "agent";
-
-interface ParsedBackendUrl {
-  mode: BackendMode;
+interface ParsedApiUrl {
   host: string;
   port: string;
   ssl: boolean;
-  agentId: string;
 }
 
 interface BackendFormState {
   name: string;
-  mode: BackendMode;
   host: string;
   port: string;
   ssl: boolean;
-  token: string;
+  apiSecret: string;
   type: 'clash' | 'surge';
-  agentId: string;
+  withAgent: boolean;
   agentGatewayHost: string;
   agentGatewayPort: string;
   agentGatewaySsl: boolean;
@@ -418,40 +393,15 @@ function saveAgentGatewayConfig(backendId: number, config: AgentGatewayConfig): 
   }
 }
 
-function sanitizeAgentId(value: string): string {
-  const normalized = value
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-  return normalized || "agent";
-}
-
-function generateAgentMarker(seed: string): string {
-  const base = sanitizeAgentId(seed || "agent");
-  try {
-    const bytes = new Uint8Array(4);
-    globalThis.crypto?.getRandomValues?.(bytes);
-    const hash = Array.from(bytes)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-    return `${base}-${hash}`;
-  } catch {
-    const fallback = Math.random().toString(16).slice(2, 10);
-    return `${base}-${fallback}`;
-  }
-}
-
 function getInitialFormState(): BackendFormState {
   return {
     name: "",
-    mode: "direct",
     host: "",
     port: DEFAULT_BACKEND_PORT,
     ssl: false,
-    token: "",
+    apiSecret: "",
     type: "clash",
-    agentId: "",
+    withAgent: false,
     agentGatewayHost: DEFAULT_AGENT_GATEWAY_HOST,
     agentGatewayPort: getDefaultGatewayPort("clash"),
     agentGatewaySsl: false,
@@ -459,54 +409,26 @@ function getInitialFormState(): BackendFormState {
   };
 }
 
-function parseAgentId(url: string): string {
-  const raw = url.replace(/^agent:\/\//i, "").split(/[/?#]/)[0] || "";
-  try {
-    return decodeURIComponent(raw);
-  } catch {
-    return raw;
+// Parse an apiUrl for form/view rendering. '' = no API channel configured.
+function parseApiUrl(url: string): ParsedApiUrl {
+  if (!url) {
+    return { host: "", port: DEFAULT_BACKEND_PORT, ssl: false };
   }
-}
-
-// Parse backend URL for form/view rendering
-function parseBackendUrl(url: string): ParsedBackendUrl {
-  if (isAgentBackendUrl(url)) {
-    return {
-      mode: "agent",
-      host: "",
-      port: "",
-      ssl: false,
-      agentId: parseAgentId(url),
-    };
-  }
-
   try {
     const urlObj = new URL(url);
     return {
-      mode: "direct",
       host: decodeURIComponent(urlObj.hostname),
       port: urlObj.port || (urlObj.protocol === "https:" ? "443" : "80"),
       ssl: urlObj.protocol === "https:",
-      agentId: "",
     };
   } catch {
-    return {
-      mode: "direct",
-      host: "",
-      port: DEFAULT_BACKEND_PORT,
-      ssl: false,
-      agentId: "",
-    };
+    return { host: "", port: DEFAULT_BACKEND_PORT, ssl: false };
   }
 }
 
-function buildDirectUrl(host: string, port: string, ssl: boolean): string {
+function buildApiUrl(host: string, port: string, ssl: boolean): string {
   const protocol = ssl ? "https" : "http";
   return `${protocol}://${host}:${port}`;
-}
-
-function buildAgentUrl(agentId: string): string {
-  return `agent://${sanitizeAgentId(agentId)}`;
 }
 
 const AGENT_INSTALL_SCRIPT_URL =
@@ -734,9 +656,11 @@ export function BackendConfigDialog({
   const [verifyMessage, setVerifyMessage] = useState("");
   const [pendingBackend, setPendingBackend] = useState<{
     name: string;
-    url: string;
-    token: string;
+    apiUrl: string;
+    apiSecret: string;
+    withAgent: boolean;
     type: 'clash' | 'surge';
+    agentGatewayConfig: AgentGatewayConfig;
   } | null>(null);
 
   const [formData, setFormData] = useState<BackendFormState>(
@@ -777,23 +701,7 @@ export function BackendConfigDialog({
     if (!silent) setBackendsLoading(true);
     try {
       const data = await api.getBackends();
-      // Parse URL for display/form rendering
-      const parsedData: Backend[] = data.map((b) => {
-        const parsed = parseBackendUrl(b.url);
-        return {
-          ...b,
-          type: b.type || "clash",
-          mode: parsed.mode,
-          host: parsed.host,
-          port:
-            parsed.mode === "direct"
-              ? Number.parseInt(parsed.port || DEFAULT_BACKEND_PORT, 10) ||
-                Number.parseInt(DEFAULT_BACKEND_PORT, 10)
-              : undefined,
-          agentId: parsed.agentId,
-        };
-      });
-      setBackends(parsedData);
+      setBackends(data);
     } catch (error) {
       console.error("Failed to load backends:", error);
     } finally {
@@ -936,54 +844,73 @@ export function BackendConfigDialog({
     }
   };
 
+  // Open the agent bootstrap dialog for a freshly (or about-to-be) bound
+  // agent. `token` is intentionally allowed to be '' — the dialog already
+  // handles that state (rotate-token prompt) for the case where the server
+  // enabled the agent channel without returning a token (see PUT /:id).
+  const openAgentBootstrap = (
+    backendId: number,
+    agentId: string,
+    token: string,
+    type: 'clash' | 'surge',
+    gatewayConfig: AgentGatewayConfig,
+  ) => {
+    saveAgentGatewayConfig(backendId, gatewayConfig);
+    setAgentBootstrapInfo({
+      backendId,
+      agentId,
+      token,
+      tokenLocked: true,
+      type,
+      gatewayHost: gatewayConfig.gatewayHost,
+      gatewayPort: gatewayConfig.gatewayPort,
+      gatewaySsl: gatewayConfig.gatewaySsl,
+      gatewayToken: gatewayConfig.gatewayToken,
+    });
+    setAgentBootstrapDialogOpen(true);
+    setShowAgentToken(false);
+  };
+
   const handleAdd = async () => {
     const name = formData.name.trim();
     if (!name) return;
 
-    const isAgentMode = formData.mode === "agent";
+    const host = formData.host.trim();
+    const apiUrl = host ? buildApiUrl(host, formData.port, formData.ssl) : "";
+    const apiSecret = formData.apiSecret.trim();
+    const withAgent = formData.withAgent;
 
-    if (isAgentMode) {
-      const agentId = generateAgentMarker(name);
+    if (!apiUrl && !withAgent) {
+      toast.error(t("needChannelError"));
+      return;
+    }
+
+    const agentGatewayConfig: AgentGatewayConfig = {
+      gatewayHost: formData.agentGatewayHost.trim() || DEFAULT_AGENT_GATEWAY_HOST,
+      gatewayPort: formData.agentGatewayPort.trim() || getDefaultGatewayPort(formData.type),
+      gatewaySsl: formData.agentGatewaySsl,
+      gatewayToken: formData.agentGatewayToken,
+    };
+
+    if (!apiUrl) {
+      // Agent-only backend: nothing to test, create immediately.
       setLoading(true);
       try {
-        const result = await api.createBackend({
-          name,
-          url: buildAgentUrl(agentId),
-          type: formData.type,
-        });
+        const result = await api.createBackend({ name, withAgent, type: formData.type });
 
         setFormData(getInitialFormState());
         setShowAddForm(false);
         await loadBackends();
         await onBackendChange?.();
 
-        toast.success(t("agentBackendCreated", { id: result.id }));
-        const agentGatewayConfig: AgentGatewayConfig = {
-          gatewayHost: formData.agentGatewayHost.trim() || DEFAULT_AGENT_GATEWAY_HOST,
-          gatewayPort: formData.agentGatewayPort.trim() || getDefaultGatewayPort(formData.type),
-          gatewaySsl: formData.agentGatewaySsl,
-          gatewayToken: formData.agentGatewayToken,
-        };
-        saveAgentGatewayConfig(result.id, agentGatewayConfig);
-        if (result.agentToken) {
-          setAgentBootstrapInfo({
-            backendId: result.id,
-            agentId,
-            token: result.agentToken,
-            tokenLocked: true,
-            type: formData.type,
-            gatewayHost: agentGatewayConfig.gatewayHost,
-            gatewayPort: agentGatewayConfig.gatewayPort,
-            gatewaySsl: agentGatewayConfig.gatewaySsl,
-            gatewayToken: agentGatewayConfig.gatewayToken,
-          });
-          setAgentBootstrapDialogOpen(true);
-        }
         if (result.isActive) {
           toast.success(t("firstBackendAutoActive"));
         }
 
-        if (isFirstTime && onConfigComplete && !result.agentToken) {
+        if (result.agentToken) {
+          toast.success(t("agentBackendCreated", { id: result.id }));
+          openAgentBootstrap(result.id, "", result.agentToken, formData.type, agentGatewayConfig);
+        } else if (isFirstTime && onConfigComplete) {
           await onConfigComplete();
           onOpenChange(false);
         }
@@ -996,18 +923,14 @@ export function BackendConfigDialog({
       return;
     }
 
-    if (!formData.host.trim()) return;
-    const url = buildDirectUrl(formData.host, formData.port, formData.ssl);
-
-    // Show verification animation immediately
-    setPendingBackend({ name, url, token: formData.token, type: formData.type });
+    // apiUrl present: verify connectivity first (existing UX), then create.
+    setPendingBackend({ name, apiUrl, apiSecret, withAgent, type: formData.type, agentGatewayConfig });
     setVerifyPhase("pending");
     setVerifyMessage("");
     setShowVerifyAnimation(true);
 
-    // Perform verification
     try {
-      const testResult = await api.testBackend(url, formData.token, formData.type);
+      const testResult = await api.testBackend(apiUrl, apiSecret, formData.type);
 
       if (testResult.success) {
         setVerifyPhase("success");
@@ -1028,12 +951,14 @@ export function BackendConfigDialog({
 
     // Only save if verification was successful
     if (verifyPhase === "success") {
+      const pending = pendingBackend;
       try {
         const result = await api.createBackend({
-          name: pendingBackend.name,
-          url: pendingBackend.url,
-          token: pendingBackend.token,
-          type: pendingBackend.type,
+          name: pending.name,
+          apiUrl: pending.apiUrl,
+          apiSecret: pending.apiSecret || undefined,
+          withAgent: pending.withAgent,
+          type: pending.type,
         });
 
         setFormData(getInitialFormState());
@@ -1048,7 +973,10 @@ export function BackendConfigDialog({
           toast.success(t("firstBackendAutoActive"));
         }
 
-        if (isFirstTime && onConfigComplete) {
+        if (result.agentToken) {
+          toast.success(t("agentBackendCreated", { id: result.id }));
+          openAgentBootstrap(result.id, "", result.agentToken, pending.type, pending.agentGatewayConfig);
+        } else if (isFirstTime && onConfigComplete) {
           await onConfigComplete();
           onOpenChange(false);
         }
@@ -1070,44 +998,58 @@ export function BackendConfigDialog({
     if (!name) return;
 
     const current = backends.find((b) => b.id === id);
-    const isAgentMode = editFormData.mode === "agent";
-    const token = isAgentMode ? "" : editFormData.token.trim();
+    const host = editFormData.host.trim();
 
-    if (!isAgentMode && !editFormData.host.trim()) return;
+    // Preserve the original apiUrl when host/port/ssl haven't been touched.
+    // Rebuilding via buildApiUrl would silently drop any path, query, or
+    // embedded credentials present in the original URL — see issue #65.
+    let apiUrl: string;
+    if (!host) {
+      apiUrl = "";
+    } else if (current && current.apiUrl) {
+      const parsed = parseApiUrl(current.apiUrl);
+      const hostUnchanged = parsed.host === host;
+      const portUnchanged = parsed.port === editFormData.port.trim();
+      const sslUnchanged = parsed.ssl === editFormData.ssl;
+      apiUrl =
+        hostUnchanged && portUnchanged && sslUnchanged
+          ? current.apiUrl
+          : buildApiUrl(host, editFormData.port, editFormData.ssl);
+    } else {
+      apiUrl = buildApiUrl(host, editFormData.port, editFormData.ssl);
+    }
+
+    const withAgent = editFormData.withAgent;
+    if (!apiUrl && !withAgent) {
+      toast.error(t("needChannelError"));
+      return;
+    }
+
+    const apiSecret = editFormData.apiSecret.trim();
+    const wasBootstrappingAgent = !!current && !current.hasAgent && withAgent;
 
     setLoading(true);
     try {
-      // Preserve the original URL when host/port/ssl haven't been touched.
-      // Rebuilding via buildDirectUrl would silently drop any path, query, or
-      // embedded credentials present in the original URL — see issue #65.
-      let url: string;
-      if (isAgentMode) {
-        url =
-          current && isAgentBackendUrl(current.url)
-            ? current.url
-            : buildAgentUrl(generateAgentMarker(name));
-      } else if (current && !isAgentBackendUrl(current.url)) {
-        const parsed = parseBackendUrl(current.url);
-        const hostUnchanged = parsed.host === editFormData.host.trim();
-        const portUnchanged = parsed.port === editFormData.port.trim();
-        const sslUnchanged = parsed.ssl === editFormData.ssl;
-        url =
-          hostUnchanged && portUnchanged && sslUnchanged
-            ? current.url
-            : buildDirectUrl(editFormData.host, editFormData.port, editFormData.ssl);
-      } else {
-        url = buildDirectUrl(editFormData.host, editFormData.port, editFormData.ssl);
-      }
       await api.updateBackend(id, {
         name,
-        url,
-        token: token ? token : undefined,
+        apiUrl,
+        apiSecret: apiSecret ? apiSecret : undefined,
+        withAgent,
         type: editFormData.type,
       });
       setEditingId(null);
       setEditFormData(getInitialFormState());
       await loadBackends();
       await onBackendChange?.();
+
+      // PUT doesn't return a token when it enables the agent channel for the
+      // first time (only POST /backends and rotate-agent-token do). Open the
+      // bootstrap dialog with an empty token and let the user rotate it —
+      // the dialog already prompts for that state.
+      if (wasBootstrappingAgent) {
+        const gatewayConfig = loadAgentGatewayConfig(id, editFormData.type);
+        openAgentBootstrap(id, "", "", editFormData.type, gatewayConfig);
+      }
     } catch (error: any) {
       setErrorMessage(error.message || "Failed to update backend");
       setErrorDialogOpen(true);
@@ -1259,19 +1201,26 @@ export function BackendConfigDialog({
   const openAgentSetup = (backend: Backend) => {
     const backendType = backend.type || "clash";
     const gatewayConfig = loadAgentGatewayConfig(backend.id, backendType);
-    setAgentBootstrapInfo({
-      backendId: backend.id,
-      agentId: backend.agentId,
-      token: backend.token || "",
-      tokenLocked: true,
-      type: backendType,
-      gatewayHost: gatewayConfig.gatewayHost,
-      gatewayPort: gatewayConfig.gatewayPort,
-      gatewaySsl: gatewayConfig.gatewaySsl,
-      gatewayToken: gatewayConfig.gatewayToken,
-    });
-    setAgentBootstrapDialogOpen(true);
-    setShowAgentToken(false); // Reset token visibility when opening dialog
+    // backend.token is always '' from the list response (never leaks the
+    // stored secret) — openAgentBootstrap already handles an empty token by
+    // prompting the user to rotate.
+    openAgentBootstrap(backend.id, backend.agentId, backend.token || "", backendType, gatewayConfig);
+  };
+
+  const [unbindingAgent, setUnbindingAgent] = useState(false);
+
+  const handleUnbindAgent = async (id: number) => {
+    setUnbindingAgent(true);
+    try {
+      await api.unbindAgent(id);
+      toast.success(t("unbindAgentSuccess"));
+      await loadBackends();
+      await onBackendChange?.();
+    } catch (error: any) {
+      toast.error(error.message || t("unbindAgentFailed"));
+    } finally {
+      setUnbindingAgent(false);
+    }
   };
 
   const handleRotateAgentToken = async () => {
@@ -1385,15 +1334,15 @@ export function BackendConfigDialog({
 
   const startEdit = (backend: Backend) => {
     setEditingId(backend.id);
+    const parsed = parseApiUrl(backend.apiUrl);
     setEditFormData({
       name: backend.name,
-      mode: backend.mode,
-      host: backend.host || "",
-      port: String(backend.port || DEFAULT_BACKEND_PORT),
-      ssl: backend.mode === "direct" && backend.url.startsWith("https"),
-      token: "",
+      host: parsed.host,
+      port: parsed.port || DEFAULT_BACKEND_PORT,
+      ssl: parsed.ssl,
+      apiSecret: "",
       type: backend.type || "clash",
-      agentId: backend.agentId || "",
+      withAgent: backend.hasAgent,
       agentGatewayHost: DEFAULT_AGENT_GATEWAY_HOST,
       agentGatewayPort: getDefaultGatewayPort(backend.type || "clash"),
       agentGatewaySsl: false,
@@ -1481,167 +1430,7 @@ export function BackendConfigDialog({
                         : "border-border bg-card",
                       !backend.enabled && "opacity-60",
                     )}>
-                    {false && editingId === backend.id ? (
-                      // Edit Mode
-                      <div className="space-y-3">
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-xs font-medium">
-                              {t("name")}
-                            </label>
-                            <Input
-                              value={editFormData.name}
-                              onChange={(e) =>
-                                setEditFormData({
-                                  ...editFormData,
-                                  name: e.target.value,
-                                })
-                              }
-                              placeholder={t("namePlaceholder")}
-                              className="h-9 mt-1"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-xs font-medium">
-                              {t("connectionMode")}
-                            </label>
-                            <select
-                              value={editFormData.mode}
-                              onChange={(e) =>
-                                setEditFormData({
-                                  ...editFormData,
-                                  mode: e.target.value as BackendMode,
-                                })
-                              }
-                              className="h-9 mt-1 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                            >
-                              <option value="direct">{t("modeDirect")}</option>
-                              <option value="agent">{t("modeAgent")}</option>
-                            </select>
-                          </div>
-                        </div>
-                        <div
-                          className={cn(
-                            "grid gap-3",
-                            editFormData.mode === "direct" ? "grid-cols-2" : "grid-cols-1",
-                          )}>
-                          <div>
-                            <label className="text-xs font-medium">
-                              {t("type")}
-                            </label>
-                            <select
-                              value={editFormData.type}
-                              onChange={(e) =>
-                                setEditFormData({ ...editFormData, type: e.target.value as 'clash' | 'surge' })
-                              }
-                              className="h-9 mt-1 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                            >
-                              <option value="clash">Clash / Mihomo</option>
-                              <option value="surge">Surge</option>
-                            </select>
-                          </div>
-                          {editFormData.mode === "direct" && (
-                            <div>
-                              <label className="text-xs font-medium">
-                                {t("host")}
-                              </label>
-                              <Input
-                                value={editFormData.host}
-                                onChange={(e) =>
-                                  setEditFormData({
-                                    ...editFormData,
-                                    host: e.target.value,
-                                  })
-                                }
-                                placeholder="192.168.1.1"
-                                className="h-9 mt-1"
-                              />
-                            </div>
-                          )}
-                        </div>
-                        {editFormData.mode === "direct" && (
-                          <>
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="text-xs font-medium">
-                                  {t("port")}
-                                </label>
-                                <Input
-                                  value={editFormData.port}
-                                  onChange={(e) =>
-                                    setEditFormData({
-                                      ...editFormData,
-                                      port: e.target.value,
-                                    })
-                                  }
-                                  placeholder={DEFAULT_BACKEND_PORT}
-                                  className="h-9 mt-1"
-                                />
-                              </div>
-                              <div className="flex items-center gap-2 pt-6">
-                                <Switch
-                                  checked={editFormData.ssl}
-                                  onCheckedChange={(checked) =>
-                                    setEditFormData({
-                                      ...editFormData,
-                                      ssl: checked,
-                                    })
-                                  }
-                                />
-                                <label className="text-sm">{t("useSsl")}</label>
-                              </div>
-                            </div>
-                          </>
-                        )}
-                        <div>
-                          <label className="text-xs font-medium">
-                            {t("token")}
-                          </label>
-                          <Input
-                            type="password"
-                            value={editFormData.token}
-                            onChange={(e) =>
-                              setEditFormData({
-                                ...editFormData,
-                                token: e.target.value,
-                              })
-                            }
-                            placeholder={
-                              backend.hasToken
-                                ? t("tokenKeepPlaceholder")
-                                : editFormData.mode === "agent"
-                                  ? t("tokenRequiredPlaceholder")
-                                  : editFormData.type === "surge"
-                                    ? t("tokenPlaceholderSurge")
-                                    : t("tokenPlaceholder")
-                            }
-                            className="h-9 mt-1"
-                          />
-                          {editFormData.mode === "agent" && (
-                            <p className="text-[11px] text-muted-foreground mt-1">
-                              {t("agentTokenHint")}
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex gap-2 justify-end">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={cancelEdit}>
-                            <X className="w-4 h-4 mr-1" />
-                            {commonT("cancel")}
-                          </Button>
-                          <Button
-                            size="sm"
-                            onClick={() => handleUpdate(backend.id)}
-                            disabled={loading}>
-                            <Check className="w-4 h-4 mr-1" />
-                            {commonT("save")}
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      // View Mode
+                    {(
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                         {/* Left: Info */}
                         <div className="flex-1 min-w-0">
@@ -1649,11 +1438,31 @@ export function BackendConfigDialog({
                             <span className="font-medium text-base">
                               {backend.name}
                             </span>
-                            <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
-                              {backend.mode === "agent"
-                                ? t("modeAgent")
-                                : t("modeDirect")}
-                            </span>
+                            {/* Capability badges (M1c): management/configEdit dim when unavailable */}
+                            {backend.capabilities && (
+                              <>
+                                <span
+                                  className={cn(
+                                    "px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wide",
+                                    backend.capabilities.management
+                                      ? "bg-primary/10 text-primary"
+                                      : "bg-muted text-muted-foreground opacity-60",
+                                  )}
+                                  title={t("capabilityManagement")}>
+                                  {t("capabilityManagement")}
+                                </span>
+                                <span
+                                  className={cn(
+                                    "px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wide",
+                                    backend.capabilities.configEdit
+                                      ? "bg-primary/10 text-primary"
+                                      : "bg-muted text-muted-foreground opacity-60",
+                                  )}
+                                  title={t("capabilityConfigEdit")}>
+                                  {t("capabilityConfigEdit")}
+                                </span>
+                              </>
+                            )}
                             {/* Backend Type Icon */}
                             <div
                               className="w-4 h-4 rounded-sm bg-white/90 flex items-center justify-center p-0.5"
@@ -1673,14 +1482,8 @@ export function BackendConfigDialog({
                           </div>
                           <div
                             className="text-sm text-muted-foreground mt-1 break-all sm:break-normal sm:truncate"
-                            title={
-                              backend.mode === "agent"
-                                ? backend.url
-                                : `${backend.host}:${backend.port}`
-                            }>
-                            {backend.mode === "agent"
-                              ? `${backend.url} · #${backend.id}`
-                              : `${backend.host}:${backend.port}`}
+                            title={backend.apiUrl || t("apiUrlEmptyHint")}>
+                            {backend.apiUrl || t("apiUrlEmptyHint")} · #{backend.id}
                           </div>
                         </div>
 
@@ -1776,7 +1579,7 @@ export function BackendConfigDialog({
                               </Tooltip>
                             </TooltipProvider>
 
-                            {backend.mode === "agent" && (
+                            {backend.hasAgent && (
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -1787,7 +1590,7 @@ export function BackendConfigDialog({
                                 <Terminal className="w-4 h-4" />
                               </Button>
                             )}
-                            {backend.mode !== "agent" && (
+                            {!backend.hasAgent && (
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -1827,246 +1630,7 @@ export function BackendConfigDialog({
                 )}
 
                 {/* Add New Backend */}
-                {false && (showAddForm || (isFirstTime && backends.length === 0)) ? (
-                  <div className="p-4 rounded-lg border border-dashed border-border bg-muted/50">
-                    <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-                      <Plus className="w-4 h-4" />
-                      {backends.length === 0 && isFirstTime
-                        ? t("firstTimeTitle")
-                        : t("addNew")}
-                    </h4>
-                    {isShowcase ? (
-                      <div className="text-sm text-muted-foreground italic">
-                        {t("showcaseModeAddDisabled") || "Adding backends is disabled in showcase mode"}
-                      </div>
-                    ) : (
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-xs font-medium">
-                            {t("name")} *
-                          </label>
-                          <Input
-                            value={formData.name}
-                            onChange={(e) =>
-                              setFormData({
-                                ...formData,
-                                name: e.target.value,
-                              })
-                            }
-                            placeholder={t("namePlaceholder")}
-                            className="h-9 mt-1"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs font-medium">
-                            {t("connectionMode")}
-                          </label>
-                          <select
-                            value={formData.mode}
-                            onChange={(e) =>
-                              setFormData({
-                                ...formData,
-                                mode: e.target.value as BackendMode,
-                              })
-                            }
-                            className="h-9 mt-1 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          >
-                            <option value="direct">{t("modeDirect")}</option>
-                            <option value="agent">{t("modeAgent")}</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div
-                        className={cn(
-                          "grid gap-3",
-                          formData.mode === "direct" ? "grid-cols-2" : "grid-cols-1",
-                        )}>
-                        <div>
-                          <label className="text-xs font-medium">
-                            {t("type")}
-                          </label>
-                          <select
-                            value={formData.type}
-                            onChange={(e) => {
-                              const nextType = e.target.value as 'clash' | 'surge';
-                              const currentDefaultPort = getDefaultGatewayPort(formData.type);
-                              const nextDefaultPort = getDefaultGatewayPort(nextType);
-                              setFormData({
-                                ...formData,
-                                type: nextType,
-                                agentGatewayPort:
-                                  formData.agentGatewayPort === currentDefaultPort
-                                    ? nextDefaultPort
-                                    : formData.agentGatewayPort,
-                              });
-                            }}
-                            className="h-9 mt-1 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          >
-                            <option value="clash">Clash / Mihomo</option>
-                            <option value="surge">Surge</option>
-                          </select>
-                        </div>
-                        {formData.mode === "direct" && (
-                          <div>
-                            <label className="text-xs font-medium">
-                              {t("host")} *
-                            </label>
-                            <Input
-                              value={formData.host}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  host: e.target.value,
-                                })
-                              }
-                              placeholder="192.168.1.1"
-                              className="h-9 mt-1"
-                            />
-                          </div>
-                        )}
-                      </div>
-                      {formData.mode === "direct" && (
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-xs font-medium">
-                              {t("port")}
-                            </label>
-                            <Input
-                              value={formData.port}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  port: e.target.value,
-                                })
-                              }
-                              placeholder={DEFAULT_BACKEND_PORT}
-                              className="h-9 mt-1"
-                            />
-                          </div>
-                          <div className="flex items-center gap-2 pt-6">
-                            <Switch
-                              checked={formData.ssl}
-                              onCheckedChange={(checked) =>
-                                setFormData({ ...formData, ssl: checked })
-                              }
-                            />
-                            <label className="text-sm">{t("useSsl")}</label>
-                          </div>
-                        </div>
-                      )}
-                      {formData.mode === "direct" ? (
-                        <div>
-                          <label className="text-xs font-medium">
-                            {t("token")}
-                          </label>
-                          <Input
-                            type="password"
-                            value={formData.token}
-                            onChange={(e) =>
-                              setFormData({ ...formData, token: e.target.value })
-                            }
-                            placeholder={
-                              formData.type === "surge"
-                                ? t("tokenPlaceholderSurge")
-                                : t("tokenPlaceholder")
-                            }
-                            className="h-9 mt-1"
-                          />
-                        </div>
-                      ) : (
-                        <div className="space-y-3 rounded-md border border-dashed p-3">
-                          <p className="text-[11px] text-muted-foreground">
-                            {t("agentTokenAutoHint")}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground">
-                            {t("agentGatewayOptionalHint")}
-                          </p>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="text-xs font-medium">
-                                {t("host")}
-                              </label>
-                              <Input
-                                value={formData.agentGatewayHost}
-                                onChange={(e) =>
-                                  setFormData({
-                                    ...formData,
-                                    agentGatewayHost: e.target.value,
-                                  })
-                                }
-                                placeholder={DEFAULT_AGENT_GATEWAY_HOST}
-                                className="h-9 mt-1"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs font-medium">
-                                {t("port")}
-                              </label>
-                              <Input
-                                value={formData.agentGatewayPort}
-                                onChange={(e) =>
-                                  setFormData({
-                                    ...formData,
-                                    agentGatewayPort: e.target.value,
-                                  })
-                                }
-                                placeholder={getDefaultGatewayPort(formData.type)}
-                                className="h-9 mt-1"
-                              />
-                            </div>
-                          </div>
-                          <div>
-                            <label className="text-xs font-medium">
-                              {t("gatewayToken")}
-                            </label>
-                            <Input
-                              type="password"
-                              value={formData.agentGatewayToken}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  agentGatewayToken: e.target.value,
-                                })
-                              }
-                              placeholder={t("agentGatewayTokenPlaceholder")}
-                              className="h-9 mt-1"
-                            />
-                          </div>
-                        </div>
-                      )}
-                      <div className="flex gap-2">
-                        {backends.length > 0 && (
-                          <Button
-                            variant="ghost"
-                            onClick={() => {
-                              setShowAddForm(false);
-                              setFormData(getInitialFormState());
-                            }}
-                            className="flex-shrink-0">
-                            <X className="w-4 h-4 mr-2" />
-                            {commonT("cancel")}
-                          </Button>
-                        )}
-                        <Button
-                          onClick={handleAdd}
-                          disabled={
-                            loading ||
-                            !formData.name.trim() ||
-                            (formData.mode === "direct" && !formData.host.trim())
-                          }
-                          className="flex-1">
-                          <Plus className="w-4 h-4 mr-2" />
-                          {isFirstTime && backends.length === 0
-                            ? t("saveAndContinue")
-                            : t("addBackend")}
-                        </Button>
-                      </div>
-                    </div>
-                    )}
-                  </div>
-                ) : (
-                  !isShowcase && (
+                {!isShowcase && (
                   <Button
                     variant="outline"
                     className="w-full border-dashed"
@@ -2078,7 +1642,6 @@ export function BackendConfigDialog({
                     <Plus className="w-4 h-4 mr-2" />
                     {t("addNew")}
                   </Button>
-                  )
                 )}
               </div>
             ) : activeTab === "preferences" ? (
@@ -2480,7 +2043,7 @@ export function BackendConfigDialog({
             <DialogTitle>{commonT("edit")}</DialogTitle>
             <DialogDescription>{t("description")}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2">
+          <div className="space-y-4 py-2">
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium">{t("name")}</label>
@@ -2497,28 +2060,6 @@ export function BackendConfigDialog({
                 />
               </div>
               <div>
-                <label className="text-xs font-medium">{t("connectionMode")}</label>
-                <select
-                  value={editFormData.mode}
-                  onChange={(e) =>
-                    setEditFormData({
-                      ...editFormData,
-                      mode: e.target.value as BackendMode,
-                    })
-                  }
-                  className="h-9 mt-1 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                  <option value="direct">{t("modeDirect")}</option>
-                  <option value="agent">{t("modeAgent")}</option>
-                </select>
-              </div>
-            </div>
-
-            <div
-              className={cn(
-                "grid gap-3",
-                editFormData.mode === "direct" ? "grid-cols-2" : "grid-cols-1",
-              )}>
-              <div>
                 <label className="text-xs font-medium">{t("type")}</label>
                 <select
                   value={editFormData.type}
@@ -2531,7 +2072,12 @@ export function BackendConfigDialog({
                   <option value="surge">Surge</option>
                 </select>
               </div>
-              {editFormData.mode === "direct" && (
+            </div>
+
+            {/* API Channel */}
+            <div className="space-y-3 rounded-md border p-3">
+              <p className="text-sm font-medium">{t("apiSection")}</p>
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium">{t("host")}</label>
                   <Input
@@ -2546,11 +2092,6 @@ export function BackendConfigDialog({
                     className="h-9 mt-1"
                   />
                 </div>
-              )}
-            </div>
-
-            {editFormData.mode === "direct" && (
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium">{t("port")}</label>
                   <Input
@@ -2565,35 +2106,32 @@ export function BackendConfigDialog({
                     className="h-9 mt-1"
                   />
                 </div>
-                <div className="flex items-center gap-2 pt-6">
-                  <Switch
-                    checked={editFormData.ssl}
-                    onCheckedChange={(checked) =>
-                      setEditFormData({
-                        ...editFormData,
-                        ssl: checked,
-                      })
-                    }
-                  />
-                  <label className="text-sm">{t("useSsl")}</label>
-                </div>
               </div>
-            )}
-
-            {editFormData.mode === "direct" ? (
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={editFormData.ssl}
+                  onCheckedChange={(checked) =>
+                    setEditFormData({
+                      ...editFormData,
+                      ssl: checked,
+                    })
+                  }
+                />
+                <label className="text-sm">{t("useSsl")}</label>
+              </div>
               <div>
                 <label className="text-xs font-medium">{t("token")}</label>
                 <Input
                   type="password"
-                  value={editFormData.token}
+                  value={editFormData.apiSecret}
                   onChange={(e) =>
                     setEditFormData({
                       ...editFormData,
-                      token: e.target.value,
+                      apiSecret: e.target.value,
                     })
                   }
                   placeholder={
-                    editingBackend?.hasToken
+                    editingBackend?.apiUrl
                       ? t("tokenKeepPlaceholder")
                       : editFormData.type === "surge"
                         ? t("tokenPlaceholderSurge")
@@ -2602,9 +2140,81 @@ export function BackendConfigDialog({
                   className="h-9 mt-1"
                 />
               </div>
-            ) : (
-              <p className="text-[11px] text-muted-foreground">{t("agentTokenManagedHint")}</p>
-            )}
+              {!editFormData.host.trim() && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                  {t("apiUrlEmptyHint")}
+                </p>
+              )}
+            </div>
+
+            {/* Agent */}
+            <div className="space-y-3 rounded-md border border-dashed p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-medium">{t("agentSection")}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {editingBackend?.hasAgent ? t("agentTokenManagedHint") : t("agentTokenAutoHint")}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <label className="text-xs text-muted-foreground">{t("withAgent")}</label>
+                  <Switch
+                    checked={editFormData.withAgent}
+                    onCheckedChange={(checked) =>
+                      setEditFormData({ ...editFormData, withAgent: checked })
+                    }
+                  />
+                </div>
+              </div>
+
+              {editingBackend?.hasAgent && (
+                <div className="space-y-2 rounded-md bg-muted/50 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium">{t("boundAgent")}</p>
+                      <p className="text-xs text-muted-foreground truncate font-mono">
+                        {editingBackend.agentId || t("agentUnboundHint")}
+                      </p>
+                      {editingBackend.health && (
+                        <p
+                          className={cn(
+                            "text-[11px]",
+                            editingBackend.health.status === "healthy"
+                              ? "text-green-500"
+                              : editingBackend.health.status === "unhealthy"
+                                ? "text-red-500"
+                                : "text-muted-foreground",
+                          )}>
+                          {editingBackend.health.message}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const backend = editingBackend;
+                          cancelEdit();
+                          if (backend) openAgentSetup(backend);
+                        }}>
+                        <Terminal className="w-4 h-4 mr-1.5" />
+                        {t("openAgentSetup")}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!editingBackend.agentId || unbindingAgent}
+                        onClick={() => void handleUnbindAgent(editingBackend.id)}>
+                        {t("unbindAgent")}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={cancelEdit}>
@@ -2632,7 +2242,7 @@ export function BackendConfigDialog({
             <DialogTitle>{t("addNew")}</DialogTitle>
             <DialogDescription>{t("description")}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2">
+          <div className="space-y-4 py-2">
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium">{t("name")} *</label>
@@ -2643,21 +2253,6 @@ export function BackendConfigDialog({
                   className="h-9 mt-1"
                 />
               </div>
-              <div>
-                <label className="text-xs font-medium">{t("connectionMode")}</label>
-                <select
-                  value={formData.mode}
-                  onChange={(e) =>
-                    setFormData({ ...formData, mode: e.target.value as BackendMode })
-                  }
-                  className="h-9 mt-1 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                  <option value="direct">{t("modeDirect")}</option>
-                  <option value="agent">{t("modeAgent")}</option>
-                </select>
-              </div>
-            </div>
-
-            <div className={cn("grid gap-3", formData.mode === "direct" ? "grid-cols-2" : "grid-cols-1")}>
               <div>
                 <label className="text-xs font-medium">{t("type")}</label>
                 <select
@@ -2680,9 +2275,14 @@ export function BackendConfigDialog({
                   <option value="surge">Surge</option>
                 </select>
               </div>
-              {formData.mode === "direct" && (
+            </div>
+
+            {/* API Channel */}
+            <div className="space-y-3 rounded-md border p-3">
+              <p className="text-sm font-medium">{t("apiSection")}</p>
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-medium">{t("host")} *</label>
+                  <label className="text-xs font-medium">{t("host")}</label>
                   <Input
                     value={formData.host}
                     onChange={(e) => setFormData({ ...formData, host: e.target.value })}
@@ -2690,85 +2290,98 @@ export function BackendConfigDialog({
                     className="h-9 mt-1"
                   />
                 </div>
-              )}
-            </div>
-
-            {formData.mode === "direct" ? (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-medium">{t("port")}</label>
-                    <Input
-                      value={formData.port}
-                      onChange={(e) => setFormData({ ...formData, port: e.target.value })}
-                      placeholder={DEFAULT_BACKEND_PORT}
-                      className="h-9 mt-1"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2 pt-6">
-                    <Switch
-                      checked={formData.ssl}
-                      onCheckedChange={(checked) => setFormData({ ...formData, ssl: checked })}
-                    />
-                    <label className="text-sm">{t("useSsl")}</label>
-                  </div>
-                </div>
                 <div>
-                  <label className="text-xs font-medium">{t("token")}</label>
+                  <label className="text-xs font-medium">{t("port")}</label>
                   <Input
-                    type="password"
-                    value={formData.token}
-                    onChange={(e) => setFormData({ ...formData, token: e.target.value })}
-                    placeholder={
-                      formData.type === "surge" ? t("tokenPlaceholderSurge") : t("tokenPlaceholder")
-                    }
-                    className="h-9 mt-1"
-                  />
-                </div>
-              </>
-            ) : (
-              <div className="space-y-3 rounded-md border border-dashed p-3">
-                <p className="text-[11px] text-muted-foreground">{t("agentTokenAutoHint")}</p>
-                <p className="text-[11px] text-muted-foreground">{t("agentGatewayOptionalHint")}</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-medium">{t("host")}</label>
-                    <Input
-                      value={formData.agentGatewayHost}
-                      onChange={(e) => setFormData({ ...formData, agentGatewayHost: e.target.value })}
-                      placeholder={DEFAULT_AGENT_GATEWAY_HOST}
-                      className="h-9 mt-1"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium">{t("port")}</label>
-                    <Input
-                      value={formData.agentGatewayPort}
-                      onChange={(e) => setFormData({ ...formData, agentGatewayPort: e.target.value })}
-                      placeholder={getDefaultGatewayPort(formData.type)}
-                      className="h-9 mt-1"
-                    />
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Switch
-                    checked={formData.agentGatewaySsl}
-                    onCheckedChange={(checked) => setFormData({ ...formData, agentGatewaySsl: checked })}
-                  />
-                  <label className="text-xs font-medium">{t("useSsl")}</label>
-                </div>
-                <div>
-                  <label className="text-xs font-medium">{t("gatewayToken")}</label>
-                  <Input
-                    type="password"
-                    value={formData.agentGatewayToken}
-                    onChange={(e) => setFormData({ ...formData, agentGatewayToken: e.target.value })}
-                    placeholder={t("agentGatewayTokenPlaceholder")}
+                    value={formData.port}
+                    onChange={(e) => setFormData({ ...formData, port: e.target.value })}
+                    placeholder={DEFAULT_BACKEND_PORT}
                     className="h-9 mt-1"
                   />
                 </div>
               </div>
-            )}
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={formData.ssl}
+                  onCheckedChange={(checked) => setFormData({ ...formData, ssl: checked })}
+                />
+                <label className="text-sm">{t("useSsl")}</label>
+              </div>
+              <div>
+                <label className="text-xs font-medium">{t("token")}</label>
+                <Input
+                  type="password"
+                  value={formData.apiSecret}
+                  onChange={(e) => setFormData({ ...formData, apiSecret: e.target.value })}
+                  placeholder={
+                    formData.type === "surge" ? t("tokenPlaceholderSurge") : t("tokenPlaceholder")
+                  }
+                  className="h-9 mt-1"
+                />
+              </div>
+              {!formData.host.trim() && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                  {t("apiUrlEmptyHint")}
+                </p>
+              )}
+            </div>
+
+            {/* Agent */}
+            <div className="space-y-3 rounded-md border border-dashed p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">{t("agentSection")}</p>
+                <div className="flex items-center gap-2 shrink-0">
+                  <label className="text-xs text-muted-foreground">{t("withAgent")}</label>
+                  <Switch
+                    checked={formData.withAgent}
+                    onCheckedChange={(checked) => setFormData({ ...formData, withAgent: checked })}
+                  />
+                </div>
+              </div>
+              {formData.withAgent && (
+                <>
+                  <p className="text-[11px] text-muted-foreground">{t("agentTokenAutoHint")}</p>
+                  <p className="text-[11px] text-muted-foreground">{t("agentGatewayOptionalHint")}</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-medium">{t("host")}</label>
+                      <Input
+                        value={formData.agentGatewayHost}
+                        onChange={(e) => setFormData({ ...formData, agentGatewayHost: e.target.value })}
+                        placeholder={DEFAULT_AGENT_GATEWAY_HOST}
+                        className="h-9 mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium">{t("port")}</label>
+                      <Input
+                        value={formData.agentGatewayPort}
+                        onChange={(e) => setFormData({ ...formData, agentGatewayPort: e.target.value })}
+                        placeholder={getDefaultGatewayPort(formData.type)}
+                        className="h-9 mt-1"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={formData.agentGatewaySsl}
+                      onCheckedChange={(checked) => setFormData({ ...formData, agentGatewaySsl: checked })}
+                    />
+                    <label className="text-xs font-medium">{t("useSsl")}</label>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium">{t("gatewayToken")}</label>
+                    <Input
+                      type="password"
+                      value={formData.agentGatewayToken}
+                      onChange={(e) => setFormData({ ...formData, agentGatewayToken: e.target.value })}
+                      placeholder={t("agentGatewayTokenPlaceholder")}
+                      className="h-9 mt-1"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -2782,7 +2395,7 @@ export function BackendConfigDialog({
             <Button
               onClick={handleAdd}
               disabled={
-                loading || !formData.name.trim() || (formData.mode === "direct" && !formData.host.trim())
+                loading || !formData.name.trim() || (!formData.host.trim() && !formData.withAgent)
               }>
               <Plus className="w-4 h-4 mr-2" />
               {isFirstTime && backends.length === 0 ? t("saveAndContinue") : t("addBackend")}
