@@ -263,6 +263,13 @@ describe('ManagementRelay', () => {
     expect(replayed).toHaveLength(500); // only the most recent 500 survive
     expect(replayed[0]).toContain('"seq":100'); // oldest 100 were evicted
     expect(replayed.at(-1)).toContain('"seq":599');
+
+    // Pin the upstream `type` -> our `level` translation and the payload
+    // text, not just seq — the browser renders both. replayed[0] is seq 100
+    // (the oldest surviving entry), which pushLogs sent as
+    // {"type":"debug","payload":"line-100"}.
+    const firstReplayed = JSON.parse(replayed[0]);
+    expect(firstReplayed.data).toMatchObject({ seq: 100, level: 'debug', payload: 'line-100' });
   });
 
   it('opens the circuit after 5 consecutive failures and publishes reachable:false', async () => {
@@ -284,6 +291,35 @@ describe('ManagementRelay', () => {
     );
     expect(relay.channelState(backendId, 'connections')).toBe('circuit-open');
     expect(errors[0].error).toBeTruthy();
+  });
+
+  it('notifies a late subscriber joining an already circuit-open channel, without re-broadcasting to existing subscribers', async () => {
+    const { hub, errors } = createHubStub();
+    relay = new ManagementRelay({ db, hub, reconnectBaseMs: 5, reconnectMaxMs: 20 });
+
+    upstream.refuseConnections = true;
+    relay.hooks.onFirstSubscriber('connections', backendId); // subscriber A
+    await vi.waitFor(
+      () => expect(relay!.channelState(backendId, 'connections')).toBe('circuit-open'),
+      { timeout: 3000 },
+    );
+    expect(errors).toHaveLength(1); // the trip itself broadcasts once (reaches A)
+
+    const lateB = fakeWs();
+    relay.onSubscriberJoined(lateB, 'connections', backendId);
+
+    const bMessages = (lateB as unknown as { sent: string[] }).sent;
+    const bErrors = bMessages.filter((j) => j.includes('"type":"topic-error"'));
+    expect(bErrors).toHaveLength(1);
+    const parsed = JSON.parse(bErrors[0]);
+    expect(parsed).toMatchObject({ type: 'topic-error', topic: 'connections', backendId, reachable: false });
+    expect(typeof parsed.error).toBe('string');
+    expect(parsed.error.length).toBeGreaterThan(0);
+
+    // Not a re-broadcast: publishError (which a real TopicHub would fan out
+    // to every already-subscribed client, i.e. A) must not fire again just
+    // because B joined — B's notification goes only through hub.sendTo.
+    expect(errors).toHaveLength(1);
   });
 
   it('refuses (publishError) immediately when the backend has no api_url at acquire time, no retries', async () => {

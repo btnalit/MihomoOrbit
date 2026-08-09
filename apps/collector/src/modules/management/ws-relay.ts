@@ -85,6 +85,11 @@ class RelayChannel {
   private consecutiveFailures = 0;
   private isStopped = false;
   private lastActivity = 0;
+  // The error message from the most recent circuit-open trip, so a
+  // subscriber joining an already-tripped channel (TopicHub.subscribe adds
+  // it to a non-empty set, so onFirstSubscriber never fires for it) can
+  // still be told the channel is down instead of hanging silently.
+  private lastErrorMessage: string | null = null;
 
   private lingerTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -146,6 +151,19 @@ class RelayChannel {
     }
   }
 
+  /** A subscriber joining a channel that's already circuit-open never gets
+   *  an onFirstSubscriber call (TopicHub.subscribe only fires that on a
+   *  0->1 transition, and this channel already has other subscribers keeping
+   *  it non-empty) — without this, that socket would hang silently until the
+   *  channel happens to cycle through zero subscribers. Sent via
+   *  hub.sendTo (one socket only), never hub.publishError, which would
+   *  re-broadcast a duplicate error to every already-subscribed client. */
+  notifyIfCircuitOpen(ws: WebSocket): void {
+    if (this.state !== 'circuit-open') return;
+    const error = this.lastErrorMessage ?? 'management upstream unreachable';
+    this.deps.hub.sendTo(ws, this.encodeTopicError(error));
+  }
+
   /** Process-exit teardown: unlike a linger expiry, this must never
    *  reconnect again even if acquire() is somehow called afterward. */
   stop(): void {
@@ -171,7 +189,8 @@ class RelayChannel {
       // circuit-open reset still lets a later config fix (or a returning
       // subscriber) try again.
       this.state = 'circuit-open';
-      this.deps.hub.publishError(this.topic, this.backendId, 'backend has no management api_url configured');
+      this.lastErrorMessage = 'backend has no management api_url configured';
+      this.deps.hub.publishError(this.topic, this.backendId, this.lastErrorMessage);
       return;
     }
 
@@ -232,11 +251,8 @@ class RelayChannel {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
       }
-      this.deps.hub.publishError(
-        this.topic,
-        this.backendId,
-        'management upstream unreachable after repeated connection failures',
-      );
+      this.lastErrorMessage = 'management upstream unreachable after repeated connection failures';
+      this.deps.hub.publishError(this.topic, this.backendId, this.lastErrorMessage);
       return;
     }
 
@@ -371,6 +387,19 @@ class RelayChannel {
       timestamp: new Date().toISOString(),
     });
   }
+
+  /** Same wire shape as TopicHub.publishError's topic-error message (see
+   *  topic-hub.ts): type, topic, backendId, error, reachable — no
+   *  timestamp field. */
+  private encodeTopicError(error: string): string {
+    return JSON.stringify({
+      type: 'topic-error',
+      topic: this.topic,
+      backendId: this.backendId,
+      error,
+      reachable: false,
+    });
+  }
 }
 
 export class ManagementRelay {
@@ -405,10 +434,20 @@ export class ManagementRelay {
    *  successful topic-subscribe, in the same synchronous call stack, so the
    *  replay always precedes any later publishAppend for that socket. No-op
    *  for `connections` (nothing to replay for a snapshot topic) and for
-   *  `delay` (not relay-managed at all — see isRelayManagedTopic). */
+   *  `delay` (not relay-managed at all — see isRelayManagedTopic).
+   *
+   *  Also covers a subscriber joining a channel that's already
+   *  circuit-open: TopicHub.subscribe only calls onFirstSubscriber on a
+   *  0->1 transition, so a second (or later) tab subscribing to a channel
+   *  that already has subscribers never reaches acquire() at all — without
+   *  this, it would hang with no snapshot and no error until the channel
+   *  happened to cycle through zero subscribers. */
   onSubscriberJoined(ws: WebSocket, topic: TopicName, backendId: number): void {
     if (!isRelayManagedTopic(topic)) return;
-    this.channels.get(channelKey(topic, backendId))?.replayTo(ws);
+    const channel = this.channels.get(channelKey(topic, backendId));
+    if (!channel) return;
+    channel.replayTo(ws);
+    channel.notifyIfCircuitOpen(ws);
   }
 
   channelState(backendId: number, topic: TopicName): ChannelState {
