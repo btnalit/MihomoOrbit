@@ -1,0 +1,217 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { FastifyInstance } from 'fastify';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { createApp } from '../app/app.js';
+import { createTestDatabase } from '../../__tests__/helpers.js';
+import { realtimeStore } from '../realtime/realtime.store.js';
+import type { StatsDatabase } from '../db/db.js';
+
+// Task 2 fix round: controller-level coverage for auth-hook protection and
+// unified error mapping — the service test (management.service.test.ts)
+// covers ManagementService directly with a stubbed hub; this file covers the
+// Fastify wiring (registration behind the global auth hook, resolve() 404/409
+// short-circuit, and mapUpstreamError's 502/504 mapping) that only exists at
+// the controller layer. Same real-auth-flow inject pattern as
+// backend-unified-crud.test.ts (Task 4/M1c) so requests carry the same
+// orbit-session cookie a browser would.
+async function enableAuthForTest(app: FastifyInstance, token: string): Promise<string> {
+  const setupToken = app.authService.getSetupToken();
+  const enableRes = await app.inject({
+    method: 'POST',
+    url: '/api/auth/enable',
+    headers: setupToken ? { 'x-setup-token': setupToken } : undefined,
+    payload: { token },
+  });
+  if (enableRes.statusCode !== 200) {
+    throw new Error(`enableAuthForTest failed: ${enableRes.statusCode} ${enableRes.body}`);
+  }
+
+  const verifyRes = await app.inject({
+    method: 'POST',
+    url: '/api/auth/verify',
+    payload: { token },
+  });
+  const cookie = verifyRes.cookies.find((c: { name: string }) => c.name === 'orbit-session');
+  if (!cookie) {
+    throw new Error(`enableAuthForTest: /api/auth/verify did not set orbit-session cookie (${verifyRes.statusCode} ${verifyRes.body})`);
+  }
+  return cookie.value;
+}
+
+// Minimal fake Mihomo: only the routes these tests actually exercise
+// (GET /proxies, GET /proxies/:name/delay). Can be told to hang (never
+// respond) to exercise the AbortSignal.timeout -> 504 path.
+function createFakeMihomo(state: { hang: boolean }): http.Server {
+  return http.createServer((req, res) => {
+    if (state.hang) {
+      return; // never respond
+    }
+
+    const url = req.url ?? '';
+
+    if (req.method === 'GET' && url === '/proxies') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        proxies: {
+          GLOBAL: { name: 'GLOBAL', type: 'Selector', all: ['A-Group'] },
+          'A-Group': { name: 'A-Group', type: 'Selector', all: ['N1', 'N2'] },
+          N1: { name: 'N1', type: 'Shadowsocks' },
+          N2: { name: 'N2', type: 'Shadowsocks' },
+        },
+      }));
+      return;
+    }
+
+    if (req.method === 'GET' && /^\/proxies\/[^/]+\/delay/.test(url)) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ delay: 42 }));
+      return;
+    }
+
+    res.writeHead(404);
+    res.end();
+  });
+}
+
+describe('management controller: auth protection + error mapping', () => {
+  let db: StatsDatabase;
+  let cleanupDb: () => void;
+  let app: FastifyInstance;
+  let sessionCookie: string;
+
+  beforeEach(async () => {
+    ({ db, cleanup: cleanupDb } = createTestDatabase());
+    app = await createApp({ port: 0, db, realtimeStore, logger: false, autoListen: false });
+    sessionCookie = await enableAuthForTest(app, 'a-16-char-token-1');
+  });
+
+  afterEach(async () => {
+    if (app) {
+      await app.close();
+    }
+    cleanupDb();
+  });
+
+  async function authed(method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH', url: string, payload?: Record<string, unknown>) {
+    return app.inject({ method, url, payload, cookies: { 'orbit-session': sessionCookie } });
+  }
+
+  it('unauthenticated GET /api/management/:id/groups is rejected by the global auth hook', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/management/1/groups' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('a backend with no api_url is refused with 409 NO_MANAGEMENT_CAPABILITY', async () => {
+    const id = db.createBackend({ name: 'agent-only', url: 'agent://a', token: 't', agentToken: 't' });
+    const res = await authed('GET', `/api/management/${id}/groups`);
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'NO_MANAGEMENT_CAPABILITY', backendId: id });
+  });
+
+  it('a nonexistent backendId returns 404', async () => {
+    const res = await authed('GET', '/api/management/999999/groups');
+    expect(res.statusCode).toBe(404);
+  });
+
+  describe('against a live fake Mihomo upstream', () => {
+    let upstream: http.Server;
+    let upstreamState: { hang: boolean };
+    let backendId: number;
+
+    beforeEach(async () => {
+      upstreamState = { hang: false };
+      upstream = createFakeMihomo(upstreamState);
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', () => resolve()));
+      const port = (upstream.address() as AddressInfo).port;
+      backendId = db.createBackend({
+        name: 'mgmt-controller-test',
+        url: `ws://127.0.0.1:${port}/connections`,
+        token: '',
+        apiUrl: `http://127.0.0.1:${port}`,
+        apiSecret: '',
+      });
+    });
+
+    afterEach(async () => {
+      upstream.closeAllConnections?.();
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    });
+
+    it('POST delay-group accepts, fans out, and rejects a duplicate on the same group', async () => {
+      const first = await authed('POST', `/api/management/${backendId}/delay-group/A-Group`);
+      expect(first.statusCode).toBe(202);
+      expect(first.json()).toMatchObject({ accepted: true, group: 'A-Group', total: 2 });
+
+      const second = await authed('POST', `/api/management/${backendId}/delay-group/A-Group`);
+      expect(second.statusCode).toBe(409);
+      expect(second.json()).toEqual({ code: 'DELAY_TEST_RUNNING' });
+    });
+  });
+
+  describe('against an unreachable upstream (connection refused)', () => {
+    let backendId: number;
+
+    beforeEach(async () => {
+      // Bind then immediately close: yields a port nothing is listening on,
+      // so a request against it deterministically fails at the network
+      // layer (ECONNREFUSED) rather than merely timing out.
+      const probe = http.createServer();
+      const port = await new Promise<number>((resolve) => {
+        probe.listen(0, '127.0.0.1', () => {
+          const p = (probe.address() as AddressInfo).port;
+          probe.close(() => resolve(p));
+        });
+      });
+      backendId = db.createBackend({
+        name: 'mgmt-unreachable-test',
+        url: `ws://127.0.0.1:${port}/connections`,
+        token: '',
+        apiUrl: `http://127.0.0.1:${port}`,
+        apiSecret: '',
+      });
+    });
+
+    it('GET groups maps a refused connection to 502 { error, backendId, reachable: false }', async () => {
+      const res = await authed('GET', `/api/management/${backendId}/groups`);
+      expect(res.statusCode).toBe(502);
+      expect(res.json()).toMatchObject({ backendId, reachable: false });
+      expect(typeof res.json().error).toBe('string');
+    });
+  });
+
+  describe('against a hanging upstream', () => {
+    let upstream: http.Server;
+    let backendId: number;
+
+    beforeEach(async () => {
+      upstream = createFakeMihomo({ hang: true });
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', () => resolve()));
+      const port = (upstream.address() as AddressInfo).port;
+      backendId = db.createBackend({
+        name: 'mgmt-hang-test',
+        url: `ws://127.0.0.1:${port}/connections`,
+        token: '',
+        apiUrl: `http://127.0.0.1:${port}`,
+        apiSecret: '',
+      });
+    });
+
+    afterEach(async () => {
+      upstream.closeAllConnections?.();
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    });
+
+    // fetchGroups's upstreamFetch call uses the 5000ms default timeout (GET
+    // /proxies takes no timeout override from the client) — this test's
+    // runtime is dominated by that wait, not arrangement complexity, so the
+    // real end-to-end path is covered directly rather than unit-calling the
+    // controller's private mapUpstreamError with a synthetic { timeout: true }.
+    it('GET groups maps an upstream timeout to 504 { error, backendId, reachable: false }', async () => {
+      const res = await authed('GET', `/api/management/${backendId}/groups`);
+      expect(res.statusCode).toBe(504);
+      expect(res.json()).toMatchObject({ backendId, reachable: false });
+      expect(typeof res.json().error).toBe('string');
+    }, 10000);
+  });
+});
