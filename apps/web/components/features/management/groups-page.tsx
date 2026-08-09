@@ -65,6 +65,14 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
   const [topicOffline, setTopicOffline] = useState(false);
   const [selectError, setSelectError] = useState<{ group: string; proxy: string } | null>(null);
   const selectErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Per-group monotonic selection token. Ownership of a group's rollback is
+  // judged by RECENCY (this call was still the latest attempt when it
+  // failed), never by comparing the cached `now` value — two attempts for
+  // the same proxy (P1 -> P2 -> P1) can otherwise coincide on value even
+  // though the first P1 call is stale by the time it fails. Lives inside
+  // GroupsPage so the dispatch's `key={activeBackendId}` remount resets it
+  // along with everything else on a backend switch.
+  const selectSeqRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     return () => {
@@ -149,6 +157,13 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
         .getQueryData<ManagementGroupsResponse>(queryKey)
         ?.groups.find((g) => g.name === group)?.now;
 
+      // Claim this group's latest-attempt token before firing the mutation.
+      // Only the call that still owns the token when it fails is allowed to
+      // roll back — a later click on the same group (even to the same
+      // proxy, e.g. P1 -> P2 -> P1) bumps the token and disowns this one.
+      const seq = (selectSeqRef.current.get(group) ?? 0) + 1;
+      selectSeqRef.current.set(group, seq);
+
       queryClient.setQueryData<ManagementGroupsResponse>(queryKey, (old) => {
         if (!old) return old;
         return {
@@ -160,19 +175,16 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
       selectProxy.mutate(
         { group, proxy },
         {
-          // Roll back only this group's `now`, and only if it still holds
-          // THIS call's optimistic write. Other member buttons stay enabled
-          // during flight, so a second, faster selection in the same group
-          // can land (and be server-confirmed) before this one fails — in
-          // that case the cache already reflects newer truth than `prevNow`
-          // and a blind rollback would silently diverge from the server.
-          // Re-sync from the server instead of guessing which value is
-          // right (there's no polling here to self-heal a wrong guess).
+          // Roll back only if THIS call is still the group's latest
+          // attempt. Other member buttons stay enabled during flight, so a
+          // later selection (possibly for the same proxy, coinciding on
+          // value) can land and be server-confirmed before this older call
+          // fails — comparing the cached `now` value can't tell those apart
+          // from a genuinely-stale write, only recency can. When this call
+          // isn't the latest, don't touch the cache at all: re-sync from
+          // the server instead of guessing.
           onError: () => {
-            const liveNow = queryClient
-              .getQueryData<ManagementGroupsResponse>(queryKey)
-              ?.groups.find((g) => g.name === group)?.now;
-            if (liveNow === proxy) {
+            if (selectSeqRef.current.get(group) === seq) {
               queryClient.setQueryData<ManagementGroupsResponse>(queryKey, (old) => {
                 if (!old) return old;
                 return {
@@ -180,15 +192,19 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
                   groups: old.groups.map((g) => (g.name === group ? { ...g, now: prevNow } : g)),
                 };
               });
+              if (selectErrorTimerRef.current) clearTimeout(selectErrorTimerRef.current);
+              setSelectError({ group, proxy });
+              selectErrorTimerRef.current = setTimeout(
+                () => setSelectError(null),
+                SELECT_ERROR_DISPLAY_MS,
+              );
             } else {
+              // A newer attempt owns this group's state now — its own
+              // success/failure handling is responsible for the cache and
+              // for any inline error; surfacing this stale failure too
+              // would misattribute it to the wrong (newer) selection.
               queryClient.invalidateQueries({ queryKey });
             }
-            if (selectErrorTimerRef.current) clearTimeout(selectErrorTimerRef.current);
-            setSelectError({ group, proxy });
-            selectErrorTimerRef.current = setTimeout(
-              () => setSelectError(null),
-              SELECT_ERROR_DISPLAY_MS,
-            );
           },
         },
       );
