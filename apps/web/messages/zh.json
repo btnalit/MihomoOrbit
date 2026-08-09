@@ -352,6 +352,38 @@
       "offlineBanner": "无法连接到该后端,实时数据暂不可用",
       "reconnectingBanner": "与实时数据的连接已断开,正在重新连接…",
       "bufferOverflow": "暂停期间日志过多,已丢弃部分较旧条目"
+    },
+    "runtime": {
+      "title": "运行时设置",
+      "notPersisted": "这些修改仅作用于运行中的内核,重启后失效;持久化修改请等待配置编辑功能(M2)。",
+      "mode": {
+        "label": "运行模式",
+        "rule": "规则",
+        "global": "全局",
+        "direct": "直连"
+      },
+      "logLevel": {
+        "label": "日志级别",
+        "debug": "调试",
+        "info": "信息",
+        "warning": "警告",
+        "error": "错误",
+        "silent": "静默"
+      },
+      "allowLan": {
+        "label": "允许局域网连接",
+        "description": "允许来自局域网的连接接入该内核"
+      },
+      "readonly": {
+        "title": "只读信息",
+        "mixedPort": "混合端口",
+        "port": "HTTP 端口",
+        "socksPort": "SOCKS 端口",
+        "version": "内核版本"
+      },
+      "offlineBanner": "无法连接到该后端,实时数据暂不可用",
+      "retry": "重试",
+      "loadError": "加载运行时配置失败"
     }
   },
   "map": {

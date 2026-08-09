@@ -15,7 +15,7 @@ import { InteractiveRuleStats } from "@/components/features/rules";
 import { HealthContent } from "@/components/features/health";
 import { WorldTrafficMap, CountryTrafficList } from "@/components/features/countries";
 import { DomainsTable, IPsTable } from "@/components/features/stats/table";
-import { ConnectionsPage, GroupsPage, LogsPage, ManagementGate } from "@/components/features/management";
+import { ConnectionsPage, GroupsPage, LogsPage, ManagementGate, RuntimePage } from "@/components/features/management";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -319,20 +319,6 @@ const NetworkContent = memo(function NetworkContent() {
   );
 });
 
-// Management Placeholder Content Component — groups/connections/logs/runtime
-// pages land in Tasks 5-8; this stub only exists so the capability gate
-// (ManagementGate) is live from this task onward.
-const ManagementPlaceholder = memo(function ManagementPlaceholder() {
-  const t = useTranslations("management");
-  return (
-    <div className="space-y-6">
-      <div className="p-12 text-center text-muted-foreground border rounded-xl">
-        <p>{t("comingSoon")}</p>
-      </div>
-    </div>
-  );
-});
-
 export function Content({
   activeTab,
   data,
@@ -443,7 +429,12 @@ export function Content({
       case "runtime":
         return (
           <ManagementGate backend={activeBackend} onBackendChange={onBackendChange}>
-            <ManagementPlaceholder />
+            {/* Same remount-on-backend-switch rationale as groups/connections/
+                logs above: RuntimePage's controls read straight from
+                useRuntimeConfig, which is keyed by backendId, but any
+                in-flight per-control PATCH state must not survive a switch
+                to a different backend. */}
+            <RuntimePage key={activeBackendId} backendId={activeBackendId} />
           </ManagementGate>
         );
       default:

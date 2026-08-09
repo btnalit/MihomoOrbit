@@ -352,6 +352,38 @@
       "offlineBanner": "Can't reach this backend right now — live data is unavailable.",
       "reconnectingBanner": "Lost the live connection — reconnecting…",
       "bufferOverflow": "Too many lines arrived while paused — some older entries were dropped."
+    },
+    "runtime": {
+      "title": "Runtime Settings",
+      "notPersisted": "These changes only affect the running core and are lost on restart. For persistent changes, wait for the config editor feature (M2).",
+      "mode": {
+        "label": "Mode",
+        "rule": "Rule",
+        "global": "Global",
+        "direct": "Direct"
+      },
+      "logLevel": {
+        "label": "Log Level",
+        "debug": "Debug",
+        "info": "Info",
+        "warning": "Warning",
+        "error": "Error",
+        "silent": "Silent"
+      },
+      "allowLan": {
+        "label": "Allow LAN",
+        "description": "Allow connections from the local network to reach this core"
+      },
+      "readonly": {
+        "title": "Read-only Info",
+        "mixedPort": "Mixed Port",
+        "port": "HTTP Port",
+        "socksPort": "SOCKS Port",
+        "version": "Core Version"
+      },
+      "offlineBanner": "Can't reach this backend right now — live data is unavailable.",
+      "retry": "Retry",
+      "loadError": "Failed to load runtime config"
     }
   },
   "map": {
