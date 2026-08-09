@@ -11,7 +11,7 @@ import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import type { StatsDatabase } from '../db/db.js';
 import type { RealtimeStore } from '../realtime/realtime.store.js';
-import { buildGatewayHeaders, getGatewayBaseUrl, isAgentBackendUrl, parseSurgeRule } from '@mihomo-orbit/shared';
+import { buildGatewayHeaders, getGatewayBaseUrl, parseSurgeRule } from '@mihomo-orbit/shared';
 import type { TrafficUpdate } from '../db/db.js';
 import { SurgePolicySyncService } from '../surge/surge-policy-sync.js';
 import type { GeoIPService } from '../geo/geo.service.js';
@@ -958,18 +958,22 @@ export async function createApp(options: AppOptions) {
     if (!backend) {
       return reply.status(404).send({ error: 'Backend not found' });
     }
-    if (isAgentBackendUrl(backend.url)) {
-      const cached = realtimeStore.getAgentConfigWithPolicyState(backendId);
-      console.info(`[Gateway API /proxies] Agent mode, cached exists: ${!!cached}`);
-      if (!cached) {
-        return reply.status(503).send({ error: 'Agent config not yet synced' });
+    const apiUrl = (backend.api_url || '').trim();
+    if (!apiUrl) {
+      if (backend.agent_token !== '') {
+        const cached = realtimeStore.getAgentConfigWithPolicyState(backendId);
+        console.info(`[Gateway API /proxies] Agent mode, cached exists: ${!!cached}`);
+        if (!cached) {
+          return reply.status(503).send({ error: 'Agent config not yet synced' });
+        }
+        return { proxies: cached.proxies || {}, _source: 'agent-cache' };
       }
-      return { proxies: cached.proxies || {}, _source: 'agent-cache' };
+      return reply.status(503).send({ error: 'Backend has no API URL configured' });
     }
 
-    const gatewayBaseUrl = getGatewayBaseUrl(backend.url);
+    const gatewayBaseUrl = getGatewayBaseUrl(apiUrl);
     const isSurge = backend.type === 'surge';
-    const headers = getHeaders(backend);
+    const headers = getHeaders({ type: backend.type, token: backend.api_secret });
 
     try {
       if (isSurge) {
@@ -1048,17 +1052,21 @@ export async function createApp(options: AppOptions) {
     if (!backend) {
       return reply.status(404).send({ error: 'Backend not found' });
     }
-    if (isAgentBackendUrl(backend.url)) {
-      const cached = realtimeStore.getAgentConfigWithPolicyState(backendId);
-      if (!cached) {
-        return reply.status(503).send({ error: 'Agent config not yet synced' });
+    const apiUrl = (backend.api_url || '').trim();
+    if (!apiUrl) {
+      if (backend.agent_token !== '') {
+        const cached = realtimeStore.getAgentConfigWithPolicyState(backendId);
+        if (!cached) {
+          return reply.status(503).send({ error: 'Agent config not yet synced' });
+        }
+        return { providers: cached.providers || {}, proxies: cached.proxies || {}, _source: 'agent-cache' };
       }
-      return { providers: cached.providers || {}, proxies: cached.proxies || {}, _source: 'agent-cache' };
+      return reply.status(503).send({ error: 'Backend has no API URL configured' });
     }
 
-    const gatewayBaseUrl = getGatewayBaseUrl(backend.url);
+    const gatewayBaseUrl = getGatewayBaseUrl(apiUrl);
     const isSurge = backend.type === 'surge';
-    const headers = getHeaders(backend);
+    const headers = getHeaders({ type: backend.type, token: backend.api_secret });
 
     try {
       if (isSurge) {
@@ -1143,7 +1151,7 @@ export async function createApp(options: AppOptions) {
             
             // Also update cache in background
             if (policySyncService) {
-              policySyncService.syncNow(backendId, gatewayBaseUrl, backend.token || undefined)
+              policySyncService.syncNow(backendId, gatewayBaseUrl, backend.api_secret || undefined)
                 .catch(err => console.error(`[Gateway] Background sync failed:`, err.message));
             }
             
@@ -1193,19 +1201,20 @@ export async function createApp(options: AppOptions) {
     if (!backend || backend.type !== 'surge') {
       return reply.status(400).send({ error: 'Only Surge backend supports this operation' });
     }
-    if (isAgentBackendUrl(backend.url)) {
-      return reply.status(400).send({ error: 'Agent mode backend does not support this operation' });
+    const apiUrl = (backend.api_url || '').trim();
+    if (!apiUrl) {
+      return reply.status(400).send({ error: 'Backend has no API URL configured' });
     }
 
     if (!policySyncService) {
       return reply.status(503).send({ error: 'Policy sync service not available' });
     }
 
-    const gatewayBaseUrl = getGatewayBaseUrl(backend.url);
+    const gatewayBaseUrl = getGatewayBaseUrl(apiUrl);
     const result = await policySyncService.syncNow(
       backendId,
       gatewayBaseUrl,
-      backend.token || undefined
+      backend.api_secret || undefined
     );
 
     return {
@@ -1225,27 +1234,31 @@ export async function createApp(options: AppOptions) {
     if (!backend) {
       return reply.status(404).send({ error: 'Backend not found' });
     }
-    if (isAgentBackendUrl(backend.url)) {
-      const cached = realtimeStore.getAgentConfig(backendId);
-      if (!cached) {
-        return reply.status(503).send({ error: 'Agent config not yet synced' });
+    const apiUrl = (backend.api_url || '').trim();
+    if (!apiUrl) {
+      if (backend.agent_token !== '') {
+        const cached = realtimeStore.getAgentConfig(backendId);
+        if (!cached) {
+          return reply.status(503).send({ error: 'Agent config not yet synced' });
+        }
+
+        if (backend.type === 'surge') {
+          const parsedRules = (cached.rules || [])
+            .map(r => r.raw ? parseSurgeRule(r.raw) : null)
+            .filter((r): r is NonNullable<typeof r> => r !== null)
+            .map(r => ({ type: r.type, payload: r.payload, proxy: r.policy, size: 0 }));
+          // Agent mode Surge rules logging removed
+          return { rules: parsedRules, _source: 'agent-cache' };
+        }
+
+        return { rules: cached.rules || [], _source: 'agent-cache' };
       }
-      
-      if (backend.type === 'surge') {
-        const parsedRules = (cached.rules || [])
-          .map(r => r.raw ? parseSurgeRule(r.raw) : null)
-          .filter((r): r is NonNullable<typeof r> => r !== null)
-          .map(r => ({ type: r.type, payload: r.payload, proxy: r.policy, size: 0 }));
-        // Agent mode Surge rules logging removed
-        return { rules: parsedRules, _source: 'agent-cache' };
-      }
-      
-      return { rules: cached.rules || [], _source: 'agent-cache' };
+      return reply.status(503).send({ error: 'Backend has no API URL configured' });
     }
 
-    const gatewayBaseUrl = getGatewayBaseUrl(backend.url);
+    const gatewayBaseUrl = getGatewayBaseUrl(apiUrl);
     const isSurge = backend.type === 'surge';
-    const headers = getHeaders(backend);
+    const headers = getHeaders({ type: backend.type, token: backend.api_secret });
 
     try {
       if (isSurge) {
