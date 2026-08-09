@@ -67,6 +67,14 @@ export function DelayBadge({ value, pending, className }: DelayBadgeProps) {
     );
   }
 
+  if (value === 0) {
+    return (
+      <Badge variant="outline" className={cn(TIER_CLASSES.unknown, className)}>
+        —
+      </Badge>
+    );
+  }
+
   return (
     <Badge variant="outline" className={cn(tierClassFor(value), className)}>
       {value}ms

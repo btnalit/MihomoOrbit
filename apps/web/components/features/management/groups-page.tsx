@@ -19,7 +19,7 @@ import { AlertTriangle, Network, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { isUnreachableError, type ManagementGroupsResponse } from "@/lib/api";
+import { apiErrorCode, isUnreachableError, type ManagementGroupsResponse } from "@/lib/api";
 import {
   managementGroupsQueryKey,
   useGroupDelayTest,
@@ -160,17 +160,29 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
       selectProxy.mutate(
         { group, proxy },
         {
-          // Roll back only this group's `now` — other groups may have their
-          // own optimistic writes in flight and must not be clobbered by a
-          // whole-response snapshot restore.
+          // Roll back only this group's `now`, and only if it still holds
+          // THIS call's optimistic write. Other member buttons stay enabled
+          // during flight, so a second, faster selection in the same group
+          // can land (and be server-confirmed) before this one fails — in
+          // that case the cache already reflects newer truth than `prevNow`
+          // and a blind rollback would silently diverge from the server.
+          // Re-sync from the server instead of guessing which value is
+          // right (there's no polling here to self-heal a wrong guess).
           onError: () => {
-            queryClient.setQueryData<ManagementGroupsResponse>(queryKey, (old) => {
-              if (!old) return old;
-              return {
-                ...old,
-                groups: old.groups.map((g) => (g.name === group ? { ...g, now: prevNow } : g)),
-              };
-            });
+            const liveNow = queryClient
+              .getQueryData<ManagementGroupsResponse>(queryKey)
+              ?.groups.find((g) => g.name === group)?.now;
+            if (liveNow === proxy) {
+              queryClient.setQueryData<ManagementGroupsResponse>(queryKey, (old) => {
+                if (!old) return old;
+                return {
+                  ...old,
+                  groups: old.groups.map((g) => (g.name === group ? { ...g, now: prevNow } : g)),
+                };
+              });
+            } else {
+              queryClient.invalidateQueries({ queryKey });
+            }
             if (selectErrorTimerRef.current) clearTimeout(selectErrorTimerRef.current);
             setSelectError({ group, proxy });
             selectErrorTimerRef.current = setTimeout(
@@ -190,7 +202,13 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
       groupDelayTest.mutate(
         { group },
         {
-          onError: () => {
+          onError: (error) => {
+            // A 409 DELAY_TEST_RUNNING means a test IS actually running
+            // server-side (started by this client or another) — its delay
+            // frames and eventual `done` will still arrive over the topic.
+            // Clearing the pending affordance here would be misleading; let
+            // the topic's own `done` handling clear it instead.
+            if (apiErrorCode(error) === "DELAY_TEST_RUNNING") return;
             setTestingGroups((prev) => {
               if (!prev.has(group)) return prev;
               const next = new Set(prev);
