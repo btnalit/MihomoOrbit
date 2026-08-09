@@ -5,10 +5,15 @@ import type { StatsService } from '../stats/stats.service.js';
 import type { SummaryFieldKey, SummaryFieldMask } from './websocket.types.js';
 import { AuthService } from '../auth/auth.service.js';
 import { IncomingMessage } from 'http';
+import { TopicHub, type TopicHubHooks, type TopicName } from './topic-hub.js';
+
+const TOPIC_NAMES = new Set<TopicName>(['connections', 'logs', 'delay']);
 
 export interface WebSocketMessage {
-  type: 'stats' | 'ping' | 'pong' | 'subscribe';
+  type: 'stats' | 'ping' | 'pong' | 'subscribe' | 'topic-subscribe' | 'topic-unsubscribe';
   backendId?: number;
+  topic?: string;
+  stats?: boolean;
   start?: string;
   end?: string;
   minPushIntervalMs?: number;
@@ -99,6 +104,7 @@ interface ClientInfo {
   includeRuleChainFlow: boolean;
   domainsPage: ClientDomainsPage;
   ipsPage: ClientIPsPage;
+  statsEnabled: boolean;
 }
 
 const SUMMARY_FIELD_KEYS: SummaryFieldKey[] = [
@@ -206,6 +212,8 @@ export class StatsWebSocketServer {
     Number.parseInt(process.env.WS_MAX_BUFFERED_BYTES || '', 10) || 4 * 1024 * 1024,
   );
 
+  private topicHub: TopicHub;
+
   constructor(port: number, db: StatsDatabase, statsService: StatsService, authService?: AuthService) {
     this.port = port;
     this.db = db;
@@ -217,6 +225,42 @@ export class StatsWebSocketServer {
     // up to its own cache TTL. Falls back to a fresh instance for standalone
     // use (tests, tooling).
     this.authService = authService ?? new AuthService(db);
+    // Generic topic fan-out hub: stats broadcasting keeps its own dedicated
+    // path below, but shares the same backpressure gate (gatedSend) and
+    // client registry lifecycle (dropClient on close/error) as connections/
+    // logs/delay topics. See m1-contracts.md.
+    this.topicHub = new TopicHub({
+      maxBufferedBytes: this.maxBufferedBytes,
+      sendGate: (ws, json) => this.gatedSend(ws, json),
+    });
+  }
+
+  /** Injects topic lifecycle hooks (Task 3's relay: start/stop upstream
+   *  subscriptions on first-subscriber/last-unsubscriber). No-op until set. */
+  setTopicHooks(hooks: TopicHubHooks): void {
+    this.topicHub.setHooks(hooks);
+  }
+
+  getTopicHub(): TopicHub {
+    return this.topicHub;
+  }
+
+  /** Single backpressure gate shared by the stats broadcast path and
+   *  TopicHub: readyState check, then bufferedAmount check (counted via
+   *  wsMetrics.backpressureSkips), then the actual send. Exceptions from
+   *  ws.send() are intentionally NOT caught here — callers that need
+   *  cleanup-on-throw (e.g. broadcastStatsInternal deleting a client stuck
+   *  in CLOSING/CLOSED) keep their own try/catch around this call. */
+  private gatedSend(ws: WebSocket, json: string): boolean {
+    if (ws.readyState !== WebSocket.OPEN) return false;
+
+    if (ws.bufferedAmount > this.maxBufferedBytes) {
+      this.wsMetrics.backpressureSkips += 1;
+      return false;
+    }
+
+    ws.send(json);
+    return true;
   }
 
   /** Bound port once the server is listening — useful when constructed with port 0. */
@@ -323,6 +367,7 @@ export class StatsWebSocketServer {
         includeRuleChainFlow: false,
         domainsPage: null,
         ipsPage: null,
+        statsEnabled: true,
       };
       this.clients.set(ws, clientInfo);
 
@@ -518,6 +563,16 @@ export class StatsWebSocketServer {
               }
             }
 
+            // Management-only sockets declare they don't want the per-second
+            // stats push (see broadcastStatsInternal's statsEnabled skip).
+            // This must come after every other field parse above: setting it
+            // does not itself count as a "changed" subscription, so it must
+            // not be undone by a later block re-setting `changed = true`.
+            if (msg.stats === false) {
+              clientInfo.statsEnabled = false;
+              changed = false;
+            }
+
             if (changed) {
               this.wsMetrics.subscribeChanged += 1;
               this.sendStatsToClient(ws);
@@ -526,6 +581,29 @@ export class StatsWebSocketServer {
             }
             this.maybeLogWsMetrics();
           }
+
+          if (msg.type === 'topic-subscribe' || msg.type === 'topic-unsubscribe') {
+            const topic = msg.topic as TopicName | undefined;
+            const backendId = msg.backendId;
+            const isValidTopic = typeof topic === 'string' && TOPIC_NAMES.has(topic);
+            const backend = backendId !== undefined ? this.db.getBackend(backendId) : undefined;
+
+            if (!isValidTopic || backendId === undefined || !backend) {
+              this.gatedSend(ws, JSON.stringify({
+                type: 'topic-error',
+                topic: msg.topic,
+                backendId: msg.backendId,
+                error: 'invalid topic subscription',
+              }));
+              return;
+            }
+
+            if (msg.type === 'topic-subscribe') {
+              this.topicHub.subscribe(ws, topic, backendId);
+            } else {
+              this.topicHub.unsubscribe(ws, topic, backendId);
+            }
+          }
         } catch {
           // Ignore invalid frames.
         }
@@ -533,12 +611,14 @@ export class StatsWebSocketServer {
 
       ws.on('close', () => {
         this.clients.delete(ws);
+        this.topicHub.dropClient(ws);
         // Client disconnected (logging removed to reduce noise)
       });
 
       ws.on('error', (err) => {
         console.error('[WebSocket] Client error:', err.message);
         this.clients.delete(ws);
+        this.topicHub.dropClient(ws);
       });
       });
     });
@@ -1277,6 +1357,7 @@ export class StatsWebSocketServer {
 
     for (const [ws, clientInfo] of this.clients) {
       try {
+        if (!clientInfo.statsEnabled) continue;
         if (ws.readyState !== WebSocket.OPEN) continue;
 
         if (!force && clientInfo.minPushIntervalMs > 0) {
@@ -1362,16 +1443,12 @@ export class StatsWebSocketServer {
       try {
         const json = await jsonPromise;
         if (!json) continue;
-        if (ws.readyState !== WebSocket.OPEN) continue;
 
-        if (ws.bufferedAmount > this.maxBufferedBytes) {
-          // Client isn't draining; skip this round (lastSentAt untouched, so
-          // it gets the next broadcast once the buffer clears).
-          this.wsMetrics.backpressureSkips += 1;
-          continue;
-        }
+        // Client isn't draining (or already closed); skip this round
+        // (lastSentAt untouched, so it gets the next broadcast once the
+        // buffer clears). gatedSend() also counts backpressureSkips.
+        if (!this.gatedSend(ws, json)) continue;
 
-        ws.send(json);
         clientInfo.lastSentAt = now;
         sentCount++;
       } catch (err) {
