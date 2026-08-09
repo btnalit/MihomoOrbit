@@ -112,4 +112,21 @@ describe('unified backend CRUD', () => {
     expect(row.agent_id).toBe('');
     expect(row.agent_token).toBe('t2');
   });
+
+  // Code review finding: deleting testConnection's old isAgentBackendUrl
+  // short-circuit made an unsupported-scheme URL reach testClashConnection's
+  // `new WebSocket(...)`, which throws synchronously inside the `new
+  // Promise` executor. The executor turns that into an unhandled rejection
+  // rather than a caught error, and POST /api/backends/test has no
+  // surrounding try/catch — so it must come back as a graceful
+  // { success: false } instead of a 500.
+  it('POST /api/backends/test gracefully rejects unsupported/invalid URL schemes instead of crashing', async () => {
+    const agentRes = await inject('POST', '/api/backends/test', { url: 'agent://x', token: '' });
+    expect(agentRes.statusCode).toBe(200);
+    expect(agentRes.json().success).toBe(false);
+
+    const fileRes = await inject('POST', '/api/backends/test', { url: 'file:///etc/passwd', token: '' });
+    expect(fileRes.statusCode).toBe(200);
+    expect(fileRes.json().success).toBe(false);
+  });
 });

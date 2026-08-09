@@ -3,7 +3,6 @@
  */
 
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
-import { backendCapabilities } from '@mihomo-orbit/shared';
 import type { BackendService } from './backend.service.js';
 import type {
   CreateBackendInput,
@@ -32,11 +31,9 @@ const backendController: FastifyPluginAsync = async (fastify: FastifyInstance): 
   // Get all backends
   fastify.get('/', async () => {
     // M0 起后端列表附带能力标记,供 web 渲染/置灰功能入口(M1 实时管理、M2 配置编辑)
-    // M1c: capabilities 现由 apiUrl/agentId 驱动(见统一后端模型),不再靠 url 前缀判断
-    return service.getAllBackends().map((backend) => ({
-      ...backend,
-      capabilities: backendCapabilities({ url: backend.url, apiUrl: backend.apiUrl, agentId: backend.agentId }),
-    }));
+    // M1c: capabilities 现在 service.getAllBackends() 内部算(backendCapabilities 需要
+    // 原始 agent_token 判定分支,而 controller 只应触碰已脱敏的 BackendResponse)
+    return service.getAllBackends();
   });
 
   // Get active backend

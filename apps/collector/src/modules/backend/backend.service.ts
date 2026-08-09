@@ -18,6 +18,7 @@ import type {
   CreateBackendResult,
   RotateAgentTokenResult,
 } from './backend.types.js';
+import { backendCapabilities } from '@mihomo-orbit/shared';
 import { loadClickHouseConfig, runClickHouseQuery } from '../clickhouse/clickhouse.config.js';
 import type { ClickHouseConfig } from '../clickhouse/clickhouse.config.js';
 
@@ -267,13 +268,27 @@ export class BackendService {
   }
 
   /**
-   * Get all backends (with token hidden and health status attached)
+   * Get all backends (with token hidden, health status attached, and
+   * capabilities computed). Capabilities are computed here — not in the
+   * controller — from the raw DB row's `agent_token`, per the binding
+   * contract's `backendCapabilities({ url, apiUrl, agentToken, agentId })`
+   * signature: this is the only layer that ever sees the real token, so it
+   * never has to be threaded through the controller (which only ever
+   * receives the already-masked `BackendResponse`) to satisfy that call.
    */
   getAllBackends(): BackendResponse[] {
     const backends = this.db.getAllBackends();
     const isShowcase = this.authService.isShowcaseMode();
 
-    return backends.map((backend) => this.attachHealthStatus(this.toResponse(backend, isShowcase)));
+    return backends.map((backend) => {
+      const capabilities = backendCapabilities({
+        url: backend.url,
+        apiUrl: backend.api_url,
+        agentToken: backend.agent_token,
+        agentId: backend.agent_id,
+      });
+      return { ...this.attachHealthStatus(this.toResponse(backend, isShowcase)), capabilities };
+    });
   }
 
   /**
@@ -634,14 +649,34 @@ export class BackendService {
    * Test connection to a backend. `agent://` is no longer a meaningful input
    * here — agent mode is decided upstream (by `agent_token` presence) before
    * this is ever called with a raw URL; this always tests an actual API URL.
+   *
+   * Validates the scheme up front and fails gracefully for anything else
+   * (unparseable, `agent://`, `file://`, ...). Without this, an unsupported
+   * scheme reaches testClashConnection's `new WebSocket(...)`, which throws
+   * *synchronously* inside the `new Promise` executor; the executor turns
+   * that into a rejection testClashConnection's own try/catch never sees,
+   * producing an unhandled rejection and a 500 instead of a normal
+   * `{ success: false }` result — reachable directly via the public
+   * POST /api/backends/test route, which has no surrounding try/catch.
    */
   async testConnection(input: TestConnectionInput): Promise<TestConnectionResult> {
     const { url, token, type = 'clash' } = input;
 
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return { success: false, message: 'Unsupported or invalid backend URL' };
+    }
+    const allowedSchemes = ['http:', 'https:', 'ws:', 'wss:'];
+    if (!allowedSchemes.includes(parsed.protocol)) {
+      return { success: false, message: 'Unsupported or invalid backend URL' };
+    }
+
     if (type === 'surge') {
       return this.testSurgeConnection(url, token);
     }
-    
+
     return this.testClashConnection(url, token);
   }
 

@@ -2,6 +2,8 @@
  * Backend module type definitions
  */
 
+import type { BackendCapabilities } from '@mihomo-orbit/shared';
+
 export interface BackendConfig {
   id: number;
   name: string;
@@ -62,6 +64,13 @@ export interface BackendResponse {
   created_at: string;
   updated_at: string;
   health?: BackendHealthInfo;
+  /**
+   * Populated by getAllBackends() only (matches the pre-M1c contract, where
+   * only the GET / list route exposed this). Computed service-side from the
+   * raw agent_token so the real secret never has to pass through the
+   * controller layer to satisfy backendCapabilities' signature.
+   */
+  capabilities?: BackendCapabilities;
 }
 
 export interface TestConnectionInput {
