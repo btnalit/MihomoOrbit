@@ -29,14 +29,14 @@ uname -m
 - Agent 进程与后端配置的 token 不匹配
 - 在 UI 中轮换 token，并使用新 token 重启 Agent
 
-## `AGENT_TOKEN_ALREADY_BOUND`
+## `AGENT_BINDING_FIXED`
 
-原因：同一 backend token 被另一个 `agentId` 使用。
+原因：该后端已绑定到某个 `agentId`，另一个 `agentId` 用同一 token 发送心跳（409，无超时窗口——换绑必须是显式管理操作）。
 
 修复：
 
-- 不要在多个 Agent 实例间共用同一 backend token
-- 每个 Agent 对应独立后端，或故意轮换 token 后重新绑定
+- 在后端设置中"解绑"该 Agent（对应 `POST /api/backends/:id/agent/unbind`），新 Agent 的下一次心跳即可认领绑定
+- 或轮换该后端的 Agent token（会一并清空绑定），用新 token 重启 Agent
 
 ## `426` 兼容性错误
 

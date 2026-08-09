@@ -1353,8 +1353,8 @@ export async function createApp(options: AppOptions) {
     '/api/auth/verify',
     '/api/auth/logout', // Public so we can clear cookies even if invalid
     // Agent ingest endpoints authenticate independently via parseAgentToken +
-    // backend.token (see isAgentBackendAuthorized below) — the mandatory-auth
-    // hook must not gate them. See design spec section 3.5(e).
+    // backend.agent_token (see isAgentBackendAuthorized below) — the
+    // mandatory-auth hook must not gate them. See design spec section 3.5(e).
     '/api/agent/heartbeat',
     '/api/agent/report',
     '/api/agent/config',

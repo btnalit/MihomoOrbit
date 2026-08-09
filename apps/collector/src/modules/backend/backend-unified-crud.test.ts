@@ -69,13 +69,13 @@ describe('unified backend CRUD', () => {
   }
 
   it('creates an api-only backend: management yes, no agent token in response', async () => {
-    const res = await inject('POST', '/api/backends', { name: 'n1', apiUrl: 'http://10.0.0.1:9090', apiSecret: 's' });
+    const res = await inject('POST', '/api/backends', { name: 'n1', apiUrl: 'http://10.0.0.1:9090', apiSecret: 'sekrit-sentinel-9x' });
     expect(res.statusCode).toBe(200);
     expect(res.json().agentToken).toBeUndefined();
     const list = (await inject('GET', '/api/backends')).json();
     const b = list.find((x: { name: string }) => x.name === 'n1');
     expect(b.capabilities).toEqual({ monitoring: true, management: true, configEdit: false });
-    expect(JSON.stringify(b)).not.toContain('"s"');       // api_secret 不泄漏
+    expect(JSON.stringify(b)).not.toContain('sekrit-sentinel-9x');       // api_secret 不泄漏
   });
 
   it('creates an agent-only backend and returns the token exactly once', async () => {
@@ -128,5 +128,84 @@ describe('unified backend CRUD', () => {
     const fileRes = await inject('POST', '/api/backends/test', { url: 'file:///etc/passwd', token: '' });
     expect(fileRes.statusCode).toBe(200);
     expect(fileRes.json().success).toBe(false);
+  });
+
+  // Final-review findings 3/4: v1.1 semantic contract — the url/token
+  // rollback mirror is agent-channel-priority (`url = agent_token ?
+  // 'agent://'+encodeURIComponent(name) : api_url`, `token = agent_token ||
+  // api_secret`). Asserted at the raw DB-row level (db.getBackend), which is
+  // the only place these write-only columns are ever read back in tests —
+  // collector code must never read them.
+  describe('url/token rollback mirror (v1.1: agent channel wins)', () => {
+    it('api-only backend: url mirrors apiUrl, token mirrors apiSecret', async () => {
+      const res = await inject('POST', '/api/backends', {
+        name: 'mirror-api-only',
+        apiUrl: 'http://10.0.0.5:9090',
+        apiSecret: 'sekrit-sentinel-9x',
+      });
+      expect(res.statusCode).toBe(200);
+      const row = db.getBackend(res.json().id)!;
+      expect(row.url).toBe('http://10.0.0.5:9090');
+      expect(row.token).toBe('sekrit-sentinel-9x');
+    });
+
+    it('agent-only backend: url mirrors agent://<encoded-name>, token mirrors agentToken', async () => {
+      // Name contains a space so the assertion actually exercises
+      // encodeURIComponent — a name that encodes to itself would pass even
+      // if the encoding call were dropped.
+      const name = 'mirror agent one';
+      const res = await inject('POST', '/api/backends', { name, withAgent: true });
+      expect(res.statusCode).toBe(200);
+      const agentToken = res.json().agentToken as string;
+      const row = db.getBackend(res.json().id)!;
+      expect(row.url).toBe(`agent://${encodeURIComponent(name)}`);
+      expect(row.url).toBe('agent://mirror%20agent%20one');
+      expect(row.token).toBe(agentToken);
+    });
+
+    it('filling apiUrl on an agent backend keeps the mirror on the agent channel (dual-channel: agent wins)', async () => {
+      const createRes = await inject('POST', '/api/backends', { name: 'mirror-dual', withAgent: true });
+      const id = createRes.json().id;
+      const agentToken = createRes.json().agentToken as string;
+
+      const updateRes = await inject('PUT', `/api/backends/${id}`, {
+        apiUrl: 'http://10.0.0.6:9090',
+        apiSecret: 'sekrit-sentinel-9x',
+      });
+      expect(updateRes.statusCode).toBe(200);
+
+      const row = db.getBackend(id)!;
+      expect(row.url).toBe(`agent://${encodeURIComponent('mirror-dual')}`);
+      expect(row.token).toBe(agentToken);
+    });
+
+    it('dropping the agent channel (withAgent:false) on a dual-channel row falls the mirror back to apiUrl/apiSecret', async () => {
+      const createRes = await inject('POST', '/api/backends', { name: 'mirror-drop-agent', withAgent: true });
+      const id = createRes.json().id;
+      await inject('PUT', `/api/backends/${id}`, {
+        apiUrl: 'http://10.0.0.7:9090',
+        apiSecret: 'sekrit-sentinel-9x',
+      });
+
+      const disableRes = await inject('PUT', `/api/backends/${id}`, { withAgent: false });
+      expect(disableRes.statusCode).toBe(200);
+
+      const row = db.getBackend(id)!;
+      expect(row.url).toBe('http://10.0.0.7:9090');
+      expect(row.token).toBe('sekrit-sentinel-9x');
+    });
+
+    it('rotateAgentToken updates the token mirror to the new agent token', async () => {
+      const createRes = await inject('POST', '/api/backends', { name: 'mirror-rotate', withAgent: true });
+      const id = createRes.json().id;
+
+      const rotateRes = await inject('POST', `/api/backends/${id}/rotate-agent-token`, {});
+      expect(rotateRes.statusCode).toBe(200);
+      const newToken = rotateRes.json().agentToken as string;
+
+      const row = db.getBackend(id)!;
+      expect(row.token).toBe(newToken);
+      expect(row.url).toBe(`agent://${encodeURIComponent('mirror-rotate')}`);
+    });
   });
 });

@@ -54,9 +54,12 @@ export class ClickHouseCompareService {
       return;
     }
 
+    // Agent-sourced backends are excluded from the SQLite-vs-ClickHouse
+    // comparison (their traffic arrives via agent report, not this collector's
+    // own write path); url/token are write-only rollback mirrors, never read.
     const backends = this.db
       .getListeningBackends()
-      .filter((backend) => !backend.url.startsWith('agent://'));
+      .filter((backend) => backend.agent_token === '');
     if (backends.length === 0) return;
 
     const end = new Date();

@@ -45,12 +45,20 @@ function generateAgentBackendToken(): string {
 }
 
 /**
- * `url`/`token` 冻结镜像规则(M1c 语义契约):创建/更新时按旧编码同步写入,
- * 仅供尚未收敛的其他调用点(app.ts、index.ts 等)读取旧式 url 前缀判据。
+ * `url`/`token` 冻结镜像规则(M1c 语义契约 v1.1,终审采纳):**agent 通道优先**——
+ * `url = agent_token ? 'agent://' + encodeURIComponent(name) : api_url`,
+ * `token = agent_token || api_secret`。创建/更新时同步写入,仅供尚未收敛的其他
+ * 调用点(app.ts、index.ts 等)在 v0.1.x 回滚场景下读取旧式 url 前缀判据;
  * collector 内部新代码一律用 api_url/api_secret/agent_token/agent_id 直接判断。
+ *
+ * 修订理由:v1.0 的公式(api_url 优先)会让双通道行在回滚到 v0.1.x 后两条
+ * 通道全断——agent token 被当作 Mihomo secret 使用,agent 上报又因 url 缺少
+ * `agent://` 前缀被判定为直连模式而拒绝。agent 优先则回滚后监控(agent 摄取)
+ * 照常运作,仅丢失 management 能力,才是正确的 M0 降级语义。单通道行两种
+ * 公式结果等价,不受影响。
  */
-function mirrorUrl(name: string, apiUrl: string): string {
-  return apiUrl || `agent://${encodeURIComponent(name)}`;
+function mirrorUrl(name: string, apiUrl: string, agentToken: string): string {
+  return agentToken ? `agent://${encodeURIComponent(name)}` : apiUrl;
 }
 
 function mirrorToken(agentToken: string, apiSecret: string): string {
@@ -379,7 +387,7 @@ export class BackendService {
       apiSecret,
       agentToken,
       // Rollback mirror (write-only, see mirrorUrl/mirrorToken above).
-      url: mirrorUrl(name, apiUrl),
+      url: mirrorUrl(name, apiUrl, agentToken),
       token: mirrorToken(agentToken, apiSecret),
     });
 
@@ -442,7 +450,7 @@ export class BackendService {
       agent_token: nextAgentToken,
       agent_id: nextAgentId,
       // Rollback mirror (write-only, see mirrorUrl/mirrorToken above).
-      url: mirrorUrl(nextName, nextApiUrl),
+      url: mirrorUrl(nextName, nextApiUrl, nextAgentToken),
       token: mirrorToken(nextAgentToken, nextApiSecret),
     });
 

@@ -14,6 +14,7 @@ config({ quiet: true });
 import { StatsDatabase, BackendConfig } from './modules/db/db.js';
 import { createCollector, GatewayCollector } from './modules/collector/gateway.collector.js';
 import { createSurgeCollector, SurgeCollector } from './modules/collector/surge.collector.js';
+import { isAgentSourced, shouldStartDirectCollector } from './modules/collector/orchestration.js';
 import { StatsWebSocketServer } from './modules/websocket/websocket.server.js';
 import { realtimeStore } from './modules/realtime/realtime.store.js';
 import { SurgePolicySyncService } from './modules/surge/surge-policy-sync.js';
@@ -192,7 +193,7 @@ async function manageBackends() {
     for (const backend of backends) {
       const existingCollector = collectors.get(backend.id);
       const lastConfig = lastBackendConfigs.get(backend.id);
-      const isAgentBackend = backend.agent_token !== '';
+      const isAgentBackend = isAgentSourced(backend);
 
       // Check if we need to start or restart this backend connection
       const needsStart = backend.listening && backend.enabled && !existingCollector && !isAgentBackend;
@@ -246,7 +247,7 @@ async function manageBackends() {
 
 // Start a collector for a specific backend
 function startCollector(backend: BackendConfig) {
-  if (backend.agent_token !== '') {
+  if (isAgentSourced(backend)) {
     console.log(`[Collector] Backend "${backend.name}" (ID: ${backend.id}) is agent-sourced (agent_token set), skip direct pulling`);
     return;
   }
@@ -256,7 +257,7 @@ function startCollector(backend: BackendConfig) {
     return;
   }
 
-  if (backend.api_url === '') {
+  if (!shouldStartDirectCollector(backend)) {
     // Unified model: an API-created backend always has api_url and/or agent_token
     // set. This row has neither — unreachable via the current API, but skip
     // defensively rather than crash on an empty connection URL.

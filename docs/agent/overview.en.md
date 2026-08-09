@@ -14,7 +14,7 @@ This is ideal for multi-site homes/labs and distributed deployments.
 
 ## Data flow
 
-1. MihomoOrbit backend creates an `agent://<agent-id>` backend with system-managed token
+1. Create a backend with the Agent option enabled; MihomoOrbit generates the token automatically
 2. Agent polls Clash/Surge gateway API locally
 3. Agent submits batch deltas to `/api/agent/report`
 4. Agent sends periodic heartbeat to `/api/agent/heartbeat`

@@ -81,7 +81,7 @@ describe('mandatory auth', () => {
 
   it('agent ingest is not intercepted by the mandatory-auth hook', async () => {
     // /api/agent/* authenticates independently via parseAgentToken +
-    // backend.token (design spec section 3.5e). Assert it was not stopped by
+    // backend.agent_token (design spec section 3.5e). Assert it was not stopped by
     // the mandatory-auth hook rather than asserting a specific status code —
     // against this empty payload/DB the route itself will 400/404, but it
     // must never be AUTH_SETUP_REQUIRED.

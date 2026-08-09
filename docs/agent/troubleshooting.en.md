@@ -29,14 +29,14 @@ Checklist:
 - token mismatch between agent process and backend config
 - rotate token in UI and restart agent with new token
 
-## `AGENT_TOKEN_ALREADY_BOUND`
+## `AGENT_BINDING_FIXED`
 
-Cause: same backend token used by another `agentId`.
+Cause: this backend is already bound to one `agentId`, and another `agentId` sent a heartbeat with the same token (409, no timeout window — rebinding must be an explicit admin operation).
 
 Fix:
 
-- do not share one backend token across multiple agent instances
-- create separate backend per agent, or rotate token and rebind intentionally
+- Unbind the agent in backend settings (`POST /api/backends/:id/agent/unbind`); the new agent claims the binding on its next heartbeat
+- Or rotate the backend's agent token (this also clears the binding), then restart the agent with the new token
 
 ## `426` compatibility errors
 

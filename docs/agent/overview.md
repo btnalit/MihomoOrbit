@@ -14,7 +14,7 @@ Agent 模式允许一个中心化的 MihomoOrbit 面板接收来自远程 LAN �
 
 ## 数据流
 
-1. MihomoOrbit 后端创建一个 `agent://` 类型后端，系统自动生成 token
+1. 创建后端时启用"Agent"选项，系统自动生成 token
 2. Agent 在本地轮询 Clash/Surge 网关 API
 3. Agent 批量上报流量增量到 `/api/agent/report`
 4. Agent 定时发送心跳到 `/api/agent/heartbeat`
