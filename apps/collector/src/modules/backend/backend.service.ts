@@ -7,7 +7,7 @@ import type { StatsDatabase } from '../db/db.js';
 import type { RealtimeStore } from '../realtime/realtime.store.js';
 import { randomBytes } from 'node:crypto';
 import type {
-  BackendConfig,
+  BackendConfigFromDb,
   CreateBackendInput,
   UpdateBackendInput,
   BackendResponse,
@@ -18,7 +18,6 @@ import type {
   CreateBackendResult,
   RotateAgentTokenResult,
 } from './backend.types.js';
-import { isAgentBackendUrl } from '@mihomo-orbit/shared';
 import { loadClickHouseConfig, runClickHouseQuery } from '../clickhouse/clickhouse.config.js';
 import type { ClickHouseConfig } from '../clickhouse/clickhouse.config.js';
 
@@ -42,6 +41,19 @@ function maskUrl(url: string): string {
 
 function generateAgentBackendToken(): string {
   return `ag_${randomBytes(24).toString('base64url')}`;
+}
+
+/**
+ * `url`/`token` 冻结镜像规则(M1c 语义契约):创建/更新时按旧编码同步写入,
+ * 仅供尚未收敛的其他调用点(app.ts、index.ts 等)读取旧式 url 前缀判据。
+ * collector 内部新代码一律用 api_url/api_secret/agent_token/agent_id 直接判断。
+ */
+function mirrorUrl(name: string, apiUrl: string): string {
+  return apiUrl || `agent://${encodeURIComponent(name)}`;
+}
+
+function mirrorToken(agentToken: string, apiSecret: string): string {
+  return agentToken || apiSecret;
 }
 
 export class BackendService {
@@ -111,7 +123,7 @@ export class BackendService {
 
     for (const backend of backends) {
       try {
-        if (isAgentBackendUrl(backend.url)) {
+        if (backend.agent_token !== '') {
           const health = this.buildAgentHealthStatus(backend.id, now);
 
           const prevHealth = this.healthStatus.get(backend.id);
@@ -132,8 +144,8 @@ export class BackendService {
 
         const startTime = Date.now();
         const result = await this.testConnection({
-          url: backend.url,
-          token: backend.token,
+          url: backend.api_url,
+          token: backend.api_secret,
           type: backend.type,
         });
         const latency = Date.now() - startTime;
@@ -206,10 +218,38 @@ export class BackendService {
   }
 
   /**
+   * Build the client-facing backend response. Constructed field-by-field
+   * (never via `{...backend}`) so a raw DB row can never leak api_secret or
+   * agent_token into a list/detail response, even if the schema grows more
+   * secret-shaped columns later.
+   */
+  private toResponse(backend: BackendConfigFromDb, isShowcase: boolean): BackendResponse {
+    return {
+      id: backend.id,
+      name: backend.name,
+      url: isShowcase ? maskUrl(backend.url) : backend.url,
+      // Never expose the stored upstream/agent token in list/read responses.
+      // The edit form treats an empty token as "unchanged" on submit, so
+      // blanking it here does not break editing but stops leaking every
+      // backend's plaintext secret to any authenticated dashboard load.
+      token: '',
+      type: backend.type,
+      enabled: backend.enabled,
+      is_active: backend.is_active,
+      listening: backend.listening,
+      apiUrl: isShowcase ? maskUrl(backend.api_url) : backend.api_url,
+      hasAgent: backend.agent_token !== '',
+      agentId: backend.agent_id,
+      created_at: backend.created_at,
+      updated_at: backend.updated_at,
+    };
+  }
+
+  /**
    * Attach health status to backend response
    */
   private attachHealthStatus(backend: BackendResponse): BackendResponse {
-    if (isAgentBackendUrl(backend.url)) {
+    if (backend.hasAgent) {
       const dynamicHealth = this.buildAgentHealthStatus(
         backend.id,
         Date.now(),
@@ -233,17 +273,7 @@ export class BackendService {
     const backends = this.db.getAllBackends();
     const isShowcase = this.authService.isShowcaseMode();
 
-    return backends.map((backend) => 
-      this.attachHealthStatus({
-        ...backend,
-        url: isShowcase ? maskUrl(backend.url) : backend.url,
-        // Never expose the stored upstream/agent token in list/read responses.
-        // The edit form treats an empty token as "unchanged" on submit, so
-        // blanking it here does not break editing but stops leaking every
-        // backend's plaintext secret to any authenticated dashboard load.
-        token: '',
-      })
-    );
+    return backends.map((backend) => this.attachHealthStatus(this.toResponse(backend, isShowcase)));
   }
 
   /**
@@ -256,12 +286,7 @@ export class BackendService {
     }
     const isShowcase = this.authService.isShowcaseMode();
 
-    return this.attachHealthStatus({
-      ...backend,
-      url: isShowcase ? maskUrl(backend.url) : backend.url,
-      // See getAllBackends: never expose the stored token in read responses.
-      token: '',
-    });
+    return this.attachHealthStatus(this.toResponse(backend, isShowcase));
   }
 
   /**
@@ -271,23 +296,15 @@ export class BackendService {
     const backends = this.db.getListeningBackends();
     const isShowcase = this.authService.isShowcaseMode();
 
-    return backends.map((backend) => 
-      this.attachHealthStatus({
-        ...backend,
-        url: isShowcase ? maskUrl(backend.url) : backend.url,
-        // Never expose the stored upstream/agent token in list/read responses.
-        // The edit form treats an empty token as "unchanged" on submit, so
-        // blanking it here does not break editing but stops leaking every
-        // backend's plaintext secret to any authenticated dashboard load.
-        token: '',
-      })
-    );
+    return backends.map((backend) => this.attachHealthStatus(this.toResponse(backend, isShowcase)));
   }
 
   /**
-   * Get a single backend by ID
+   * Get a single backend by ID (internal/unmasked shape, incl. api_secret and
+   * agent_token — used only for existence checks and internal logic, never
+   * serialized directly into an HTTP response body).
    */
-  getBackend(id: number): BackendConfig | undefined {
+  getBackend(id: number): BackendConfigFromDb | undefined {
     const backend = this.db.getBackend(id);
     if (!backend) return undefined;
 
@@ -301,13 +318,12 @@ export class BackendService {
   }
 
   /**
-   * Validate a backend URL: agent:// for agent mode, otherwise http(s)/ws(s) only.
+   * Validate a management API URL: http(s)/ws(s) only. `agent://` is no
+   * longer a valid apiUrl input under the unified backend model — agent mode
+   * is now expressed via `withAgent`/`agent_token`, not the url scheme.
    * Rejects schemes like file:, javascript: or unparseable URLs outright.
    */
-  private validateBackendUrl(url: string): void {
-    if (isAgentBackendUrl(url)) {
-      return;
-    }
+  private validateApiUrl(url: string): void {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -316,7 +332,7 @@ export class BackendService {
     }
     const allowed = ['http:', 'https:', 'ws:', 'wss:'];
     if (!allowed.includes(parsed.protocol)) {
-      throw new Error(`Unsupported backend URL scheme '${parsed.protocol}'. Allowed: http, https, ws, wss, agent`);
+      throw new Error(`Unsupported backend URL scheme '${parsed.protocol}'. Allowed: http, https, ws, wss`);
     }
   }
 
@@ -324,31 +340,45 @@ export class BackendService {
    * Create a new backend
    */
   createBackend(input: CreateBackendInput): CreateBackendResult {
-    const { name, url, token, type = 'clash' } = input;
-    this.validateBackendUrl(url);
-    const isAgentMode = isAgentBackendUrl(url);
-    const normalizedToken = (token || '').trim();
-    const finalToken = isAgentMode
-      ? (normalizedToken || generateAgentBackendToken())
-      : normalizedToken;
-    
+    const { name, type = 'clash' } = input;
+    const apiUrl = (input.apiUrl || '').trim();
+    const apiSecret = (input.apiSecret || '').trim();
+
+    if (!apiUrl && !input.withAgent) {
+      throw new Error('Backend needs an API URL or a bound agent (or both)');
+    }
+    if (apiUrl) {
+      this.validateApiUrl(apiUrl);
+    }
+
+    const agentToken = input.withAgent ? generateAgentBackendToken() : '';
+
     // Check if this is the first backend
     const existingBackends = this.db.getAllBackends();
     const isFirstBackend = existingBackends.length === 0;
-    
-    const id = this.db.createBackend({ name, url, token: finalToken, type });
-    
+
+    const id = this.db.createBackend({
+      name,
+      type,
+      apiUrl,
+      apiSecret,
+      agentToken,
+      // Rollback mirror (write-only, see mirrorUrl/mirrorToken above).
+      url: mirrorUrl(name, apiUrl),
+      token: mirrorToken(agentToken, apiSecret),
+    });
+
     // If this is the first backend, automatically set it as active
     if (isFirstBackend) {
       this.db.setActiveBackend(id);
-      console.log(`[API] First backend created, automatically set as active: ${name} (ID: ${id})`);
+      console.info(`[API] First backend created, automatically set as active: ${name} (ID: ${id})`);
     }
-    
+
     return {
       id,
       isActive: isFirstBackend,
       message: 'Backend created successfully',
-      agentToken: isAgentMode ? finalToken : undefined,
+      agentToken: agentToken || undefined,
     };
   }
 
@@ -361,21 +391,52 @@ export class BackendService {
       throw new Error('Backend not found');
     }
 
-    const prevAgentMode = isAgentBackendUrl(existing.url);
-    const nextUrl = typeof input.url === 'string' ? input.url : existing.url;
-    if (typeof input.url === 'string') {
-      this.validateBackendUrl(input.url);
+    const hadAgent = existing.agent_token !== '';
+
+    const nextName = typeof input.name === 'string' ? input.name : existing.name;
+    const nextApiUrl = typeof input.apiUrl === 'string' ? input.apiUrl.trim() : existing.api_url;
+    const nextApiSecret = typeof input.apiSecret === 'string' ? input.apiSecret.trim() : existing.api_secret;
+
+    if (typeof input.apiUrl === 'string' && nextApiUrl) {
+      this.validateApiUrl(nextApiUrl);
     }
-    const nextAgentMode = isAgentBackendUrl(nextUrl);
 
-    this.db.updateBackend(id, input);
+    let nextAgentToken = existing.agent_token;
+    let nextAgentId = existing.agent_id;
+    if (input.withAgent === false) {
+      // Removing the agent channel entirely: clear both token and binding.
+      nextAgentToken = '';
+      nextAgentId = '';
+    } else if (input.withAgent === true && !existing.agent_token) {
+      nextAgentToken = generateAgentBackendToken();
+    }
 
-    if (prevAgentMode && !nextAgentMode) {
+    if (!nextApiUrl && nextAgentToken === '') {
+      throw new Error('Backend needs an API URL or a bound agent (or both)');
+    }
+
+    const hasAgentNow = nextAgentToken !== '';
+
+    this.db.updateBackend(id, {
+      ...(typeof input.name === 'string' ? { name: input.name } : {}),
+      ...(typeof input.type === 'string' ? { type: input.type } : {}),
+      ...(typeof input.enabled === 'boolean' ? { enabled: input.enabled } : {}),
+      ...(typeof input.listening === 'boolean' ? { listening: input.listening } : {}),
+      api_url: nextApiUrl,
+      api_secret: nextApiSecret,
+      agent_token: nextAgentToken,
+      agent_id: nextAgentId,
+      // Rollback mirror (write-only, see mirrorUrl/mirrorToken above).
+      url: mirrorUrl(nextName, nextApiUrl),
+      token: mirrorToken(nextAgentToken, nextApiSecret),
+    });
+
+    if (input.withAgent === false && hadAgent) {
       this.db.clearAgentHeartbeat(id);
       this.healthStatus.delete(id);
     }
 
-    if (!prevAgentMode && nextAgentMode) {
+    if (!hadAgent && hasAgentNow) {
       this.healthStatus.set(id, {
         status: 'unknown',
         lastChecked: Date.now(),
@@ -402,12 +463,20 @@ export class BackendService {
     if (!backend) {
       throw new Error('Backend not found');
     }
-    if (!isAgentBackendUrl(backend.url)) {
+    if (backend.agent_token === '') {
       throw new Error('Token rotation is only supported for agent mode backends');
     }
 
     const nextToken = generateAgentBackendToken();
-    this.db.updateBackend(id, { token: nextToken });
+    this.db.updateBackend(id, {
+      agent_token: nextToken,
+      // Rollback mirror: a freshly rotated token is always non-empty, so it
+      // wins mirrorToken's precedence regardless of api_secret.
+      token: nextToken,
+    });
+    // Rotating clears agent_id too — a new agent (or the same one, restarted
+    // with the new token) claims the binding on its next heartbeat.
+    this.db.unbindAgent(id);
     this.db.clearAgentHeartbeat(id);
 
     this.healthStatus.set(id, {
@@ -420,6 +489,20 @@ export class BackendService {
       message: 'Agent token rotated successfully',
       agentToken: nextToken,
     };
+  }
+
+  /**
+   * Unbind the currently-claimed agent from a backend without touching its
+   * agent_token. Used when reinstalling/replacing the agent host: the next
+   * heartbeat carrying the same token can claim the (now empty) agent_id.
+   */
+  unbindAgent(id: number): { message: string } {
+    const backend = this.db.getBackend(id);
+    if (!backend) {
+      throw new Error('Backend not found');
+    }
+    this.db.unbindAgent(id);
+    return { message: 'Agent unbound' };
   }
 
   /**
@@ -530,7 +613,7 @@ export class BackendService {
       throw new Error('Backend not found');
     }
 
-    if (isAgentBackendUrl(backend.url)) {
+    if (backend.agent_token !== '') {
       const health = this.buildAgentHealthStatus(id, Date.now(), this.getAgentManualTestTimeoutMs());
       this.healthStatus.set(id, health);
 
@@ -541,22 +624,20 @@ export class BackendService {
     }
 
     return this.testConnection({
-      url: backend.url,
-      token: backend.token,
+      url: backend.api_url,
+      token: backend.api_secret,
       type: backend.type,
     });
   }
 
   /**
-   * Test connection to a backend
+   * Test connection to a backend. `agent://` is no longer a meaningful input
+   * here — agent mode is decided upstream (by `agent_token` presence) before
+   * this is ever called with a raw URL; this always tests an actual API URL.
    */
   async testConnection(input: TestConnectionInput): Promise<TestConnectionResult> {
     const { url, token, type = 'clash' } = input;
 
-    if (isAgentBackendUrl(url)) {
-      return { success: true, message: 'Agent mode backend configured (use backend test by id for realtime online status)' };
-    }
-    
     if (type === 'surge') {
       return this.testSurgeConnection(url, token);
     }

@@ -20,15 +20,17 @@ export type { BackendConfig as BackendConfigFromDb } from '../db/db.js';
 
 export interface CreateBackendInput {
   name: string;
-  url: string;
-  token?: string;
+  apiUrl?: string;
+  apiSecret?: string;
+  withAgent?: boolean;
   type?: 'clash' | 'surge';
 }
 
 export interface UpdateBackendInput {
   name?: string;
-  url?: string;
-  token?: string;
+  apiUrl?: string;
+  apiSecret?: string;
+  withAgent?: boolean;
   type?: 'clash' | 'surge';
   enabled?: boolean;
   listening?: boolean;
@@ -51,6 +53,12 @@ export interface BackendResponse {
   enabled: boolean;
   is_active: boolean;
   listening: boolean;
+  /** M1c: management API address (masked in showcase mode, same as `url`). '' = no API channel. */
+  apiUrl: string;
+  /** M1c: whether an agent token is configured for this backend (not the token itself). */
+  hasAgent: boolean;
+  /** M1c: explicitly bound agent id. '' = unbound. */
+  agentId: string;
   created_at: string;
   updated_at: string;
   health?: BackendHealthInfo;

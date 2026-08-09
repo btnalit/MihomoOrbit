@@ -32,9 +32,10 @@ const backendController: FastifyPluginAsync = async (fastify: FastifyInstance): 
   // Get all backends
   fastify.get('/', async () => {
     // M0 起后端列表附带能力标记,供 web 渲染/置灰功能入口(M1 实时管理、M2 配置编辑)
+    // M1c: capabilities 现由 apiUrl/agentId 驱动(见统一后端模型),不再靠 url 前缀判断
     return service.getAllBackends().map((backend) => ({
       ...backend,
-      capabilities: backendCapabilities({ url: backend.url }),
+      capabilities: backendCapabilities({ url: backend.url, apiUrl: backend.apiUrl, agentId: backend.agentId }),
     }));
   });
 
@@ -54,20 +55,23 @@ const backendController: FastifyPluginAsync = async (fastify: FastifyInstance): 
       return reply.status(403).send({ error: 'Forbidden' });
     }
 
-    const { name, url, token, type } = request.body;
-    
-    if (!name || !url) {
-      return reply.status(400).send({ error: 'Name and URL are required' });
+    const { name } = request.body;
+
+    if (!name) {
+      return reply.status(400).send({ error: 'Name is required' });
     }
-    
+
     try {
-      const result = service.createBackend({ name, url, token, type });
+      const result = service.createBackend(request.body);
       return result;
     } catch (error: any) {
       if (error.message?.includes('UNIQUE constraint failed')) {
         return reply.status(409).send({ error: 'Backend name already exists' });
       }
-      throw error;
+      // Everything else createBackend throws is an input-validation error
+      // (missing apiUrl/agent, bad URL scheme) — surface it as 400 rather
+      // than a generic 500.
+      return reply.status(400).send({ error: error.message ?? 'Invalid backend configuration' });
     }
   });
 
@@ -84,9 +88,13 @@ const backendController: FastifyPluginAsync = async (fastify: FastifyInstance): 
     if (!backend) {
       return reply.status(404).send({ error: 'Backend not found' });
     }
-    
-    const result = service.updateBackend(backendId, request.body);
-    return result;
+
+    try {
+      const result = service.updateBackend(backendId, request.body);
+      return result;
+    } catch (error: any) {
+      return reply.status(400).send({ error: error.message ?? 'Invalid backend configuration' });
+    }
   });
 
   // Delete backend
@@ -175,6 +183,25 @@ const backendController: FastifyPluginAsync = async (fastify: FastifyInstance): 
     }
 
     const result = service.rotateAgentToken(backendId);
+    return result;
+  });
+
+  // Unbind the currently-claimed agent (keeps agent_token, clears agent_id
+  // only) — for reinstalling/replacing the agent host without a new token.
+  fastify.post<{ Params: BackendParams }>('/:id/agent/unbind', async (request, reply) => {
+    if (fastify.authService.isShowcaseMode()) {
+      return reply.status(403).send({ error: 'Forbidden' });
+    }
+
+    const { id } = request.params;
+    const backendId = parseInt(id);
+
+    const backend = service.getBackend(backendId);
+    if (!backend) {
+      return reply.status(404).send({ error: 'Backend not found' });
+    }
+
+    const result = service.unbindAgent(backendId);
     return result;
   });
 
