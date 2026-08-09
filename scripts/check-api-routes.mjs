@@ -13,6 +13,7 @@ const BACKEND_SOURCES = [
   { file: 'apps/collector/src/modules/auth/auth.controller.ts', prefix: '/api/auth' },
   { file: 'apps/collector/src/modules/config/config.controller.ts', prefix: '/api/db' },
   { file: 'apps/collector/src/modules/management/management.controller.ts', prefix: '/api/management' },
+  { file: 'apps/collector/src/modules/config-editor/config-editor.controller.ts', prefix: '/api/config-editor' },
 ];
 
 function read(file) {

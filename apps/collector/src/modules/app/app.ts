@@ -25,6 +25,7 @@ import { StatsService, statsController } from '../stats/index.js';
 import { AuthService, authController } from '../auth/index.js';
 import { configController } from '../config/index.js';
 import { ManagementService, managementController } from '../management/index.js';
+import { configEditorController } from '../config-editor/index.js';
 
 // Extend Fastify instance to include services
 declare module 'fastify' {
@@ -1585,6 +1586,10 @@ export async function createApp(options: AppOptions) {
   // NOT added to PUBLIC_ROUTES above — management endpoints sit behind the
   // same mandatory-auth hooks as every other route registered in this block.
   await app.register(managementController, { prefix: '/api/management' });
+  // Same: NOT added to PUBLIC_ROUTES — the config-editor read API is an
+  // admin-facing surface, unlike the /api/agent/config-file ingest endpoint
+  // above (which authenticates independently via agent tokens).
+  await app.register(configEditorController, { prefix: '/api/config-editor' });
 
   if (autoListen) {
     // Start server
