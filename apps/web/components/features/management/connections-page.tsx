@@ -21,9 +21,19 @@
  * whatever frame arrives next; nothing that arrived during the pause is
  * replayed. This matches the snapshot semantics of the topic: there is no
  * meaningful "catch up" for a table that only ever shows current state.
+ *
+ * A raw WebSocket reconnect (network blip between browser and collector —
+ * distinct from the server pushing `topic-error`) gets the same treatment
+ * as pause: `useTopicSubscription`'s `status` is consumed so the rate
+ * baseline is dropped the moment the socket leaves `"connected"`, and an
+ * inline banner marks the table as stale until a fresh frame lands after
+ * reconnect. A server-reported `topic-error` (`topicOffline`) always wins
+ * over a bare `wsOffline` in what the banner says — the server explicitly
+ * telling us the backend is unreachable is more specific than "our socket
+ * to the collector happens to be down right now".
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   AlertTriangle,
@@ -181,12 +191,28 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
     [paused],
   );
 
-  useTopicSubscription({
+  const { status: wsStatus } = useTopicSubscription({
     topic: "connections",
     backendId,
     enabled: backendId !== undefined,
     onMessage: handleTopicMessage,
   });
+
+  // `wsStatus` is derived state from the hook's own `useState`, not owned
+  // here — `wsOffline` just reads it, no separate flag to fight with
+  // `topicOffline`. Only the ref-clearing below is a side effect worth an
+  // effect: the same rebaseline `handleTogglePause` does on pause-entry,
+  // triggered here by the socket itself leaving `"connected"` (covers
+  // reconnects `handleTogglePause` can't see, since the subscription stays
+  // live across those). Runs once per status transition, not per render,
+  // and clearing an already-null ref on a multi-hop reconnect sequence
+  // ("connecting" -> "error" -> "connecting" -> "connected") is harmless.
+  useEffect(() => {
+    if (wsStatus !== "connected") {
+      prevFrameRef.current = null;
+    }
+  }, [wsStatus]);
+  const wsOffline = wsStatus !== "connected";
 
   const handleTogglePause = useCallback(() => {
     setPaused((prev) => {
@@ -416,7 +442,10 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
         {t("title")}
       </h2>
 
-      {topicOffline && <OfflineBanner />}
+      {/* `topicOffline` (server said unreachable) takes precedence over a
+          bare `wsOffline` (our socket to the collector is momentarily
+          down) in what the banner says — see file header comment. */}
+      {(topicOffline || wsOffline) && <OfflineBanner reconnecting={!topicOffline} />}
 
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border bg-card p-3">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
@@ -529,8 +558,20 @@ function Stat({
 /** Duplicated (not extracted) from `groups-page.tsx`'s `OfflineBanner`: same
  *  visual/i18n pattern, but no retry button — that page's banner retries a
  *  REST query, this page has none; the topic subscription already
- *  reconnects and self-heals `topicOffline` on its own next data frame. */
-function OfflineBanner({ fullPage }: { fullPage?: boolean }) {
+ *  reconnects and self-heals both `topicOffline` and (via `wsStatus`)
+ *  `wsOffline` on its own next data frame / reconnect.
+ *
+ *  `reconnecting` swaps in a lighter message for a bare WebSocket blip
+ *  (`wsOffline` with no server-reported `topic-error`) — same visual
+ *  treatment, since it's still "the table you're looking at is stale,"
+ *  but worded as transient rather than as a backend-reachability problem. */
+function OfflineBanner({
+  fullPage,
+  reconnecting,
+}: {
+  fullPage?: boolean;
+  reconnecting?: boolean;
+}) {
   const t = useTranslations("management.connections");
 
   const content = (
@@ -539,7 +580,9 @@ function OfflineBanner({ fullPage }: { fullPage?: boolean }) {
       className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 flex items-center gap-3"
     >
       <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
-      <p className="text-sm text-amber-700 dark:text-amber-300">{t("offlineBanner")}</p>
+      <p className="text-sm text-amber-700 dark:text-amber-300">
+        {reconnecting ? t("reconnectingBanner") : t("offlineBanner")}
+      </p>
     </div>
   );
 

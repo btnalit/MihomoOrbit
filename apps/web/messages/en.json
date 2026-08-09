@@ -335,7 +335,8 @@
       "searchPlaceholder": "Search host / IP",
       "empty": "No connections",
       "noResults": "No matching connections",
-      "offlineBanner": "Can't reach this backend right now — live data is unavailable."
+      "offlineBanner": "Can't reach this backend right now — live data is unavailable.",
+      "reconnectingBanner": "Lost the live connection — reconnecting…"
     }
   },
   "map": {

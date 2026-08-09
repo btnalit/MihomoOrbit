@@ -335,7 +335,8 @@
       "searchPlaceholder": "按主机 / IP 搜索",
       "empty": "暂无连接",
       "noResults": "未找到匹配的连接",
-      "offlineBanner": "无法连接到该后端,实时数据暂不可用"
+      "offlineBanner": "无法连接到该后端,实时数据暂不可用",
+      "reconnectingBanner": "与实时数据的连接已断开,正在重新连接…"
     }
   },
   "map": {
