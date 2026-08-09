@@ -308,6 +308,34 @@
       "retry": "Retry",
       "loadError": "Failed to load proxy groups",
       "empty": "No proxy groups"
+    },
+    "connections": {
+      "title": "Live Connections",
+      "columns": {
+        "host": "Host",
+        "chains": "Chain",
+        "rule": "Rule",
+        "downRate": "Down Rate",
+        "upRate": "Up Rate",
+        "traffic": "Traffic",
+        "start": "Started",
+        "source": "Source",
+        "actions": "Actions"
+      },
+      "kill": "Close connection",
+      "stats": {
+        "count": "Connections",
+        "downRate": "Total Down",
+        "upRate": "Total Up",
+        "downloadTotal": "Total Downloaded",
+        "uploadTotal": "Total Uploaded"
+      },
+      "pause": "Pause",
+      "resume": "Resume",
+      "searchPlaceholder": "Search host / IP",
+      "empty": "No connections",
+      "noResults": "No matching connections",
+      "offlineBanner": "Can't reach this backend right now — live data is unavailable."
     }
   },
   "map": {

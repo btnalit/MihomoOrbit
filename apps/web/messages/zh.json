@@ -308,6 +308,34 @@
       "retry": "重试",
       "loadError": "加载代理组失败",
       "empty": "暂无代理组"
+    },
+    "connections": {
+      "title": "实时连接",
+      "columns": {
+        "host": "主机",
+        "chains": "代理链",
+        "rule": "规则",
+        "downRate": "下行速率",
+        "upRate": "上行速率",
+        "traffic": "累计流量",
+        "start": "建立时间",
+        "source": "来源",
+        "actions": "操作"
+      },
+      "kill": "断开连接",
+      "stats": {
+        "count": "连接数",
+        "downRate": "总下行",
+        "upRate": "总上行",
+        "downloadTotal": "累计下载",
+        "uploadTotal": "累计上传"
+      },
+      "pause": "暂停",
+      "resume": "继续",
+      "searchPlaceholder": "按主机 / IP 搜索",
+      "empty": "暂无连接",
+      "noResults": "未找到匹配的连接",
+      "offlineBanner": "无法连接到该后端,实时数据暂不可用"
     }
   },
   "map": {

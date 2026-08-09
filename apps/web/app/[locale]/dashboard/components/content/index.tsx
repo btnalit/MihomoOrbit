@@ -15,7 +15,7 @@ import { InteractiveRuleStats } from "@/components/features/rules";
 import { HealthContent } from "@/components/features/health";
 import { WorldTrafficMap, CountryTrafficList } from "@/components/features/countries";
 import { DomainsTable, IPsTable } from "@/components/features/stats/table";
-import { GroupsPage, ManagementGate } from "@/components/features/management";
+import { ConnectionsPage, GroupsPage, ManagementGate } from "@/components/features/management";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -421,6 +421,15 @@ export function Content({
           </ManagementGate>
         );
       case "connections":
+        return (
+          <ManagementGate backend={activeBackend} onBackendChange={onBackendChange}>
+            {/* Same remount-on-backend-switch rationale as the groups tab
+                above: ConnectionsPage's local state (accumulated frame,
+                previous-frame rate baseline, pause/search) is per-backend
+                and must not survive a switch to a different backend. */}
+            <ConnectionsPage key={activeBackendId} backendId={activeBackendId} />
+          </ManagementGate>
+        );
       case "logs":
       case "runtime":
         return (
