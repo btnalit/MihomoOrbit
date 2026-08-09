@@ -22,11 +22,26 @@
  * one shared mutation — so "disable the control while its own patch is
  * pending" (task-8 brief) means exactly that: changing the mode segmented
  * control doesn't grey out the log-level select or the allow-lan switch
- * while its PATCH is in flight, and vice versa.
+ * while its PATCH is in flight, and vice versa. Each control's `disabled`
+ * also OR's in `configQuery.isFetching`, not just its own `isPending`:
+ * `usePatchRuntimeConfig`'s `onSuccess` (Task 4, `use-management.ts`, out
+ * of this task's whitelist) calls `invalidateQueries()` without awaiting
+ * it, so the mutation's own `isPending` flips back to `false` a full GET
+ * round-trip before the refetched value actually lands in the query cache.
+ * Without the `isFetching` term a control would briefly re-enable while
+ * still showing the pre-change (stale) value — visually snapping back
+ * before the real server value arrives. Gating on `isFetching` too holds
+ * the control disabled for that whole window. Root cause is the
+ * un-awaited invalidate in the Task 4 hook; this is a page-local
+ * mitigation, not a fix to that hook.
  *
- * Top warning banner is always rendered (not conditional on load state)
- * per the brief/plan §4: these are live-core edits, not persisted config —
- * that requires the config editor feature still to come (M2).
+ * Top warning banner (`NotPersistedBanner`) is resident on every render
+ * branch — loading skeleton, hard error, offline-with-no-data, and the
+ * normal loaded view — not just the happy path. `key={activeBackendId}`
+ * remounts this page on every backend switch (see the dashboard dispatch),
+ * so `isLoading` is true on every single visit; a banner gated behind the
+ * loaded branch would be off-screen exactly when a user first lands here,
+ * contradicting the brief's hard requirement (规格 §4 不持久标注).
  */
 
 import { useTranslations } from "next-intl";
@@ -84,15 +99,20 @@ export function RuntimePage({ backendId }: RuntimePageProps) {
   const unreachable = configQuery.isError && isUnreachableError(configQuery.error);
   const hasData = !!configQuery.data;
 
-  if (configQuery.isLoading) {
-    return <RuntimePageSkeleton />;
-  }
+  // See file header: holds every control disabled through the un-awaited
+  // invalidate-then-refetch window after a successful PATCH, not just
+  // while the mutation itself is in flight.
+  const controlsBusy = configQuery.isFetching;
 
-  // Any other query error (not the documented unreachable-backend shape) —
-  // ManagementGate already filters out the 404/409 cases, but don't render
-  // nothing if some other failure slips through.
-  if (configQuery.isError && !unreachable && !hasData) {
-    return (
+  let body: React.ReactNode;
+
+  if (configQuery.isLoading) {
+    body = <RuntimePageSkeleton />;
+  } else if (configQuery.isError && !unreachable && !hasData) {
+    // Any other query error (not the documented unreachable-backend shape)
+    // — ManagementGate already filters out the 404/409 cases, but don't
+    // render nothing if some other failure slips through.
+    body = (
       <div
         role="alert"
         className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 flex items-start gap-3"
@@ -106,124 +126,123 @@ export function RuntimePage({ backendId }: RuntimePageProps) {
         </div>
       </div>
     );
-  }
+  } else if (unreachable && !hasData) {
+    body = <OfflineBanner onRetry={handleRetry} retrying={configQuery.isRefetching} fullPage />;
+  } else {
+    const data = configQuery.data;
+    const mode = isKnownMode(data?.mode) ? data?.mode : undefined;
+    const logLevel = isKnownLogLevel(data?.["log-level"]) ? data?.["log-level"] : undefined;
+    const allowLan = !!data?.["allow-lan"];
+    const version = typeof data?.version === "string" ? data.version : undefined;
 
-  if (unreachable && !hasData) {
-    return (
-      <div className="space-y-4">
-        <NotPersistedBanner />
-        <OfflineBanner onRetry={handleRetry} retrying={configQuery.isRefetching} fullPage />
-      </div>
+    body = (
+      <>
+        <h2 className="text-lg font-semibold flex items-center gap-2">
+          <Settings2 className="w-5 h-5" />
+          {t("title")}
+        </h2>
+
+        {unreachable && (
+          <OfflineBanner onRetry={handleRetry} retrying={configQuery.isRefetching} />
+        )}
+
+        <Card>
+          <CardContent className="p-5 space-y-5">
+            <SettingRow label={t("mode.label")}>
+              <div
+                role="group"
+                aria-label={t("mode.label")}
+                className="inline-flex items-center gap-0.5 bg-muted/50 rounded-lg p-0.5"
+              >
+                {MODES.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    aria-pressed={mode === m}
+                    disabled={modePatch.isPending || controlsBusy}
+                    onClick={() => {
+                      if (mode === m || modePatch.isPending) return;
+                      modePatch.mutate(
+                        { mode: m },
+                        { onError: () => configQuery.refetch() },
+                      );
+                    }}
+                    className={cn(
+                      "px-3 py-1.5 rounded-md text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed",
+                      mode === m
+                        ? "bg-background shadow-sm text-primary"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {t(`mode.${m}`)}
+                  </button>
+                ))}
+              </div>
+            </SettingRow>
+
+            <SettingRow label={t("logLevel.label")}>
+              <Select
+                value={logLevel}
+                disabled={logLevelPatch.isPending || controlsBusy}
+                onValueChange={(value) => {
+                  if (value === logLevel) return;
+                  logLevelPatch.mutate(
+                    { "log-level": value },
+                    { onError: () => configQuery.refetch() },
+                  );
+                }}
+              >
+                <SelectTrigger className="w-40" aria-label={t("logLevel.label")}>
+                  <SelectValue placeholder="—" />
+                </SelectTrigger>
+                <SelectContent>
+                  {LOG_LEVELS.map((level) => (
+                    <SelectItem key={level} value={level}>
+                      {t(`logLevel.${level}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingRow>
+
+            <SettingRow label={t("allowLan.label")} description={t("allowLan.description")}>
+              <Switch
+                checked={allowLan}
+                disabled={allowLanPatch.isPending || controlsBusy}
+                aria-label={t("allowLan.label")}
+                onCheckedChange={(checked) => {
+                  allowLanPatch.mutate(
+                    { "allow-lan": checked },
+                    { onError: () => configQuery.refetch() },
+                  );
+                }}
+              />
+            </SettingRow>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-5">
+            <h3 className="text-sm font-medium text-muted-foreground mb-3">
+              {t("readonly.title")}
+            </h3>
+            <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+              <Stat label={t("readonly.mixedPort")} value={formatPort(data?.["mixed-port"])} />
+              <Stat label={t("readonly.port")} value={formatPort(data?.port)} />
+              <Stat label={t("readonly.socksPort")} value={formatPort(data?.["socks-port"])} />
+              {version && <Stat label={t("readonly.version")} value={version} />}
+            </div>
+          </CardContent>
+        </Card>
+      </>
     );
   }
 
-  const data = configQuery.data;
-  const mode = isKnownMode(data?.mode) ? data?.mode : undefined;
-  const logLevel = isKnownLogLevel(data?.["log-level"]) ? data?.["log-level"] : undefined;
-  const allowLan = !!data?.["allow-lan"];
-  const version = typeof data?.version === "string" ? data.version : undefined;
-
+  // NotPersistedBanner is resident on every branch above — see file header.
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold flex items-center gap-2">
-        <Settings2 className="w-5 h-5" />
-        {t("title")}
-      </h2>
-
       <NotPersistedBanner />
-
-      {unreachable && (
-        <OfflineBanner onRetry={handleRetry} retrying={configQuery.isRefetching} />
-      )}
-
-      <Card>
-        <CardContent className="p-5 space-y-5">
-          <SettingRow label={t("mode.label")}>
-            <div
-              role="group"
-              aria-label={t("mode.label")}
-              className="inline-flex items-center gap-0.5 bg-muted/50 rounded-lg p-0.5"
-            >
-              {MODES.map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  aria-pressed={mode === m}
-                  disabled={modePatch.isPending}
-                  onClick={() => {
-                    if (mode === m || modePatch.isPending) return;
-                    modePatch.mutate(
-                      { mode: m },
-                      { onError: () => configQuery.refetch() },
-                    );
-                  }}
-                  className={cn(
-                    "px-3 py-1.5 rounded-md text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed",
-                    mode === m
-                      ? "bg-background shadow-sm text-primary"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {t(`mode.${m}`)}
-                </button>
-              ))}
-            </div>
-          </SettingRow>
-
-          <SettingRow label={t("logLevel.label")}>
-            <Select
-              value={logLevel}
-              disabled={logLevelPatch.isPending}
-              onValueChange={(value) => {
-                if (value === logLevel) return;
-                logLevelPatch.mutate(
-                  { "log-level": value },
-                  { onError: () => configQuery.refetch() },
-                );
-              }}
-            >
-              <SelectTrigger className="w-40" aria-label={t("logLevel.label")}>
-                <SelectValue placeholder="—" />
-              </SelectTrigger>
-              <SelectContent>
-                {LOG_LEVELS.map((level) => (
-                  <SelectItem key={level} value={level}>
-                    {t(`logLevel.${level}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </SettingRow>
-
-          <SettingRow label={t("allowLan.label")} description={t("allowLan.description")}>
-            <Switch
-              checked={allowLan}
-              disabled={allowLanPatch.isPending}
-              aria-label={t("allowLan.label")}
-              onCheckedChange={(checked) => {
-                allowLanPatch.mutate(
-                  { "allow-lan": checked },
-                  { onError: () => configQuery.refetch() },
-                );
-              }}
-            />
-          </SettingRow>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="p-5">
-          <h3 className="text-sm font-medium text-muted-foreground mb-3">
-            {t("readonly.title")}
-          </h3>
-          <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-            <Stat label={t("readonly.mixedPort")} value={formatPort(data?.["mixed-port"])} />
-            <Stat label={t("readonly.port")} value={formatPort(data?.port)} />
-            <Stat label={t("readonly.socksPort")} value={formatPort(data?.["socks-port"])} />
-            {version && <Stat label={t("readonly.version")} value={version} />}
-          </div>
-        </CardContent>
-      </Card>
+      {body}
     </div>
   );
 }

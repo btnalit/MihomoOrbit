@@ -279,7 +279,6 @@
     "comingSoon": "Real-time connection monitoring coming soon..."
   },
   "management": {
-    "comingSoon": "This feature will be implemented in a later task",
     "delayTestRunning": "This group is already being tested — please wait",
     "gate": {
       "title": "Real-time Management Unavailable",
