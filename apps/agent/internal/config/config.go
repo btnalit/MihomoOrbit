@@ -13,7 +13,8 @@ import (
 // AgentVersion is set at build time via -ldflags "-X ...config.AgentVersion=<tag>"
 // Falls back to "dev" for local/untagged builds.
 var AgentVersion = "dev"
-const AgentProtocolVersion = 1
+
+const AgentProtocolVersion = 2
 
 var (
 	ErrHelp    = errors.New("help requested")

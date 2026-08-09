@@ -54,16 +54,51 @@ type reportPayload struct {
 }
 
 type heartbeatPayload struct {
-	BackendID        int    `json:"backendId"`
-	AgentID          string `json:"agentId"`
-	Hostname         string `json:"hostname,omitempty"`
-	Version          string `json:"version,omitempty"`
-	AgentVersion     string `json:"agentVersion,omitempty"`
-	ProtocolVersion  int    `json:"protocolVersion"`
-	GatewayType      string `json:"gatewayType,omitempty"`
-	GatewayURL       string `json:"gatewayUrl,omitempty"`
-	GatewayLatencyMs int64  `json:"gatewayLatencyMs,omitempty"`
-	ServerLatencyMs  int64  `json:"serverLatencyMs,omitempty"`
+	BackendID        int             `json:"backendId"`
+	AgentID          string          `json:"agentId"`
+	Hostname         string          `json:"hostname,omitempty"`
+	Version          string          `json:"version,omitempty"`
+	AgentVersion     string          `json:"agentVersion,omitempty"`
+	ProtocolVersion  int             `json:"protocolVersion"`
+	GatewayType      string          `json:"gatewayType,omitempty"`
+	GatewayURL       string          `json:"gatewayUrl,omitempty"`
+	GatewayLatencyMs int64           `json:"gatewayLatencyMs,omitempty"`
+	ServerLatencyMs  int64           `json:"serverLatencyMs,omitempty"`
+	CommandResults   []commandResult `json:"commandResults,omitempty"`
+}
+
+// commandPayload is one pending config-apply command as dispatched in a
+// heartbeat response. Wire shape is byte-authoritative per the plan's
+// "协议契约(v2)" section — see docs/superpowers/plans/
+// 2026-08-09-m2b-config-editing.md.
+type commandPayload struct {
+	CommandID  string                 `json:"commandId"`
+	Type       string                 `json:"type"`
+	BaseHash   string                 `json:"baseHash"`
+	Content    string                 `json:"content"`
+	Verify     map[string]interface{} `json:"verify"`
+	IssuedAtMs int64                  `json:"issuedAtMs"`
+}
+
+// heartbeatResponse is the collector's /agent/heartbeat response body,
+// parsed only by sendHeartbeat. The other three POST paths (report, config,
+// policy-state) share postJSON, which discards the response body entirely —
+// this type is never referenced from those call sites (the dual contract's
+// agent half: commands riding on any response other than the heartbeat
+// response are ignored by construction).
+type heartbeatResponse struct {
+	Success  bool             `json:"success"`
+	Commands []commandPayload `json:"commands"`
+}
+
+// commandResult is the agent's report of a completed (or failed) command,
+// attached to the next heartbeat request and cleared once that heartbeat
+// gets a 2xx. Result is one of applied|conflict|rolled-back|failed.
+type commandResult struct {
+	CommandID     string `json:"commandId"`
+	Result        string `json:"result"`
+	Reason        string `json:"reason"`
+	CompletedAtMs int64  `json:"completedAtMs"`
 }
 
 type configPayload struct {
@@ -100,6 +135,17 @@ type Runner struct {
 	lastPolicyHash   string
 	gatewayLatencyMs int64
 	serverLatencyMs  int64
+
+	// pendingCommandResults queues command outcomes to attach to the next
+	// heartbeat request; cleared once that heartbeat gets a 2xx. Guarded by
+	// mu like the other Runner-owned state above. This is a deliberately
+	// simple in-memory queue for this task — Task 3 replaces it with
+	// persistence backed by configapply's state file.
+	pendingCommandResults []commandResult
+
+	// handleCommandsFn receives the Commands from a parsed heartbeatResponse.
+	// Defaults to a no-op in NewRunner; Task 3 wires in the real dispatcher.
+	handleCommandsFn func([]commandPayload)
 }
 
 func NewRunner(cfg config.Config) *Runner {
@@ -110,13 +156,14 @@ func NewRunner(cfg config.Config) *Runner {
 	}
 
 	return &Runner{
-		cfg:           cfg,
-		httpClient:    httpClient,
-		gatewayClient: gateway.NewClient(httpClient, cfg.GatewayType, cfg.GatewayEndpoint, cfg.GatewayToken),
-		hostname:      hostname,
-		lockDir:       os.TempDir(),
-		queue:         make([]domain.TrafficUpdate, 0, cfg.ReportBatchSize*2),
-		flows:         make(map[string]trackedFlow, 2048),
+		cfg:              cfg,
+		httpClient:       httpClient,
+		gatewayClient:    gateway.NewClient(httpClient, cfg.GatewayType, cfg.GatewayEndpoint, cfg.GatewayToken),
+		hostname:         hostname,
+		lockDir:          os.TempDir(),
+		queue:            make([]domain.TrafficUpdate, 0, cfg.ReportBatchSize*2),
+		flows:            make(map[string]trackedFlow, 2048),
+		handleCommandsFn: func([]commandPayload) {},
 	}
 }
 
@@ -661,13 +708,15 @@ func (r *Runner) runConfigFileReportLoop(ctx context.Context, wg *sync.WaitGroup
 // postConfigFile is the configfile.PostFunc closure the config-file report
 // loop uses to reach the collector. It reuses postJSONWithLatency exactly
 // as-is (gzip + Bearer auth, unchanged) rather than duplicating that
-// wiring — postJSONWithLatency's return-body contract is untouched here per
-// the task brief; M2b is expected to refactor it to return structured
-// errors. Until then, 404 is detected by matching postJSONWithLatency's
-// non-2xx error string ("server http %d: %s"), the only signal currently
-// available without changing that function's signature or behavior.
+// wiring. 404 is detected by matching postJSONWithLatency's non-2xx error
+// string ("server http %d: %s"), the only signal currently available
+// without a structured status — kept identical across the M2b protocol-v2
+// signature change (added response body) so this detection keeps working.
+// The response body itself is discarded (_): /agent/config-file is not the
+// heartbeat path, so any commands riding on its response are ignored by
+// construction — the dual contract's agent half.
 func (r *Runner) postConfigFile(ctx context.Context, path string, payload interface{}) (status404 bool, err error) {
-	_, err = r.postJSONWithLatency(ctx, path, payload)
+	_, _, err = r.postJSONWithLatency(ctx, path, payload)
 	if err == nil {
 		return false, nil
 	}
@@ -844,6 +893,7 @@ func (r *Runner) sendHeartbeat(ctx context.Context) error {
 	r.mu.Lock()
 	gatewayLatencyMs := r.gatewayLatencyMs
 	serverLatencyMs := r.serverLatencyMs
+	pendingResults := r.pendingCommandResults
 	r.mu.Unlock()
 
 	payload := heartbeatPayload{
@@ -857,41 +907,83 @@ func (r *Runner) sendHeartbeat(ctx context.Context) error {
 		GatewayURL:       r.cfg.GatewayEndpoint,
 		GatewayLatencyMs: gatewayLatencyMs,
 		ServerLatencyMs:  serverLatencyMs,
+		CommandResults:   pendingResults,
 	}
-	latencyMs, err := r.postJSONWithLatency(ctx, "/agent/heartbeat", payload)
+	respBody, latencyMs, err := r.postJSONWithLatency(ctx, "/agent/heartbeat", payload)
 	if err != nil {
 		return err
 	}
 
 	r.mu.Lock()
 	r.serverLatencyMs = latencyMs
+	// Delivered via a 2xx heartbeat — drop exactly the prefix we attached to
+	// this request (by count), not the whole queue: if a future producer
+	// (Task 3) appends a new result while this POST was in flight, that
+	// result must survive to ride the next heartbeat instead of being
+	// silently dropped here.
+	if len(r.pendingCommandResults) >= len(pendingResults) {
+		r.pendingCommandResults = r.pendingCommandResults[len(pendingResults):]
+	} else {
+		r.pendingCommandResults = nil
+	}
 	r.mu.Unlock()
+
+	if len(respBody) == 0 {
+		return nil
+	}
+	var heartbeatResp heartbeatResponse
+	if err := json.Unmarshal(respBody, &heartbeatResp); err != nil {
+		// A malformed heartbeat response doesn't fail the heartbeat itself
+		// (the collector did ack with 2xx) — just log and skip command
+		// dispatch for this round; the collector will resend any
+		// still-pending commands on the next heartbeat.
+		log.Printf("[agent:%s] heartbeat response parse error: %v", r.cfg.AgentID, err)
+		return nil
+	}
+	if len(heartbeatResp.Commands) > 0 {
+		r.handleCommandsFn(heartbeatResp.Commands)
+	}
 	return nil
 }
 
+// postJSON is the shared POST helper for the three non-heartbeat call sites
+// (flushOnce → /agent/report, syncConfig → /agent/config, syncPolicyState →
+// /agent/policy-state). It discards the response body (_): only
+// sendHeartbeat parses a response for commands — the dual contract's agent
+// half. Any commands riding on a response to one of these three paths are
+// ignored by construction.
 func (r *Runner) postJSON(ctx context.Context, path string, payload interface{}) error {
-	_, err := r.postJSONWithLatency(ctx, path, payload)
+	_, _, err := r.postJSONWithLatency(ctx, path, payload)
 	return err
 }
 
-func (r *Runner) postJSONWithLatency(ctx context.Context, path string, payload interface{}) (int64, error) {
+// maxResponseBodyBytes caps the response body postJSONWithLatency will read
+// on any 2xx, across all four POST paths (heartbeat, report, config,
+// policy-state) — only sendHeartbeat's caller does anything with the bytes
+// today, but the limit applies uniformly at the transport layer. Per the
+// plan's "协议契约(v2)" section: 512 KB covers a full config.yaml (content
+// ≤256KB) plus JSON envelope headroom. A response larger than this is
+// treated as a transport failure — not parsed, not acted on.
+const maxResponseBodyBytes = 512 << 10
+
+func (r *Runner) postJSONWithLatency(ctx context.Context, path string, payload interface{}) ([]byte, int64, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	if _, err = gz.Write(body); err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 	if err = gz.Close(); err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.cfg.ServerAPIBase+path, &buf)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
@@ -900,12 +992,19 @@ func (r *Runner) postJSONWithLatency(ctx context.Context, path string, payload i
 	requestAt := time.Now()
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return time.Since(requestAt).Milliseconds(), nil
+		respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes+1))
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(respBody) > maxResponseBodyBytes {
+			return nil, 0, fmt.Errorf("response body exceeds %d byte limit", maxResponseBodyBytes)
+		}
+		return respBody, time.Since(requestAt).Milliseconds(), nil
 	}
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
@@ -913,7 +1012,7 @@ func (r *Runner) postJSONWithLatency(ctx context.Context, path string, payload i
 	if msg == "" {
 		msg = resp.Status
 	}
-	return 0, fmt.Errorf("server http %d: %s", resp.StatusCode, msg)
+	return nil, 0, fmt.Errorf("server http %d: %s", resp.StatusCode, msg)
 }
 
 func newRequestID() string {
