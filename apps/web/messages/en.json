@@ -280,7 +280,42 @@
     "comingSoon": "Real-time connection monitoring coming soon..."
   },
   "configEditor": {
-    "comingSoon": "The config editor is coming soon...",
+    "categories": {
+      "basic": "Basic",
+      "network": "Network",
+      "tun": "TUN",
+      "dns": "DNS",
+      "sniffer": "Sniffer",
+      "proxies": "Proxies",
+      "proxy-groups": "Proxy Groups",
+      "rules": "Rules"
+    },
+    "tableCategoryComingSoon": "Visual editing for this category will land in a later task.",
+    "loadError": "Failed to load config",
+    "offlineBanner": "Can't reach this backend — config data isn't available right now",
+    "retry": "Retry",
+    "emptyState": {
+      "noConfig": {
+        "title": "No config received yet",
+        "description": "This backend's agent hasn't reported a config.yaml yet — make sure the agent is running and has completed its first heartbeat."
+      },
+      "parseError": {
+        "title": "Config failed to parse",
+        "description": "The reported config.yaml can't currently be parsed, so editing is unavailable — check the on-disk file for a YAML syntax error."
+      }
+    },
+    "field": {
+      "changed": "Changed",
+      "masked": "Hidden sensitive value",
+      "reveal": "Reveal value",
+      "revealComingSoon": "Revealing values will be supported soon",
+      "editMasked": "Replace this value",
+      "cancelEdit": "Cancel edit, restore hidden value",
+      "noneOption": "None",
+      "addItemPlaceholder": "Type and press Enter to add",
+      "removeItem": "Remove {item}",
+      "invalidJson": "Not valid JSON — this change won't be saved"
+    },
     "gate": {
       "title": "Config Editing Unavailable",
       "agentHint": "An agent is available for this backend — bind it in settings to enable config editing.",
