@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 
 	"github.com/btnalit/MihomoOrbit/apps/agent/internal/domain"
 )
@@ -19,18 +21,26 @@ func (c *Client) GetConfigSnapshot(ctx context.Context) (*domain.GatewayConfigSn
 	return c.getSurgeConfig(ctx)
 }
 
+// setAuthHeader applies the same gatewayType-conditioned auth header
+// construction used by every request the client makes (GET and, since
+// configapply, write requests too).
+func (c *Client) setAuthHeader(req *http.Request) {
+	if c.token == "" {
+		return
+	}
+	if c.gatewayType == "surge" {
+		req.Header.Set("X-Key", c.token)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+}
+
 func (c *Client) getJSON(ctx context.Context, path string, out interface{}) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint+path, nil)
 	if err != nil {
 		return err
 	}
-	if c.token != "" {
-		if c.gatewayType == "surge" {
-			req.Header.Set("X-Key", c.token)
-		} else {
-			req.Header.Set("Authorization", "Bearer "+c.token)
-		}
-	}
+	c.setAuthHeader(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -44,6 +54,65 @@ func (c *Client) getJSON(ctx context.Context, path string, out interface{}) erro
 	}
 
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// PutConfigsReload triggers the Clash-compatible gateway to reload its
+// config from disk at the given absolute path. This is the client's first
+// write method (configapply Task 2) — request shape follows clash-cfg-edit
+// backend/server.js:630-648: PUT {base}/configs?force=true, body
+// {"path": "<absolute path>"}.
+func (c *Client) PutConfigsReload(ctx context.Context, path string) error {
+	body, err := json.Marshal(map[string]string{"path": path})
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.endpoint+"/configs?force=true", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c.setAuthHeader(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("gateway PUT /configs returned %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+	return nil
+}
+
+// GetConfigsJSON returns the raw GET /configs response as a generic map,
+// used by configapply's health-gate verify comparison. Decoding stays on
+// encoding/json only — no YAML parsing on the agent side.
+func (c *Client) GetConfigsJSON(ctx context.Context) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.getJSON(ctx, "/configs", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetProxiesCount returns the number of proxies exposed by /proxies —
+// the response shape already parsed in getClashConfig/getClashPolicyState,
+// extracted here as a plain counting entry point for the health gate.
+func (c *Client) GetProxiesCount(ctx context.Context) (int, error) {
+	var proxiesData struct {
+		Proxies map[string]struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+			Now  string `json:"now"`
+		} `json:"proxies"`
+	}
+	if err := c.getJSON(ctx, "/proxies", &proxiesData); err != nil {
+		return 0, err
+	}
+	return len(proxiesData.Proxies), nil
 }
 
 func (c *Client) getClashConfig(ctx context.Context) (*domain.GatewayConfigSnapshot, error) {
@@ -256,7 +325,7 @@ func parseSurgeRuleForAgent(raw string) domain.GatewayRule {
     // return { rules: cached.rules || [], _source: 'agent-cache' };
     // And note that Master's GET /api/gateway/rules for Surge usually parses and returns { type, payload, proxy }.
     return domain.GatewayRule{
-        Raw: raw, 
+        Raw: raw,
     }
 }
 
@@ -289,13 +358,13 @@ func (c *Client) getSurgeConfig(ctx context.Context) (*domain.GatewayConfigSnaps
 	for _, p := range policiesData.Proxies {
 		snap.Proxies[p] = domain.GatewayProxy{
 			Name: p,
-			Type: "Proxy", 
+			Type: "Proxy",
 		}
 	}
 
 	// Build provider proxies slice for policy groups
 	providerProxies := make([]domain.GatewayProxy, 0, len(policiesData.PolicyGroups))
-	
+
 	// Fetch current selection for each policy group
 	// Surge uses /v1/policy_groups/select?group_name=xxx endpoint
 	for _, g := range policiesData.PolicyGroups {
@@ -320,7 +389,7 @@ func (c *Client) getSurgeConfig(ctx context.Context) (*domain.GatewayConfigSnaps
 			Now:  groupDetail.Policy,
 		})
 	}
-	
+
 	// Create a default provider containing all policy groups
 	// This ensures frontend's buildGroupNowMap can find the 'now' values
 	if len(providerProxies) > 0 {
