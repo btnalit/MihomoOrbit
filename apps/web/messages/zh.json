@@ -377,6 +377,35 @@
       "applyFailed": "应用配置失败",
       "rollbackFailed": "回滚配置失败",
       "revealFailed": "显示明文失败"
+    },
+    "apply": {
+      "button": "应用",
+      "noChanges": "暂无未保存的修改",
+      "dirtyCount": "{count} 项未保存的修改",
+      "dialogTitle": "确认应用配置",
+      "dialogDescription": "请确认以下改动后应用到该后端的 agent。",
+      "tabDiff": "改动对比",
+      "tabPreview": "完整预览（只读）",
+      "diffUnchanged": "此次修改未改变最终写入的内容",
+      "diffHasDeletions": "此次修改包含被删除的内容，请仔细确认",
+      "cancel": "取消",
+      "confirm": "确认应用",
+      "confirming": "正在提交…",
+      "submitted": "配置已提交，等待 agent 应用",
+      "submitContentError": "无法生成待提交内容：被删除的字段可能仍被配置中的锚点（&/*）引用，请检查后重试",
+      "maskPathMissingTitle": "提交内容缺少必要的敏感字段",
+      "maskPathMissingDescription": "某个包含隐藏敏感值的字段可能因改名或行序调整而无法匹配原值。请点开该字段的「显示明文」重新确认，或重新输入真实值，而不是直接改名或留空。",
+      "maskPathMissingField": "受影响字段：{path}"
+    },
+    "conflict": {
+      "title": "磁盘配置已变更",
+      "description": "在您编辑期间，该后端的磁盘配置已被其他操作修改。为避免覆盖他人的改动，请选择处理方式；系统不会自动合并两者。",
+      "refetchAndReplay": "拉取最新并重放我的修改",
+      "discard": "放弃我的修改",
+      "refetchFailed": "拉取最新配置失败，请重试",
+      "replayed": "已拉取最新配置并重放您的修改，请重新查看确认",
+      "discarded": "已放弃本次修改",
+      "entrySkipped": "「{field}」在磁盘上已被他人修改，你的修改未重放，请基于最新内容重新编辑"
     }
   },
   "management": {

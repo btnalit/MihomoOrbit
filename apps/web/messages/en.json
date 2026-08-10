@@ -377,6 +377,35 @@
       "applyFailed": "Failed to apply config",
       "rollbackFailed": "Failed to roll back config",
       "revealFailed": "Failed to reveal value"
+    },
+    "apply": {
+      "button": "Apply",
+      "noChanges": "No unsaved changes",
+      "dirtyCount": "{count} unsaved change(s)",
+      "dialogTitle": "Confirm config apply",
+      "dialogDescription": "Review the changes below before applying them to this backend's agent.",
+      "tabDiff": "Diff",
+      "tabPreview": "Full preview (read-only)",
+      "diffUnchanged": "This edit doesn't change the final content that would be written",
+      "diffHasDeletions": "This change includes deleted content — please review carefully",
+      "cancel": "Cancel",
+      "confirm": "Confirm apply",
+      "confirming": "Submitting…",
+      "submitted": "Config submitted — waiting for the agent to apply it",
+      "submitContentError": "Couldn't build the submitted content: a deleted field may still be referenced by a YAML anchor (&/*) elsewhere in this config — please check and try again",
+      "maskPathMissingTitle": "The submitted content is missing a required sensitive field",
+      "maskPathMissingDescription": "A field holding a hidden sensitive value may have failed to match because its row was renamed or reordered. Reveal that field to confirm, or re-enter its real value — don't just rename or clear it.",
+      "maskPathMissingField": "Affected field: {path}"
+    },
+    "conflict": {
+      "title": "The on-disk config has changed",
+      "description": "The backend's on-disk config was changed by something else while you were editing. Choose how to proceed — nothing is merged automatically.",
+      "refetchAndReplay": "Fetch latest and replay my changes",
+      "discard": "Discard my changes",
+      "refetchFailed": "Failed to fetch the latest config — please try again",
+      "replayed": "Fetched the latest config and replayed your changes — please review and confirm again",
+      "discarded": "Your changes have been discarded",
+      "entrySkipped": "\"{field}\" was changed on disk by something else — your edit wasn't replayed; please re-edit it against the latest content"
     }
   },
   "management": {

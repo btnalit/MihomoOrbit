@@ -54,13 +54,26 @@ const ERROR_CODE_KEYS: Record<string, string> = {
  *  it in a user-facing toast, or an unmapped code (e.g. `PATH_NOT_MASKED`)
  *  renders a raw URL instead of a localized message. Mapped codes use
  *  their specific i18n key; everything else uses the caller's localized
- *  generic fallback, never `error.message`. */
+ *  generic fallback, never `error.message`.
+ *
+ *  `silentCodes` (M2b Task 10 review fix, Finding 1): TanStack Query v5
+ *  fires BOTH this hook-level `onError` (baked into `useMutation(...)`
+ *  itself) AND any per-call `mutate(vars, { onError })` handler — a caller
+ *  that owns its own dedicated UI for a specific code (e.g.
+ *  apply-dialog.tsx switching to a conflict card for `BASE_HASH_STALE`)
+ *  would otherwise ALSO get this generic mapped toast firing at the exact
+ *  same moment, both describing the same failure. Codes listed in
+ *  `silentCodes` skip the toast here entirely — the caller is asserting it
+ *  already has a dedicated, more actionable UI for them. Every other code
+ *  is unaffected. */
 function reportConfigError(
   error: unknown,
   t: ReturnType<typeof useTranslations>,
   fallbackKey: "applyFailed" | "rollbackFailed" | "revealFailed",
+  silentCodes?: string[],
 ) {
   const code = apiErrorCode(error);
+  if (code && silentCodes?.includes(code)) return;
   const mappedKey = code ? ERROR_CODE_KEYS[code] : undefined;
   toast.error(t(mappedKey ?? fallbackKey));
 }
@@ -83,9 +96,18 @@ export function useConfigVersions(backendId: number | undefined) {
   });
 }
 
-export function useApplyConfig(backendId: number | undefined) {
+/** `options.silentCodes` — see `reportConfigError`'s doc comment. Passed by
+ *  apply-dialog.tsx as `['BASE_HASH_STALE', 'MASK_PATH_MISSING']` since it
+ *  owns dedicated UI for both (a conflict card and an inline
+ *  renamed-masked-row explanation, respectively) — this hook's own mapped
+ *  toast would otherwise fire redundantly at the same instant. */
+export function useApplyConfig(
+  backendId: number | undefined,
+  options?: { silentCodes?: string[] },
+) {
   const t = useTranslations("configEditor.errors");
   const queryClient = useQueryClient();
+  const silentCodes = options?.silentCodes;
 
   return useMutation({
     mutationFn: (body: { content: string; baseHash: string }) =>
@@ -102,7 +124,7 @@ export function useApplyConfig(backendId: number | undefined) {
         queryClient.invalidateQueries({ queryKey: configLatestCommandQueryKey(backendId) }),
       ]);
     },
-    onError: (error: Error) => reportConfigError(error, t, "applyFailed"),
+    onError: (error: Error) => reportConfigError(error, t, "applyFailed", silentCodes),
   });
 }
 
