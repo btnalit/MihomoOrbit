@@ -20,3 +20,4 @@ export { ConfigRepository, type GeoLookupConfig, type GeoLookupProvider } from '
 export { TrafficWriterRepository, type TrafficUpdate } from './traffic-writer.repository.js';
 export { HealthRepository, type HealthLogRow, type HealthStatus } from './health.repository.js';
 export { ConfigVersionRepository, type ConfigVersion, CONFIG_VERSIONS_KEEP } from './config-version.repository.js';
+export { ConfigCommandRepository, type ConfigCommand, type CommandState, COMMAND_TTL_MS } from './config-command.repository.js';

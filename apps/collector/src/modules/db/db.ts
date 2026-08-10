@@ -23,6 +23,7 @@ import {
   BackendRepository,
   HealthRepository,
   ConfigVersionRepository,
+  ConfigCommandRepository,
 } from '../../database/repositories/index.js';
 
 export interface TrafficUpdate {
@@ -109,6 +110,7 @@ export class StatsDatabase {
     backend: BackendRepository;
     health: HealthRepository;
     configVersion: ConfigVersionRepository;
+    configCommand: ConfigCommandRepository;
   };
 
   constructor(dbPath = 'stats.db') {
@@ -131,6 +133,7 @@ export class StatsDatabase {
       backend: new BackendRepository(this.db),
       health: new HealthRepository(this.db),
       configVersion: new ConfigVersionRepository(this.db),
+      configCommand: new ConfigCommandRepository(this.db),
     };
   }
 
@@ -143,6 +146,16 @@ export class StatsDatabase {
    */
   get configVersions(): ConfigVersionRepository {
     return this.repos.configVersion;
+  }
+
+  /**
+   * Direct facade onto the config-command repository (M2b editor apply/
+   * rollback state machine). Same rationale as configVersions above: its
+   * five methods are consumed as a unit by the config-editor endpoints and
+   * the agent heartbeat handler.
+   */
+  get configCommands(): ConfigCommandRepository {
+    return this.repos.configCommand;
   }
 
   private init() {

@@ -241,8 +241,11 @@ export class ConfigRepository extends BaseRepository {
         this.db.prepare(`DELETE FROM backend_health_logs WHERE backend_id = ?`).run(backendId);
         // config_versions holds plaintext secrets (agent-reported config.yaml
         // content, pre-masking) — the purge-all path must clear it along with
-        // everything else, not just the stats tables.
+        // everything else, not just the stats tables. config_commands
+        // (M2b) references those secrets-bearing payloads via its own
+        // `payload` column, so it must be purged alongside it.
         this.db.prepare(`DELETE FROM config_versions WHERE backend_id = ?`).run(backendId);
+        this.db.prepare(`DELETE FROM config_commands WHERE backend_id = ?`).run(backendId);
       } else {
         const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
         const minuteCutoff = cutoff.toISOString().slice(0, 16) + ':00';
@@ -288,8 +291,11 @@ export class ConfigRepository extends BaseRepository {
         this.db.prepare(`DELETE FROM backend_health_logs`).run();
         // config_versions holds plaintext secrets (agent-reported config.yaml
         // content, pre-masking) — the purge-all path must clear it along with
-        // everything else, not just the stats tables.
+        // everything else, not just the stats tables. config_commands
+        // (M2b) references those secrets-bearing payloads via its own
+        // `payload` column, so it must be purged alongside it.
         this.db.prepare(`DELETE FROM config_versions`).run();
+        this.db.prepare(`DELETE FROM config_commands`).run();
       } else {
         const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
         const minuteCutoff = cutoff.toISOString().slice(0, 16) + ':00';

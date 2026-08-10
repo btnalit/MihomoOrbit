@@ -462,6 +462,30 @@ export const SCHEMA = {
       FOREIGN KEY (backend_id) REFERENCES backend_configs(id) ON DELETE CASCADE
     );
   `,
+
+  // Config command state machine (M2b) - editor-submitted apply/rollback
+  // commands, dispatched to the agent via heartbeat responses and resolved
+  // by its command-result receipts. pending -> dispatched -> applied|
+  // conflict|rolled-back|failed. 'failed' is an adjudicated extension beyond
+  // the spec's three receipt outcomes, for pre-write agent failures (unread-
+  // able disk, unsupported gateway) that are neither conflict nor rolled-
+  // back. TTL (10 min) is a read-time concept computed by the repository —
+  // not a stored column — and never blocks a late receipt from resolving.
+  CONFIG_COMMANDS: `
+    CREATE TABLE IF NOT EXISTS config_commands (
+      command_id TEXT PRIMARY KEY,
+      backend_id INTEGER NOT NULL,
+      version_id INTEGER NOT NULL,
+      base_hash TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending',
+      reason TEXT NOT NULL DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      dispatched_at DATETIME,
+      resolved_at DATETIME,
+      FOREIGN KEY (backend_id) REFERENCES backend_configs(id) ON DELETE CASCADE
+    );
+  `,
 } as const;
 
 // Index definitions
@@ -534,6 +558,9 @@ export const INDEXES = [
 
   // Config versions index
   `CREATE INDEX IF NOT EXISTS idx_config_versions_backend ON config_versions(backend_id, id DESC);`,
+
+  // Config commands index
+  `CREATE INDEX IF NOT EXISTS idx_config_commands_backend ON config_commands(backend_id, created_at DESC);`,
 ] as const;
 
 // Default app config values
@@ -587,6 +614,7 @@ export function getAllSchemaStatements(): string[] {
     SCHEMA.SURGE_POLICY_CACHE,
     SCHEMA.AUTH_CONFIG,
     SCHEMA.CONFIG_VERSIONS,
+    SCHEMA.CONFIG_COMMANDS,
     ...INDEXES,
     DEFAULT_APP_CONFIG,
     DEFAULT_AUTH_CONFIG,
