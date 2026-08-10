@@ -339,12 +339,17 @@ function ProxyMemberPicker({
       </div>
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-2">
-          {selected.map((name) => (
-            <Badge key={name} variant="secondary" className="gap-1 pr-1">
+          {/* index-based key/removal (not the name itself): a hand-written
+           *  config can legitimately list the same member name twice —
+           *  keying/filtering by name would collide (React duplicate-key
+           *  warning) and remove every copy on one click instead of just
+           *  the clicked chip. */}
+          {selected.map((name, i) => (
+            <Badge key={i} variant="secondary" className="gap-1 pr-1">
               <span className="max-w-40 truncate">{displayValue(name)}</span>
               <button
                 type="button"
-                onClick={() => onChange(selected.filter((n) => n !== name))}
+                onClick={() => onChange(selected.filter((_, idx) => idx !== i))}
                 className="rounded-full hover:bg-background/60 p-0.5"
                 aria-label={t("table.memberPicker.remove", { name })}>
                 <X className="w-3 h-3" />
@@ -754,30 +759,42 @@ interface ParsedRule {
   payload: string;
   policy: string;
   hasValue: boolean;
+  /** Any segments after payload/policy — e.g. `IP-CIDR,10.0.0.0/8,DIRECT,
+   *  no-resolve`'s trailing `no-resolve`. Mihomo rule options live here.
+   *  Carried through edit-and-save untouched (never surfaced as an editable
+   *  field — this task's brief only asks for type/payload/policy), so a
+   *  row with a 4th segment keeps it after being edited instead of losing
+   *  it — the same "clone the whole thing, only touch what's actually
+   *  edited" 保真 discipline `ObjectRowEditDialog` applies to object rows,
+   *  applied here to rules' string shape. */
+  extra: string[];
 }
 
-/** Mihomo rule format: `"TYPE,PAYLOAD,POLICY"`, or `"TYPE,POLICY"` for a
- *  rule type with no payload segment (MATCH). Mirrors clash-cfg-edit's
- *  `RuleTable.vue` `parseRule`/`formatRule` reference exactly (splits/joins
- *  on `,`, falls back to a payload-bearing 3-segment read when the type
- *  isn't recognized). A raw string exactly equal to the masking sentinel
- *  (possible: yaml-mask.ts's value-equality pass masks ANY string in the
- *  document that matches a previously-collected secret verbatim, including
- *  a whole rule string, however rare in practice) is surfaced as `masked`
- *  rather than parsed — same "replace wholesale, never in place" rule
- *  FieldRenderer's masked-field control already follows for object fields. */
+/** Mihomo rule format: `"TYPE,PAYLOAD,POLICY[,OPTION...]"`, or
+ *  `"TYPE,POLICY[,OPTION...]"` for a rule type with no payload segment
+ *  (MATCH). Mirrors clash-cfg-edit's `RuleTable.vue` `parseRule`/
+ *  `formatRule` reference for the type/payload/policy split (falls back to
+ *  a payload-bearing read when the type isn't recognized), but — unlike
+ *  that reference — keeps everything past the policy segment instead of
+ *  silently discarding it on save. A raw string exactly equal to the
+ *  masking sentinel (possible: yaml-mask.ts's value-equality pass masks
+ *  ANY string in the document that matches a previously-collected secret
+ *  verbatim, including a whole rule string, however rare in practice) is
+ *  surfaced as `masked` rather than parsed — same "replace wholesale,
+ *  never in place" rule FieldRenderer's masked-field control already
+ *  follows for object fields. */
 function parseRuleRow(raw: string, ruleTypes: RuleTypeDescriptor[]): ParsedRule {
   if (raw === MASKED_SENTINEL) {
-    return { masked: true, type: "", payload: "", policy: "", hasValue: true };
+    return { masked: true, type: "", payload: "", policy: "", hasValue: true, extra: [] };
   }
   const parts = raw.split(",");
   const type = parts[0] ?? "";
   const descriptor = ruleTypes.find((rt) => rt.type === type);
   const hasValue = descriptor ? descriptor.hasValue : true;
   if (!hasValue) {
-    return { masked: false, type, payload: "", policy: parts[1] ?? "", hasValue };
+    return { masked: false, type, payload: "", policy: parts[1] ?? "", hasValue, extra: parts.slice(2) };
   }
-  return { masked: false, type, payload: parts[1] ?? "", policy: parts[2] ?? "", hasValue };
+  return { masked: false, type, payload: parts[1] ?? "", policy: parts[2] ?? "", hasValue, extra: parts.slice(3) };
 }
 
 function RuleEditDialog({
@@ -804,6 +821,11 @@ function RuleEditDialog({
   const [type, setType] = useState(startFresh ? (ruleTypes[0]?.type ?? "") : parsedInitial!.type);
   const [payload, setPayload] = useState(startFresh ? "" : parsedInitial!.payload);
   const [policy, setPolicy] = useState(startFresh ? (policyOptions[0] ?? "DIRECT") : parsedInitial!.policy);
+  // Never edited through this dialog (the brief only asks for a
+  // type/payload/policy editor) — carried as-is so a rule with Mihomo
+  // options past the policy segment (e.g. `no-resolve`) keeps them on
+  // save instead of silently losing them. See ParsedRule's doc comment.
+  const extra = startFresh ? [] : parsedInitial!.extra;
 
   const descriptor = ruleTypes.find((rt) => rt.type === type);
   const hasValue = descriptor ? descriptor.hasValue : true;
@@ -815,7 +837,8 @@ function RuleEditDialog({
   };
 
   const handleSave = () => {
-    if (hasValue && !payload.trim()) {
+    const trimmedPayload = payload.trim();
+    if (hasValue && !trimmedPayload) {
       toast.error(t("table.rules.payloadRequired"));
       return;
     }
@@ -823,7 +846,8 @@ function RuleEditDialog({
       toast.error(t("table.rules.policyRequired"));
       return;
     }
-    onSave(hasValue ? `${type},${payload},${policy}` : `${type},${policy}`);
+    const segments = hasValue ? [type, trimmedPayload, policy, ...extra] : [type, policy, ...extra];
+    onSave(segments.join(","));
   };
 
   return (
@@ -927,6 +951,15 @@ function RulesTable({ category, form }: { category: TableCategory; form: UseConf
                 rows.map((raw, index) => {
                   const parsed = parseRuleRow(raw, ruleTypes);
                   const typeLabel = ruleTypes.find((rt) => rt.type === parsed.type)?.label ?? parsed.type;
+                  // A rule type outside this metadata's 8 (e.g. a logic
+                  // rule like `AND,(...)`, or any Mihomo rule type
+                  // config-metadata.json doesn't describe) can't be decoded
+                  // into type/payload/policy without risking mangling it on
+                  // save — same guard `ObjectRowEditDialog` applies to a
+                  // proxy/group row whose `type` isn't in its field-set
+                  // list. Masked rows stay editable (that's the recovery
+                  // path for a sentinel-masked whole rule string).
+                  const editable = parsed.masked || ruleTypes.some((rt) => rt.type === parsed.type);
                   return (
                     <TableRow key={index}>
                       <TableCell className="text-muted-foreground text-xs">{index + 1}</TableCell>
@@ -950,6 +983,8 @@ function RulesTable({ category, form }: { category: TableCategory; form: UseConf
                       <TableCell className="text-right">
                         <RowActions
                           t={t}
+                          editDisabled={!editable}
+                          editDisabledTitle={t("table.unsupportedType")}
                           onEdit={() => setEditing({ index })}
                           onDelete={() => setDeleteIndex(index)}
                           onMoveUp={() => moveRow(index, -1)}
