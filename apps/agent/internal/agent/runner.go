@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/btnalit/MihomoOrbit/apps/agent/internal/config"
+	"github.com/btnalit/MihomoOrbit/apps/agent/internal/configapply"
 	"github.com/btnalit/MihomoOrbit/apps/agent/internal/configfile"
 	"github.com/btnalit/MihomoOrbit/apps/agent/internal/domain"
 	"github.com/btnalit/MihomoOrbit/apps/agent/internal/gateway"
@@ -137,15 +138,58 @@ type Runner struct {
 	serverLatencyMs  int64
 
 	// pendingCommandResults queues command outcomes to attach to the next
-	// heartbeat request; cleared once that heartbeat gets a 2xx. Guarded by
-	// mu like the other Runner-owned state above. This is a deliberately
-	// simple in-memory queue for this task — Task 3 replaces it with
-	// persistence backed by configapply's state file.
+	// heartbeat request; cleared once that heartbeat gets a 2xx (tail-append
+	// only, prefix-cleared by count in sendHeartbeat — never mutated in
+	// place). Seeded at startup from configapply's state file
+	// (loadPersistedCommandResults) so results survive a restart between
+	// completion and heartbeat ack; appended to by recordResult (both the
+	// gating-failure path and the executor's completion path).
 	pendingCommandResults []commandResult
 
 	// handleCommandsFn receives the Commands from a parsed heartbeatResponse.
-	// Defaults to a no-op in NewRunner; Task 3 wires in the real dispatcher.
+	// Defaults to r.handleCommands in NewRunner (see dispatchCommand for the
+	// clash-only / config-path gate and the single-flight executor handoff).
 	handleCommandsFn func([]commandPayload)
+
+	// commandCh is the buffer-1 hand-off from dispatchCommand (called from
+	// the heartbeat goroutine) to the single dedicated executor goroutine
+	// (runCommandExecLoop). The buffer size of 1 is the actual concurrency
+	// limit — executingCommandID/queuedCommandID below are a best-effort,
+	// racy-but-harmless optimization for dropping obvious duplicates early;
+	// correctness (never more than one command applying, never more than one
+	// queued behind it) comes from the channel's fixed capacity.
+	commandCh chan configapply.Command
+
+	// executingCommandID / queuedCommandID track, respectively, the command
+	// currently being applied by the executor goroutine and the (at most
+	// one) command waiting behind it in commandCh. Both guarded by mu.
+	// dispatchCommand drops a newly received command outright when its ID
+	// matches either one (redelivery of an in-flight command); a distinct ID
+	// is queued if there's room, dropped if the buffer is already full — see
+	// dispatchCommand's doc comment.
+	executingCommandID string
+	queuedCommandID    string
+
+	// applier / applyFn: applyFn is the seam runCommandExecLoop calls for
+	// every command that clears the clash-only/config-path gate; it
+	// defaults to applier.Apply (a real configapply.Applier wired to
+	// cfg.MihomoConfigPath and gatewayClient). Tests override applyFn
+	// directly to fake or instrument execution.
+	applier *configapply.Applier
+	applyFn func(context.Context, configapply.Command) configapply.Result
+
+	// stateMu serializes ALL access to orbit-agent-state.json across the two
+	// goroutines that touch it: the executor goroutine (applyFn, when wired
+	// to the real Applier, Loads+Saves state internally — holds stateMu with
+	// a blocking Lock for the full call, bounded by the health-gate window,
+	// ~15s default) and the heartbeat goroutine (pruneAckedCommandState,
+	// after each 2xx — uses TryLock and skips this round entirely if the
+	// executor currently holds it, rather than blocking the heartbeat loop
+	// past its own configured interval; see pruneAckedCommandState's doc
+	// comment). Without this mutex at all, a heartbeat's ack-prune racing a
+	// mid-flight Apply could interleave their Load/Save pairs and silently
+	// resurrect pruned entries or drop a concurrent write.
+	stateMu sync.Mutex
 }
 
 func NewRunner(cfg config.Config) *Runner {
@@ -154,17 +198,25 @@ func NewRunner(cfg config.Config) *Runner {
 	if hostname == "" {
 		hostname = "unknown-host"
 	}
+	gatewayClient := gateway.NewClient(httpClient, cfg.GatewayType, cfg.GatewayEndpoint, cfg.GatewayToken)
 
-	return &Runner{
-		cfg:              cfg,
-		httpClient:       httpClient,
-		gatewayClient:    gateway.NewClient(httpClient, cfg.GatewayType, cfg.GatewayEndpoint, cfg.GatewayToken),
-		hostname:         hostname,
-		lockDir:          os.TempDir(),
-		queue:            make([]domain.TrafficUpdate, 0, cfg.ReportBatchSize*2),
-		flows:            make(map[string]trackedFlow, 2048),
-		handleCommandsFn: func([]commandPayload) {},
+	r := &Runner{
+		cfg:           cfg,
+		httpClient:    httpClient,
+		gatewayClient: gatewayClient,
+		hostname:      hostname,
+		lockDir:       os.TempDir(),
+		queue:         make([]domain.TrafficUpdate, 0, cfg.ReportBatchSize*2),
+		flows:         make(map[string]trackedFlow, 2048),
+		commandCh:     make(chan configapply.Command, 1),
+		applier: &configapply.Applier{
+			ConfigPath: cfg.MihomoConfigPath,
+			Gateway:    gatewayClient,
+		},
 	}
+	r.applyFn = r.applier.Apply
+	r.handleCommandsFn = r.handleCommands
+	return r
 }
 
 // lockPaths returns every lock file this agent must hold, in acquisition order.
@@ -396,6 +448,14 @@ func (r *Runner) Run(ctx context.Context) {
 	}
 	defer r.releaseLock()
 
+	// Config-apply command results survive a restart between Applier
+	// completion and heartbeat ack because configapply persists them to
+	// orbit-agent-state.json; seed the in-memory heartbeat queue from that
+	// file before anything starts sending heartbeats. No-op (and no read)
+	// when MihomoConfigPath is unset, matching the opt-in behavior of the
+	// rest of the config-visibility/apply feature.
+	r.loadPersistedCommandResults()
+
 	// runCtx lets runLockWatchLoop trigger the same graceful shutdown path as
 	// an external ctx cancellation (SIGINT/SIGTERM) when it detects a lock
 	// was taken over by another live agent, without reaching into the
@@ -404,13 +464,14 @@ func (r *Runner) Run(ctx context.Context) {
 	defer cancelRun()
 
 	var wg sync.WaitGroup
-	wg.Add(6)
+	wg.Add(7)
 	go r.runCollectorLoop(runCtx, &wg)
 	go r.runReportLoop(runCtx, &wg)
 	go r.runHeartbeatLoop(runCtx, &wg)
 	go r.runConfigSyncLoop(runCtx, &wg)
 	go r.runPolicyStateSyncLoop(runCtx, &wg)
 	go r.runLockWatchLoop(runCtx, cancelRun, &wg)
+	go r.runCommandExecLoop(runCtx, &wg)
 
 	// Config-file visibility is opt-in: MihomoConfigPath is empty unless the
 	// operator declared -mihomo-config, and an unconfigured agent must have
@@ -723,6 +784,241 @@ func (r *Runner) postConfigFile(ctx context.Context, path string, payload interf
 	return strings.Contains(err.Error(), "server http 404:"), err
 }
 
+// handleCommands is the real handleCommandsFn wired in NewRunner: it fans
+// each wire commandPayload from a parsed heartbeat response out to
+// dispatchCommand. Heartbeat-only by construction — this is only ever
+// invoked from sendHeartbeat's handling of heartbeatResponse.Commands (see
+// the dual-contract doc comments on heartbeatResponse/postJSON).
+func (r *Runner) handleCommands(payloads []commandPayload) {
+	for _, p := range payloads {
+		r.dispatchCommand(p)
+	}
+}
+
+// dispatchCommand applies the clash-only / config-path gate (Task 2 review
+// requirement (c): this gate lives here, not in configapply — the Applier
+// must never be invoked for a gated command) and otherwise hands the
+// command to the single-flight executor goroutine via commandCh.
+//
+// Single-flight dispatch: a newly received command whose ID matches the one
+// currently executing or already queued is dropped outright (redelivery of
+// an in-flight command — the collector resends any not-yet-acked command on
+// every heartbeat by design). A command with a distinct ID is queued if
+// commandCh has room, or dropped if it's already full. Under the real
+// protocol the collector only ever has one command in flight at a time, so
+// the "distinct ID while something is in flight" path is defense-in-depth,
+// not an expected occurrence.
+func (r *Runner) dispatchCommand(p commandPayload) {
+	if r.cfg.GatewayType != "clash" {
+		r.completeGatedCommand(p.CommandID, "unsupported-gateway")
+		return
+	}
+	if r.cfg.MihomoConfigPath == "" {
+		r.completeGatedCommand(p.CommandID, "config-path-not-set")
+		return
+	}
+
+	cmd := configapply.Command{
+		CommandID:  p.CommandID,
+		BaseHash:   p.BaseHash,
+		Content:    p.Content,
+		Verify:     p.Verify,
+		IssuedAtMs: p.IssuedAtMs,
+	}
+
+	r.mu.Lock()
+	duplicate := cmd.CommandID == r.executingCommandID || cmd.CommandID == r.queuedCommandID
+	r.mu.Unlock()
+	if duplicate {
+		return
+	}
+
+	select {
+	case r.commandCh <- cmd:
+		r.mu.Lock()
+		r.queuedCommandID = cmd.CommandID
+		r.mu.Unlock()
+	default:
+		// commandCh already holds a different queued command — buffer is 1
+		// by design, so this defense-only path drops the newcomer.
+	}
+}
+
+// completeGatedCommand records an immediate failed result for a command
+// that never reaches the Applier (the gates in dispatchCommand). It writes
+// only to the in-memory pendingCommandResults queue, not to
+// orbit-agent-state.json: that file's schema (LastAppliedCommandID +
+// PendingResults) is owned entirely by configapply, and a gated command
+// never touches configapply at all. If the agent restarts before this
+// result's heartbeat is acked, the collector — having received no ack —
+// redelivers the same command on its next heartbeat, and the (static, cfg
+// derived) gate rejects it again with the same reason. No result is lost,
+// only re-derived.
+func (r *Runner) completeGatedCommand(commandID, reason string) {
+	r.recordResult(commandResult{
+		CommandID:     commandID,
+		Result:        configapply.StatusFailed,
+		Reason:        reason,
+		CompletedAtMs: time.Now().UnixMilli(),
+	})
+}
+
+// recordResult appends res to pendingCommandResults. Tail-append only — this
+// preserves the invariant sendHeartbeat's prefix-clear-by-count depends on
+// (Task 1): entries are only ever appended here or removed as a prefix
+// there, never mutated in place.
+func (r *Runner) recordResult(res commandResult) {
+	r.mu.Lock()
+	r.pendingCommandResults = append(r.pendingCommandResults, res)
+	r.mu.Unlock()
+}
+
+// runCommandExecLoop is the single dedicated executor goroutine for
+// apply-config commands, started in Run() alongside the other loops. It
+// serializes execution through commandCh (buffer 1, see dispatchCommand):
+// receive one command, mark it executing, run applyFn (holding stateMu for
+// the duration — see stateMu's doc comment), record the result, repeat.
+// Never runs applyFn concurrently with itself, and holds stateMu opposite
+// pruneAckedCommandState so the two never interleave their reads/writes of
+// orbit-agent-state.json.
+func (r *Runner) runCommandExecLoop(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case cmd := <-r.commandCh:
+			r.mu.Lock()
+			r.executingCommandID = cmd.CommandID
+			r.queuedCommandID = ""
+			r.mu.Unlock()
+
+			r.stateMu.Lock()
+			result := r.applyFn(ctx, cmd)
+			r.stateMu.Unlock()
+
+			r.mu.Lock()
+			r.executingCommandID = ""
+			r.mu.Unlock()
+
+			r.recordResult(commandResult{
+				CommandID:     result.CommandID,
+				Result:        result.Result,
+				Reason:        result.Reason,
+				CompletedAtMs: result.CompletedAtMs,
+			})
+		}
+	}
+}
+
+// loadPersistedCommandResults seeds pendingCommandResults from
+// orbit-agent-state.json at startup (see Run()) so a command result that
+// was persisted (by a prior Applier.Apply call) but never made it onto an
+// acked heartbeat before the agent restarted still gets delivered. No-op
+// when MihomoConfigPath is unset — there is no state directory to read.
+func (r *Runner) loadPersistedCommandResults() {
+	if r.cfg.MihomoConfigPath == "" {
+		return
+	}
+	dir := filepath.Dir(r.cfg.MihomoConfigPath)
+
+	r.stateMu.Lock()
+	st := configapply.LoadState(dir)
+	r.stateMu.Unlock()
+
+	if len(st.PendingResults) == 0 {
+		return
+	}
+	r.mu.Lock()
+	for _, res := range st.PendingResults {
+		r.pendingCommandResults = append(r.pendingCommandResults, commandResult{
+			CommandID:     res.CommandID,
+			Result:        res.Result,
+			Reason:        res.Reason,
+			CompletedAtMs: res.CompletedAtMs,
+		})
+	}
+	r.mu.Unlock()
+}
+
+// pruneAckedCommandState rebuilds orbit-agent-state.json's PendingResults to
+// contain EXACTLY: (i) the entry whose CommandID equals the state's
+// LastAppliedCommandID — the Applier's own redelivery replay cache, never
+// dropped regardless of ack status (Task 2 review requirement (a): the
+// collector can legitimately redispatch the same commandId again after an
+// ack it hasn't itself persisted yet, e.g. it crashes between sending the
+// 2xx-answered heartbeat and recording that ack; pruning this entry would
+// make that redelivery fall through to applySixSteps again — reprocessing a
+// command that already mutated the config file, most likely surfacing as a
+// bogus base-hash conflict instead of replaying the original result) — plus
+// (ii) any entry whose CommandID is still present in `remaining`, the
+// Runner's current (post-prefix-clear) in-memory wire queue, i.e. a result
+// not yet delivered on any acked heartbeat. Everything else was, by
+// construction, delivered and acked on SOME prior heartbeat — safe to drop.
+//
+// This is a rebuild from current truth, not a filter keyed on "this
+// heartbeat's delivered set": an earlier version filtered against only the
+// commandIds THIS heartbeat happened to carry, which meant an entry already
+// acked on some PRIOR heartbeat (and therefore never appearing in any FUTURE
+// heartbeat's delivered set again) could never be reconsidered for pruning —
+// a permanent one-entry-per-applied-command orphan in steady state. Calling
+// this after every 2xx with the always-current (LastAppliedCommandID,
+// remaining) pair instead of a single heartbeat's delivered slice is what
+// makes it correct regardless of which heartbeat acked what, and bounds
+// PendingResults' growth (Task 2 review requirement (b)) to at most
+// 1+len(remaining) entries.
+//
+// Uses stateMu.TryLock rather than a blocking Lock: the executor goroutine
+// holds stateMu for the full duration of an Apply call (bounded by the
+// health-gate window, ~15s by default) — a blocking Lock here could stall
+// the heartbeat loop past its own configured interval if the two coincide
+// (heartbeat-interval is user-configurable with no floor tying it to the
+// health-gate window), which risks the collector's offline-detection firing
+// on a perfectly healthy agent. If the executor currently holds the lock,
+// this round is skipped entirely: it's pure disk housekeeping, the rebuild
+// rule reads current truth rather than accumulating a "what did I miss"
+// diff, so the very next heartbeat's prune (whether or not it acks anything
+// new) reconstructs the correct state regardless of how many rounds were
+// skipped in between.
+func (r *Runner) pruneAckedCommandState(remaining []commandResult) {
+	if r.cfg.MihomoConfigPath == "" {
+		return
+	}
+	dir := filepath.Dir(r.cfg.MihomoConfigPath)
+	stillPending := make(map[string]bool, len(remaining))
+	for _, res := range remaining {
+		stillPending[res.CommandID] = true
+	}
+
+	if !r.stateMu.TryLock() {
+		// Executor is mid-Apply; skip this round (see doc comment above).
+		return
+	}
+	defer r.stateMu.Unlock()
+
+	st := configapply.LoadState(dir)
+	if len(st.PendingResults) == 0 {
+		return
+	}
+
+	kept := st.PendingResults[:0]
+	changed := false
+	for _, res := range st.PendingResults {
+		if res.CommandID == st.LastAppliedCommandID || stillPending[res.CommandID] {
+			kept = append(kept, res)
+			continue
+		}
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	st.PendingResults = kept
+	if err := configapply.SaveState(dir, st); err != nil {
+		log.Printf("[agent:%s] prune command state: %v", r.cfg.AgentID, err)
+	}
+}
+
 func (r *Runner) ingestSnapshots(snapshots []domain.FlowSnapshot, nowMs int64) {
 	active := make(map[string]struct{}, len(snapshots))
 	updates := make([]domain.TrafficUpdate, 0, len(snapshots))
@@ -926,7 +1222,19 @@ func (r *Runner) sendHeartbeat(ctx context.Context) error {
 	} else {
 		r.pendingCommandResults = nil
 	}
+	// Snapshot the CURRENT (post-clear) queue for pruneAckedCommandState:
+	// it rebuilds orbit-agent-state.json's PendingResults from present
+	// truth (LastAppliedCommandID + whatever is still undelivered), not
+	// from the set this one heartbeat happened to carry — see that
+	// function's doc comment for why a delivered-set filter leaks a
+	// permanent orphan per applied command across separate ack cycles.
+	remaining := make([]commandResult, len(r.pendingCommandResults))
+	copy(remaining, r.pendingCommandResults)
 	r.mu.Unlock()
+
+	// Outside the mu critical section above since this is disk I/O; guarded
+	// instead by stateMu (via TryLock) inside pruneAckedCommandState.
+	r.pruneAckedCommandState(remaining)
 
 	if len(respBody) == 0 {
 		return nil
