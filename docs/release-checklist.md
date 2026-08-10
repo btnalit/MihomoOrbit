@@ -85,3 +85,10 @@ curl -fsSL https://raw.githubusercontent.com/btnalit/MihomoOrbit/main/apps/agent
   - optional server gate:
     - `MIN_AGENT_PROTOCOL_VERSION`
     - `MIN_AGENT_VERSION`
+- Protocol version 2 (M2b): adds config apply/rollback command dispatch over
+  heartbeat (`commandResults` request field, `commands` response field —
+  see `docs/agent/release.md`'s "协议版本 2" section for the full note).
+  `MIN_AGENT_PROTOCOL_VERSION` stays `1` — this is a deliberate exception to
+  the "bump protocol + raise minimum in the same commit" convention
+  (`AGENTS.md` key contract 6): protocol-1 agents keep monitoring normally,
+  they just never receive `commands`.

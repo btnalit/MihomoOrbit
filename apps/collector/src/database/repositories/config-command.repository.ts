@@ -136,4 +136,29 @@ export class ConfigCommandRepository {
       LIMIT 1
     `).get(backendId) as ConfigCommand | undefined;
   }
+
+  /**
+   * Read-time "expired" computation for the commands/latest endpoint
+   * (M2b Task 6). A command is expired iff it is still non-terminal
+   * (pending/dispatched) AND its age exceeds COMMAND_TTL_MS as of nowMs —
+   * terminal states (applied/conflict/rolled-back/failed) are never
+   * expired, matching getInFlight's IN_FLIGHT_STATES filter exactly.
+   *
+   * Deliberately mirrors getInFlight's own technique — compute a cutoff
+   * SQLite-UTC-datetime string from nowMs via toSqliteUtcDatetime, then
+   * compare it against the stored created_at STRING (lexicographic
+   * comparison on 'YYYY-MM-DD HH:MM:SS' is chronologically correct) —
+   * rather than parsing created_at into a Date. See Task 4's binding
+   * ledger note (progress.md): created_at is a SQLite space-separated,
+   * no-'Z' UTC string; `new Date(created_at)` outside the repository
+   * depends on the runtime's local timezone for the missing offset and
+   * silently mis-parses. This is the exact negation of getInFlight's own
+   * `created_at >= cutoff` check, so the two can never disagree on the
+   * boundary.
+   */
+  isExpired(cmd: Pick<ConfigCommand, 'state' | 'created_at'>, nowMs: number): boolean {
+    if (cmd.state !== 'pending' && cmd.state !== 'dispatched') return false;
+    const cutoff = toSqliteUtcDatetime(nowMs - COMMAND_TTL_MS);
+    return cmd.created_at < cutoff;
+  }
 }

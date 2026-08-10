@@ -52,6 +52,19 @@ Collector 在心跳/上报时验证 Agent 兼容性：
 
 版本号不连续时，表示该版本无需独立 Agent 发布。
 
+### 协议版本 2（M2b：配置指令下发）
+
+下一个 Agent 发布版本将把 `AgentProtocolVersion` 升到 `2`——心跳请求/响应新增
+`commandResults`/`commands` 字段，用于 collector 下发配置 apply/rollback 指令
+并回收执行回执（详见配置编辑设计文档 §5）。这是一次**仅新增字段**的协议扩
+展，旧协议 1 的心跳/上报请求体不受影响。
+
+按 [`AGENTS.md`](../../AGENTS.md) 的约定，协议号变更本应与 collector 端最低
+版本同提交联动；此次**有意例外**：`MIN_AGENT_PROTOCOL_VERSION` 服务端默认保
+持 `1`，不随协议 2 一起抬高（floor-only，向后兼容）。协议 1 的旧 Agent 继续
+正常心跳/上报，监控功能不受影响——它们只是永远不会在心跳响应里收到
+`commands`（配置编辑功能对它们不可用，需升级 Agent 才能使用）。
+
 ## 命名规范
 
 - 压缩包内二进制文件始终命名为 `orbit-agent`

@@ -177,6 +177,57 @@ describe('ConfigCommandRepository state machine', () => {
   it('getLatest returns undefined when the backend has no commands', () => {
     expect(repo.getLatest(backendId)).toBeUndefined();
   });
+
+  // M2b Task 6: isExpired() backs the commands/latest read endpoint's
+  // `expired` field. Exercised directly here (string-cutoff comparison,
+  // never Date-parses created_at — see the method's docstring and Task 4's
+  // binding ledger note) as well as through the HTTP layer in
+  // config-editor-write.test.ts.
+  describe('isExpired', () => {
+    it('a fresh pending command within the TTL window is not expired', () => {
+      repo.create({ commandId: 'cmd_exp_fresh', backendId, versionId: 1, baseHash: 'h1', payload: '{}' });
+      const row = repo.getLatest(backendId)!;
+      expect(repo.isExpired(row, Date.now())).toBe(false);
+    });
+
+    it('a pending command older than COMMAND_TTL_MS is expired', () => {
+      repo.create({ commandId: 'cmd_exp_old', backendId, versionId: 1, baseHash: 'h1', payload: '{}' });
+      backdateCreatedAt(db, 'cmd_exp_old', '2020-01-01 00:00:00');
+      const row = repo.getLatest(backendId)!;
+      expect(repo.isExpired(row, Date.now())).toBe(true);
+    });
+
+    it('a dispatched command older than COMMAND_TTL_MS is also expired', () => {
+      repo.create({ commandId: 'cmd_exp_disp', backendId, versionId: 1, baseHash: 'h1', payload: '{}' });
+      repo.markDispatched('cmd_exp_disp', '2020-01-01T00:00:00.000Z');
+      backdateCreatedAt(db, 'cmd_exp_disp', '2020-01-01 00:00:00');
+      const row = repo.getLatest(backendId)!;
+      expect(row.state).toBe('dispatched');
+      expect(repo.isExpired(row, Date.now())).toBe(true);
+    });
+
+    it('a terminal command is never expired regardless of age', () => {
+      repo.create({ commandId: 'cmd_exp_term', backendId, versionId: 1, baseHash: 'h1', payload: '{}' });
+      backdateCreatedAt(db, 'cmd_exp_term', '2020-01-01 00:00:00');
+      repo.resolve('cmd_exp_term', 'applied', '', new Date().toISOString());
+      const row = repo.getLatest(backendId)!;
+      expect(repo.isExpired(row, Date.now())).toBe(false);
+    });
+
+    it('boundary: matches getInFlight exactly on either side of COMMAND_TTL_MS', () => {
+      repo.create({ commandId: 'cmd_exp_boundary', backendId, versionId: 1, baseHash: 'h1', payload: '{}' });
+      backdateCreatedAt(db, 'cmd_exp_boundary', '2026-01-01 00:00:00');
+      const row = repo.getLatest(backendId)!;
+
+      const justBeforeTtl = new Date('2026-01-01T00:09:59.000Z').getTime();
+      expect(repo.isExpired(row, justBeforeTtl)).toBe(false);
+      expect(repo.getInFlight(backendId, justBeforeTtl)).toBeDefined();
+
+      const justAfterTtl = new Date('2026-01-01T00:10:01.000Z').getTime();
+      expect(repo.isExpired(row, justAfterTtl)).toBe(true);
+      expect(repo.getInFlight(backendId, justAfterTtl)).toBeUndefined();
+    });
+  });
 });
 
 describe('config_commands multi-registry cleanup', () => {

@@ -98,6 +98,17 @@ type AgentConfigPayload = {
   };
 };
 
+// M2b protocol v2: a heartbeat may carry receipts for commands the agent
+// has finished acting on. See app.ts's heartbeat handler and the plan's
+// 协议契约(v2) section — the shape here is the collector-side mirror of
+// agent runner.go's `commandResult` struct, field-for-field.
+type AgentCommandResultPayload = {
+  commandId?: string;
+  result?: string;
+  reason?: string;
+  completedAtMs?: number;
+};
+
 type AgentHeartbeatPayload = {
   backendId?: number;
   agentId?: string;
@@ -109,6 +120,7 @@ type AgentHeartbeatPayload = {
   gatewayUrl?: string;
   gatewayLatencyMs?: number;
   serverLatencyMs?: number;
+  commandResults?: AgentCommandResultPayload[];
 };
 
 type AgentReportPayload = {
@@ -699,6 +711,35 @@ export async function createApp(options: AppOptions) {
     if (!isAgentBindingAllowed(backendId, agentId, reply)) {
       return;
     }
+
+    // M2b: ingest command receipts BEFORE the dispatch decision below, so
+    // an `applied`/`conflict`/etc. receipt for the currently in-flight
+    // command and this SAME heartbeat's re-dispatch check observe a
+    // consistent, just-updated state (a command resolved here is no longer
+    // in-flight by the time getInFlight() runs further down). commandResults
+    // only ever exists in protocolVersion >= 2 payloads in practice, but is
+    // processed whenever present rather than gated on protocolVersion
+    // itself — an absent/empty array is simply a no-op loop. resolve() is
+    // itself TTL-agnostic (a late receipt for an expired-but-still-pending
+    // command still lands — expired is a read-time-only concept, per Task 4's
+    // ledger note), so no TTL check belongs here either.
+    const commandResultsNowIso = new Date().toISOString();
+    const commandResults = Array.isArray(body.commandResults) ? body.commandResults : [];
+    for (const result of commandResults) {
+      if (!result || typeof result !== 'object') continue;
+      const commandId = typeof result.commandId === 'string' ? result.commandId : '';
+      if (!commandId) continue;
+      const outcome = result.result;
+      if (outcome === 'applied' || outcome === 'conflict' || outcome === 'rolled-back' || outcome === 'failed') {
+        const reason = typeof result.reason === 'string' ? result.reason : '';
+        if (!db.configCommands.resolve(commandId, outcome, reason, commandResultsNowIso)) {
+          console.warn(`[Agent:${backendId}] heartbeat commandResults: unknown or already-resolved commandId ${commandId}`);
+        }
+      } else {
+        console.warn(`[Agent:${backendId}] heartbeat commandResults: unrecognized result "${String(outcome)}" for commandId ${commandId}`);
+      }
+    }
+
     const hostname = String(body.hostname || '').trim().slice(0, 128) || undefined;
     const version = String(body.agentVersion || body.version || '').trim().slice(0, 64) || undefined;
     const gatewayType = String(body.gatewayType || '').trim().slice(0, 16) || undefined;
@@ -728,7 +769,41 @@ export async function createApp(options: AppOptions) {
       lastSeen: new Date().toISOString(),
     });
 
-    return { success: true, backendId, agentId, serverTime: new Date().toISOString() };
+    // M2b dispatch: this is the ONLY handler in this file permitted to
+    // attach a `commands` field to its response — the dual-contract
+    // counterpart of the agent's postJSONWithLatency, which only reads a
+    // response body at all inside sendHeartbeat (see plan §Architecture and
+    // the global-constraints bullet on this same invariant). /agent/report,
+    // /agent/config, /agent/policy-state and /agent/config-file below this
+    // handler must never gain this field — see
+    // heartbeat-command-dispatch.test.ts's dual-contract assertions.
+    //
+    // Re-dispatched on every qualifying heartbeat while the command stays
+    // pending/dispatched and un-expired (getInFlight's own TTL window) —
+    // never gated on `expired` here, since expired is a read-only UI
+    // concept, not a reason to stop trying: the agent is idempotent by
+    // commandId, so redelivering the same envelope self-heals a response
+    // the agent never actually received. markDispatched() is idempotent
+    // (only the first pending -> dispatched transition writes
+    // dispatched_at), so re-dispatch on subsequent heartbeats never
+    // regresses the command's dispatched_at timestamp.
+    const heartbeatResponse: { success: true; backendId: number; agentId: string; serverTime: string; commands?: unknown[] } = {
+      success: true,
+      backendId,
+      agentId,
+      serverTime: new Date().toISOString(),
+    };
+
+    const protocolVersion = parseProtocolVersion(body.protocolVersion);
+    if (protocolVersion !== null && protocolVersion >= 2) {
+      const inFlight = db.configCommands.getInFlight(backendId, Date.now());
+      if (inFlight) {
+        db.configCommands.markDispatched(inFlight.command_id, new Date().toISOString());
+        heartbeatResponse.commands = [JSON.parse(inFlight.payload)];
+      }
+    }
+
+    return heartbeatResponse;
   });
 
   app.post('/api/agent/report', async (request, reply) => {

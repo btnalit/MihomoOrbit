@@ -52,6 +52,23 @@ When incompatible, API returns `426` with machine-readable code:
 
 Numbers may skip when no agent release is needed.
 
+### Protocol version 2 (M2b: config command dispatch)
+
+The next agent release bumps `AgentProtocolVersion` to `2` — heartbeat
+request/response gain `commandResults`/`commands` fields, used by the
+collector to dispatch config apply/rollback commands and collect execution
+receipts (see the config-editing design doc §5). This is an
+**additive-fields-only** protocol extension; protocol-1 heartbeat/report
+bodies are unaffected.
+
+Per [`AGENTS.md`](../../AGENTS.md)'s convention, a protocol bump is normally
+paired with raising the collector's minimum in the same commit; this is a
+**deliberate exception**: `MIN_AGENT_PROTOCOL_VERSION` stays at its default
+of `1` server-side and is NOT raised alongside protocol 2 (floor-only,
+backward-compatible). Protocol-1 agents keep heartbeating/reporting normally
+— monitoring is unaffected — they simply never receive `commands` in the
+heartbeat response (config editing requires an agent upgrade to use).
+
 ## Naming conventions
 
 - Binary inside tarball is always `orbit-agent`
