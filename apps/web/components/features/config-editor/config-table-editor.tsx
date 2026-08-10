@@ -24,33 +24,33 @@
  * the row-array level, mirroring how `setAtPath` makes it true at the
  * document-key level in use-config-form.ts.
  *
- * ⚠️ KNOWN HAZARD — flagged for Task 10, deliberately NOT fixed here (out of
- * this task's file whitelist; apply-pipeline.ts is Task 5's file):
- *
- * `apps/collector/src/modules/config-editor/apply-pipeline.ts`'s
- * `collectAndSubstitute` resubstitutes a masked sentinel scalar by walking
- * the SUBMITTED CST and the BASE value tree IN LOCKSTEP BY STRUCTURAL
- * POSITION — for a sequence, submitted index `i` is paired with base index
- * `i` (apply-pipeline.ts: `node.items.forEach((item, i) => ... baseValue[i]
- * ...)`), never by a stable identity or a pre-recorded path. `moveRow`
- * below (every table category's up/down buttons) and `removeRow` both
- * change which row sits at which index. If a row that still carries a
- * masked sentinel field (e.g. a proxy's `password: __ORBIT_MASKED__`) is
- * moved or has an earlier row deleted out from under it, submitting that
- * document resubstitutes the sentinel against the BASE document's value at
- * the NEW index — i.e. a DIFFERENT row's original secret gets written into
- * this row's field. This is silent and produces a materially wrong config
- * (wrong/leaked credential in the wrong row), not a rejected submission.
- * This component has no visibility into which fields are currently masked
- * (that's `yaml-mask.ts`'s `maskedPaths`, never surfaced to
- * `useConfigForm`), so it cannot defend against this client-side. The brief
- * requires reorder/delete regardless ("行序可调(上移/下移即可,不引拖拽库)"),
- * so both are implemented as specified; Task 10 (or a fast-follow before it
- * ships) MUST address this in apply-pipeline.ts before reorder/delete on a
- * config containing masked fields is safe to submit — e.g. reject apply
- * when a masked array's element order changed vs. base, or correlate
- * sentinels by something more durable than positional index. See
- * task-9-report.md for the full writeup.
+ * Row identity and sentinel resubstitution (fixed, not just documented —
+ * see `apps/collector/src/modules/config-editor/apply-pipeline.ts`'s
+ * "identity-aware array resolution" amendment): `moveRow`/`removeRow`
+ * below (every table category's up/down buttons and delete) change which
+ * row sits at which array index. An earlier version of this file flagged
+ * that as a hazard, because `apply-pipeline.ts`'s sentinel resubstitution
+ * originally paired a submitted array element with the base document's
+ * element AT THE SAME INDEX — so reordering or deleting a row that still
+ * carried a masked field (e.g. a proxy's `password: __ORBIT_MASKED__`)
+ * could resubstitute a DIFFERENT row's secret into it. That has since been
+ * fixed at the source: `apply-pipeline.ts` now resolves a masked sentinel's
+ * base counterpart BY the row's `name` (the Mihomo convention every
+ * `proxies`/`proxy-groups` entry already has), not by array position, and
+ * fails closed (`MASK_PATH_MISSING`) rather than guessing whenever a name
+ * doesn't match anything in the base document (a rename) or matches more
+ * than one row on either side (a duplicate name). Practical contract for
+ * THIS component: reordering/deleting rows is safe for `proxies`/
+ * `proxy-groups` as long as an edited row's own `name` field isn't changed
+ * in the SAME edit that also leaves one of its other fields masked
+ * (renaming a row that still has an unrevealed secret makes that secret
+ * unresolvable on apply — a safe failure, not silent corruption, and the
+ * user can just re-enter/reveal the value). `rules` has no per-row
+ * identity (Mihomo rules are plain strings, not named mappings), so its
+ * array always resolves positionally in apply-pipeline.ts — unaffected by
+ * this fix either way, since rule strings are never sentinel-masked in
+ * practice (masking is keyed to option names like `password`, not to
+ * arbitrary string array elements).
  */
 
 import { useState } from "react";

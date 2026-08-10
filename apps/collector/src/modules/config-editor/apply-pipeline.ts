@@ -93,6 +93,41 @@
  * applies to anything — this rewrite never pairs entries by counted order,
  * only by exact CST byte range, so that residual is fully closed, not just
  * narrowed.
+ *
+ * AMENDMENT (M2b Task 9 fix-round): identity-aware array resolution.
+ * M2b Task 9 (web) added row reorder/delete to the proxies/proxy-groups/
+ * rules table editors. That made a latent hazard in step 2 reachable: for a
+ * plain YAML sequence, "structurally in lockstep" originally meant matching
+ * submitted index `i` against base index `i`. If a row carrying a masked
+ * sentinel field (e.g. a proxy's `password: __ORBIT_MASKED__`) is moved to
+ * a different index, or an earlier row is deleted out from under it,
+ * positional lockstep resubstitutes that sentinel against a DIFFERENT
+ * row's base value — i.e. one proxy's real secret silently gets written
+ * into another proxy's field. Silent and wrong, not merely rejected.
+ *
+ * Fix: `collectAndSubstitute`'s array branch now resolves a submitted
+ * element's base counterpart BY NAME, not by index, whenever that element
+ * is a mapping with a plain scalar `name` key — the Mihomo convention for
+ * every `proxies`/`proxy-groups` entry. It finds the base array element
+ * whose `name` equals the submitted element's `name`, then continues the
+ * walk against THAT element regardless of either one's array position.
+ * Fails closed (treated identically to "absent" -> `MASK_PATH_MISSING`,
+ * the pre-existing rejection code — no new one introduced) when: no base
+ * element has a matching name (a renamed row with a still-masked field, or
+ * a brand-new row carrying a hand-typed sentinel literal — the user must
+ * re-enter/reveal the secret in either case, which is correct, not a
+ * regression); or the name is ambiguous — duplicated within the submitted
+ * array, within the base array, or both — since guessing which duplicate a
+ * sentinel belongs to would reintroduce exactly the cross-contamination
+ * this fix exists to close. An array element with no resolvable `name`
+ * (a plain scalar — the `rules` array, a `dns.nameserver` list, a
+ * proxy-group's own `proxies` member-name list) is unaffected: it keeps
+ * the original positional resolution, since it never had a stable identity
+ * to key off in the first place. This produces no separate "expected tree"
+ * computation to keep in sync — `expectedTree` (used by both the self-lock
+ * compare and the round-trip safety net) is `doc.toJS()` read directly off
+ * the SAME CST that this identity-aware walk already mutated in place, so
+ * it reflects the corrected resolution automatically.
  */
 import { load, dump, YAMLException } from 'js-yaml';
 import { parseDocument, isMap, isSeq, isScalar } from 'yaml';
@@ -176,6 +211,11 @@ interface SentinelEntry {
  * trees in lockstep has no such blind spot — the base counterpart is always
  * the actual sibling value, never a re-parsed guess. `pathDisplay` is built
  * purely for the MASK_PATH_MISSING error message, never used for lookup.
+ *
+ * Array elements resolve their base counterpart BY NAME, not by index,
+ * whenever the element is a mapping with a plain scalar `name` key (see the
+ * module-level "identity-aware array resolution" amendment above) — plain
+ * scalar array elements (no identity available) keep positional resolution.
  */
 function collectAndSubstitute(
   node: unknown,
@@ -214,10 +254,41 @@ function collectAndSubstitute(
 
   if (isSeq(node)) {
     const baseIsArray = Array.isArray(baseValue);
+    const baseArray = baseIsArray ? (baseValue as unknown[]) : [];
+    // Identity-aware resolution needs both sides' name -> count maps up
+    // front (not recomputed per item) so a duplicate name anywhere in
+    // either array is detected and fails closed, not just a duplicate that
+    // happens to appear before the item currently being resolved.
+    const baseNameCounts = countNamedRecords(baseArray);
+    const submittedNameCounts = countSubmittedNames(node.items);
+
     node.items.forEach((item, i) => {
-      const childPresent = baseIsArray && i < baseValue.length;
-      const childBase = childPresent ? baseValue[i] : undefined;
       const childPath = `${pathDisplay}[${i}]`;
+      const itemName = submittedMapName(item);
+
+      if (itemName !== undefined) {
+        // Named element (the proxies/proxy-groups row convention) — match
+        // BY NAME within this array, never by index, so a reordered or
+        // partially-deleted array still resubstitutes each row's OWN base
+        // value. Unambiguous only when the name resolves to exactly one
+        // element on BOTH sides; anything else fails closed as "absent"
+        // (same MASK_PATH_MISSING path the rest of this function already
+        // uses for a path the base doesn't have) rather than guessing.
+        const unambiguous =
+          (submittedNameCounts.get(itemName) ?? 0) === 1 && (baseNameCounts.get(itemName) ?? 0) === 1;
+        const childBase = unambiguous
+          ? baseArray.find((b) => isNamedRecord(b) && b.name === itemName)
+          : undefined;
+        collectAndSubstitute(item, childBase, unambiguous, childPath, entries);
+        return;
+      }
+
+      // No identity available (not a mapping, or a mapping without a plain
+      // scalar `name`) — unchanged positional resolution: a plain scalar
+      // list (`rules`, a `dns.nameserver` array, a proxy-group's own
+      // `proxies` member-name list) never had a stable identity to key off.
+      const childPresent = baseIsArray && i < baseArray.length;
+      const childBase = childPresent ? baseArray[i] : undefined;
       collectAndSubstitute(item, childBase, childPresent, childPath, entries);
     });
     return;
@@ -225,6 +296,62 @@ function collectAndSubstitute(
 
   // Alias nodes (and any other node kind) — never a substitution target;
   // see the doc comment above for why this is correct for aliases.
+}
+
+/** True if `value` is a base-tree object with a plain string `name` — the
+ *  Mihomo convention used to identify a `proxies`/`proxy-groups` array
+ *  element regardless of its position (see collectAndSubstitute's array
+ *  branch and the module-level amendment for why position alone is
+ *  unsafe). */
+function isNamedRecord(value: unknown): value is Record<string, unknown> & { name: string } {
+  return isRecord(value) && typeof value.name === 'string';
+}
+
+/** Extracts the scalar `name` value of a SUBMITTED CST map node, if any —
+ *  the identity key used to resolve this element's base counterpart by
+ *  name rather than by array position. Returns undefined for anything that
+ *  isn't a mapping with a plain-string `name` key, which also naturally
+ *  covers `name` itself being sentinel-masked: matching against the
+ *  literal sentinel string finds no real base counterpart, which fails
+ *  closed via the ordinary "absent" path (MASK_PATH_MISSING) rather than
+ *  risking a wrong-value leak. */
+function submittedMapName(node: unknown): string | undefined {
+  if (!isMap(node)) return undefined;
+  for (const pair of node.items) {
+    const keyNode = pair.key;
+    const keyStr = isScalar(keyNode) ? String(keyNode.value) : String(keyNode);
+    if (keyStr !== 'name') continue;
+    const valueNode = pair.value;
+    return isScalar(valueNode) && typeof valueNode.value === 'string' ? valueNode.value : undefined;
+  }
+  return undefined;
+}
+
+/** Counts, per name, how many elements of a BASE array are identity-named
+ *  records (see isNamedRecord) — used to fail closed on an ambiguous
+ *  (duplicate-name) match instead of guessing which duplicate a sentinel
+ *  belongs to. */
+function countNamedRecords(arr: unknown[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const item of arr) {
+    if (isNamedRecord(item)) {
+      counts.set(item.name, (counts.get(item.name) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+/** Same idea as countNamedRecords, but over a SUBMITTED CST array's items
+ *  (only the ones with a resolvable scalar `name`, per submittedMapName). */
+function countSubmittedNames(items: readonly unknown[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const name = submittedMapName(item);
+    if (name !== undefined) {
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+  }
+  return counts;
 }
 
 /** Single-quote a string per the amendment's rule, doubling any embedded `'`. */

@@ -336,4 +336,208 @@ describe('prepareApply', () => {
     if (r.ok) return;
     expect(r.rejection.code).toBe('YAML_INVALID');
   });
+
+  // Identity-aware array resolution (M2b Task 9 fix-round). M2b Task 9's web
+  // table editors added row reorder/delete for proxies/proxy-groups/rules,
+  // making positional (index-based) sentinel resubstitution reachable and
+  // exploitable by an ordinary user action, not just a crafted submission.
+  describe('identity-aware array resolution (named proxies/proxy-groups rows)', () => {
+    const baseTwoProxies = [
+      'proxies:',
+      '  - name: proxy-a',
+      '    type: ss',
+      '    server: a.example.com',
+      '    port: 8388',
+      '    password: secret-for-a',
+      '  - name: proxy-b',
+      '    type: ss',
+      '    server: b.example.com',
+      '    port: 8389',
+      '    password: secret-for-b',
+    ].join('\n') + '\n';
+
+    it('reorder: swapping two masked proxy rows resolves each to ITS OWN base secret, not the other row\'s', () => {
+      // Submitted with proxy-b FIRST, proxy-a SECOND (base has a first, b
+      // second) — the exact cross-contamination repro: pre-fix, positional
+      // lockstep would pair submitted index 0 (proxy-b, masked) against
+      // base index 0 (proxy-a's secret), and vice versa.
+      const submitted = [
+        'proxies:',
+        '  - name: proxy-b',
+        '    type: ss',
+        '    server: b.example.com',
+        '    port: 8389',
+        `    password: ${MASK_SENTINEL}`,
+        '  - name: proxy-a',
+        '    type: ss',
+        '    server: a.example.com',
+        '    port: 8388',
+        `    password: ${MASK_SENTINEL}`,
+      ].join('\n') + '\n';
+
+      const r = prepareApply(input(submitted), baseTwoProxies, HASH);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.prepared.finalContent).not.toContain(MASK_SENTINEL);
+      const parsedFinal = load(r.prepared.finalContent) as { proxies: Array<{ name: string; password: string }> };
+      const byName = Object.fromEntries(parsedFinal.proxies.map((p) => [p.name, p.password]));
+      expect(byName['proxy-a']).toBe('secret-for-a');
+      expect(byName['proxy-b']).toBe('secret-for-b');
+    });
+
+    it('delete: removing row 0 leaves the remaining masked row resolved to its OWN secret, not the deleted row\'s', () => {
+      // Submitted has only proxy-b (proxy-a deleted) — pre-fix, positional
+      // lockstep would pair submitted index 0 (proxy-b, masked) against
+      // base index 0 (proxy-a's secret).
+      const submitted = [
+        'proxies:',
+        '  - name: proxy-b',
+        '    type: ss',
+        '    server: b.example.com',
+        '    port: 8389',
+        `    password: ${MASK_SENTINEL}`,
+      ].join('\n') + '\n';
+
+      const r = prepareApply(input(submitted), baseTwoProxies, HASH);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      const parsedFinal = load(r.prepared.finalContent) as { proxies: Array<{ name: string; password: string }> };
+      expect(parsedFinal.proxies).toHaveLength(1);
+      expect(parsedFinal.proxies[0].name).toBe('proxy-b');
+      expect(parsedFinal.proxies[0].password).toBe('secret-for-b');
+    });
+
+    it('renamed row with a masked field -> MASK_PATH_MISSING (fails closed, does not fall back to position)', () => {
+      const submitted = [
+        'proxies:',
+        '  - name: proxy-a-renamed',
+        '    type: ss',
+        '    server: a.example.com',
+        '    port: 8388',
+        `    password: ${MASK_SENTINEL}`,
+        '  - name: proxy-b',
+        '    type: ss',
+        '    server: b.example.com',
+        '    port: 8389',
+        `    password: ${MASK_SENTINEL}`,
+      ].join('\n') + '\n';
+
+      const r = prepareApply(input(submitted), baseTwoProxies, HASH);
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(r.rejection).toEqual({ code: 'MASK_PATH_MISSING', path: 'proxies[0].password' });
+    });
+
+    it('duplicate names in the SUBMITTED array -> ambiguous -> MASK_PATH_MISSING', () => {
+      const submitted = [
+        'proxies:',
+        '  - name: proxy-a',
+        '    type: ss',
+        '    server: a.example.com',
+        '    port: 8388',
+        `    password: ${MASK_SENTINEL}`,
+        '  - name: proxy-a',
+        '    type: ss',
+        '    server: a2.example.com',
+        '    port: 8390',
+        '    password: literal-new-password',
+      ].join('\n') + '\n';
+
+      const r = prepareApply(input(submitted), baseTwoProxies, HASH);
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(r.rejection.code).toBe('MASK_PATH_MISSING');
+      if (r.rejection.code !== 'MASK_PATH_MISSING') return;
+      expect(r.rejection.path).toBe('proxies[0].password');
+    });
+
+    it('duplicate names in the BASE array -> ambiguous -> MASK_PATH_MISSING', () => {
+      const baseWithDuplicateName = [
+        'proxies:',
+        '  - name: proxy-a',
+        '    type: ss',
+        '    server: a.example.com',
+        '    port: 8388',
+        '    password: secret-1',
+        '  - name: proxy-a',
+        '    type: ss',
+        '    server: a2.example.com',
+        '    port: 8390',
+        '    password: secret-2',
+      ].join('\n') + '\n';
+      const submitted = [
+        'proxies:',
+        '  - name: proxy-a',
+        '    type: ss',
+        '    server: a.example.com',
+        '    port: 8388',
+        `    password: ${MASK_SENTINEL}`,
+      ].join('\n') + '\n';
+
+      const r = prepareApply(input(submitted), baseWithDuplicateName, HASH);
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(r.rejection).toEqual({ code: 'MASK_PATH_MISSING', path: 'proxies[0].password' });
+    });
+
+    it('unrenamed, unreordered masked rows still resolve correctly (no false rejection)', () => {
+      const submitted = [
+        'proxies:',
+        '  - name: proxy-a',
+        '    type: ss',
+        '    server: a.example.com',
+        '    port: 8388',
+        `    password: ${MASK_SENTINEL}`,
+        '  - name: proxy-b',
+        '    type: ss',
+        '    server: b.example.com',
+        '    port: 8389',
+        `    password: ${MASK_SENTINEL}`,
+      ].join('\n') + '\n';
+
+      const r = prepareApply(input(submitted), baseTwoProxies, HASH);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      const parsedFinal = load(r.prepared.finalContent) as { proxies: Array<{ name: string; password: string }> };
+      const byName = Object.fromEntries(parsedFinal.proxies.map((p) => [p.name, p.password]));
+      expect(byName['proxy-a']).toBe('secret-for-a');
+      expect(byName['proxy-b']).toBe('secret-for-b');
+    });
+
+    it('plain positional behavior regression: a non-array sentinel is unaffected', () => {
+      // scenario 1 in miniature — confirms the identity-aware branch is
+      // scoped to array elements and does not change scalar-field handling.
+      const submitted = BASE_YAML.replace('password: real-password-value', 'password: ' + MASK_SENTINEL);
+      const r = prepareApply(input(submitted), BASE_YAML, HASH);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      const parsedFinal = load(r.prepared.finalContent) as Record<string, unknown>;
+      expect(parsedFinal.password).toBe('real-password-value');
+    });
+
+    it('plain positional behavior regression: an unnamed (plain scalar) array element keeps positional resolution', () => {
+      // dns.nameserver is a plain string list — no `name` identity exists,
+      // so reordering it is expected to keep matching by position (this
+      // fix only changes resolution for named-mapping elements).
+      const base = [
+        'dns:',
+        '  enable: true',
+        '  nameserver:',
+        '    - 8.8.8.8',
+        `    - masked-nameserver-secret`,
+      ].join('\n') + '\n';
+      const submitted = [
+        'dns:',
+        '  enable: true',
+        '  nameserver:',
+        '    - 8.8.8.8',
+        `    - ${MASK_SENTINEL}`,
+      ].join('\n') + '\n';
+      const r = prepareApply(input(submitted), base, HASH);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      const parsedFinal = load(r.prepared.finalContent) as { dns: { nameserver: string[] } };
+      expect(parsedFinal.dns.nameserver).toEqual(['8.8.8.8', 'masked-nameserver-secret']);
+    });
+  });
 });
