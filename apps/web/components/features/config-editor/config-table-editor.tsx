@@ -1,0 +1,1018 @@
+"use client";
+
+/**
+ * M2b Task 9 — row-table editors for the 3 `isTable` categories
+ * (proxies/proxy-groups/rules). Reuses `FieldRenderer` (Task 8) per-row for
+ * the two object-shaped categories (proxies/proxy-groups), so protocol/type
+ * field sets — including nested fields and the sentinel masked-control —
+ * work unchanged. `rules` is not object-shaped (Mihomo stores each rule as
+ * a single `"TYPE,PAYLOAD,POLICY"` string), so it gets its own three-segment
+ * dialog instead of going through `FieldRenderer`.
+ *
+ * Document write-back (binding, task-9-brief.md): every table category's
+ * array lives at the document root under a key equal to the category id
+ * (`proxies`/`proxy-groups`/`rules` — verified against config-metadata.json
+ * and Mihomo's own schema). That means `useConfigForm`'s existing
+ * `setFieldValue(categoryId, fieldKey, value)` already does exactly what's
+ * needed when called as `setFieldValue(categoryId, categoryId, newArray)` —
+ * `fieldKey` splits to a single path segment equal to the document-root key.
+ * No changes to use-config-form.ts were needed. Editing row N replaces
+ * exactly that array element via `.map`; add appends; delete filters; move
+ * swaps two elements — every operation is built via structural sharing
+ * (elements that weren't touched keep their original object reference),
+ * which is what makes 保真 (unrelated rows/keys survive untouched) true at
+ * the row-array level, mirroring how `setAtPath` makes it true at the
+ * document-key level in use-config-form.ts.
+ *
+ * ⚠️ KNOWN HAZARD — flagged for Task 10, deliberately NOT fixed here (out of
+ * this task's file whitelist; apply-pipeline.ts is Task 5's file):
+ *
+ * `apps/collector/src/modules/config-editor/apply-pipeline.ts`'s
+ * `collectAndSubstitute` resubstitutes a masked sentinel scalar by walking
+ * the SUBMITTED CST and the BASE value tree IN LOCKSTEP BY STRUCTURAL
+ * POSITION — for a sequence, submitted index `i` is paired with base index
+ * `i` (apply-pipeline.ts: `node.items.forEach((item, i) => ... baseValue[i]
+ * ...)`), never by a stable identity or a pre-recorded path. `moveRow`
+ * below (every table category's up/down buttons) and `removeRow` both
+ * change which row sits at which index. If a row that still carries a
+ * masked sentinel field (e.g. a proxy's `password: __ORBIT_MASKED__`) is
+ * moved or has an earlier row deleted out from under it, submitting that
+ * document resubstitutes the sentinel against the BASE document's value at
+ * the NEW index — i.e. a DIFFERENT row's original secret gets written into
+ * this row's field. This is silent and produces a materially wrong config
+ * (wrong/leaked credential in the wrong row), not a rejected submission.
+ * This component has no visibility into which fields are currently masked
+ * (that's `yaml-mask.ts`'s `maskedPaths`, never surfaced to
+ * `useConfigForm`), so it cannot defend against this client-side. The brief
+ * requires reorder/delete regardless ("行序可调(上移/下移即可,不引拖拽库)"),
+ * so both are implemented as specified; Task 10 (or a fast-follow before it
+ * ships) MUST address this in apply-pipeline.ts before reorder/delete on a
+ * config containing masked fields is safe to submit — e.g. reject apply
+ * when a masked array's element order changed vs. base, or correlate
+ * sentinels by something more durable than positional index. See
+ * task-9-report.md for the full writeup.
+ */
+
+import { useState } from "react";
+import { useTranslations } from "next-intl";
+import { toast } from "sonner";
+import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { FieldRenderer, MASKED_SENTINEL } from "./field-renderer";
+import type { UseConfigFormResult } from "./use-config-form";
+import type {
+  FieldDescriptor,
+  RuleTypeDescriptor,
+  TableCategory,
+} from "@/lib/types/config-metadata";
+
+type Translator = (key: string, values?: Record<string, string | number>) => string;
+
+interface FieldSetLookup {
+  type: string;
+  label: string;
+  fields: FieldDescriptor[];
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function displayValue(value: unknown): string {
+  if (value === MASKED_SENTINEL) return "••••••••";
+  if (value === undefined || value === null || value === "") return "—";
+  return String(value);
+}
+
+function collectNames(document: Record<string, unknown>, key: string): string[] {
+  const arr = document[key];
+  if (!Array.isArray(arr)) return [];
+  const names: string[] = [];
+  for (const entry of arr) {
+    if (isPlainRecord(entry) && typeof entry.name === "string" && entry.name !== MASKED_SENTINEL) {
+      names.push(entry.name);
+    }
+  }
+  return names;
+}
+
+/**
+ * categoryId doubles as the document-root array key (see file header) —
+ * `useConfigForm`'s dirty tracking is also keyed by (categoryId, fieldKey),
+ * so using categoryId for both plugs straight into the existing dirty-set
+ * machinery at whole-array granularity (one dot for "this table changed",
+ * matching Task 8's precedent of parent-field-granularity dirty tracking
+ * for nested/compound values).
+ */
+function useRowArray<T>(form: UseConfigFormResult, categoryId: string) {
+  const raw = form.document[categoryId];
+  const rows: T[] = Array.isArray(raw) ? (raw as T[]) : [];
+  const dirty = form.isFieldDirty(categoryId, categoryId);
+  const commit = (next: T[]) => form.setFieldValue(categoryId, categoryId, next);
+
+  return {
+    rows,
+    dirty,
+    addRow: (row: T) => commit([...rows, row]),
+    replaceRow: (index: number, row: T) => commit(rows.map((r, i) => (i === index ? row : r))),
+    removeRow: (index: number) => commit(rows.filter((_, i) => i !== index)),
+    // See the ⚠️ HAZARD block in this file's header comment.
+    moveRow: (index: number, direction: -1 | 1) => {
+      const target = index + direction;
+      if (target < 0 || target >= rows.length) return;
+      const next = [...rows];
+      [next[index], next[target]] = [next[target], next[index]];
+      commit(next);
+    },
+  };
+}
+
+function TableToolbar({
+  t,
+  label,
+  dirty,
+  onAdd,
+}: {
+  t: Translator;
+  label: string;
+  dirty: boolean;
+  onAdd: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div className="flex items-center gap-1.5">
+        <span className="text-sm font-medium">{label}</span>
+        {dirty && (
+          <span
+            className="w-1.5 h-1.5 rounded-full bg-primary shrink-0"
+            role="img"
+            aria-label={t("field.changed")}
+            title={t("field.changed")}
+          />
+        )}
+      </div>
+      <Button size="sm" onClick={onAdd} className="gap-1.5">
+        <Plus className="w-3.5 h-3.5" />
+        {t("table.add")}
+      </Button>
+    </div>
+  );
+}
+
+function RowActions({
+  t,
+  onEdit,
+  onDelete,
+  onMoveUp,
+  onMoveDown,
+  moveUpDisabled,
+  moveDownDisabled,
+  editDisabled,
+  editDisabledTitle,
+}: {
+  t: Translator;
+  onEdit: () => void;
+  onDelete: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  moveUpDisabled: boolean;
+  moveDownDisabled: boolean;
+  editDisabled?: boolean;
+  editDisabledTitle?: string;
+}) {
+  return (
+    <div className="flex items-center justify-end gap-0.5">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={onMoveUp}
+        disabled={moveUpDisabled}
+        aria-label={t("table.moveUp")}
+        title={t("table.moveUp")}>
+        <ArrowUp className="w-3.5 h-3.5" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={onMoveDown}
+        disabled={moveDownDisabled}
+        aria-label={t("table.moveDown")}
+        title={t("table.moveDown")}>
+        <ArrowDown className="w-3.5 h-3.5" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={onEdit}
+        disabled={editDisabled}
+        aria-label={t("table.edit")}
+        title={editDisabled ? editDisabledTitle : t("table.edit")}>
+        <Pencil className="w-3.5 h-3.5" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={onDelete}
+        aria-label={t("table.delete")}
+        title={t("table.delete")}
+        className="text-destructive hover:text-destructive">
+        <Trash2 className="w-3.5 h-3.5" />
+      </Button>
+    </div>
+  );
+}
+
+function DeleteRowDialog({
+  t,
+  open,
+  name,
+  onOpenChange,
+  onConfirm,
+}: {
+  t: Translator;
+  open: boolean;
+  name: string;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("table.confirmDeleteTitle")}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t("table.confirmDeleteDescription", { name })}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t("table.cancel")}</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm}>{t("table.delete")}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+/** Default values for a freshly-selected protocol/type field set — mirrors
+ *  clash-cfg-edit's `onProtocolChange`/`onTypeChange` reference behavior:
+ *  `name` is deliberately skipped here (callers preserve it across a type
+ *  switch themselves) and only `default`/empty-array pre-fills happen. */
+function buildDefaultRow(fieldSet: FieldSetLookup): Record<string, unknown> {
+  const row: Record<string, unknown> = { type: fieldSet.type };
+  for (const field of fieldSet.fields) {
+    if (field.key === "name") continue;
+    if (field.default !== undefined) row[field.key] = field.default;
+    else if (field.type === "array") row[field.key] = [];
+  }
+  return row;
+}
+
+/** Member-picker for proxy-groups' `proxies` field: sources ADD candidates
+ *  from the current document's proxies list, but the selected chips render
+ *  from the draft row's OWN array — never filtered against `available` —
+ *  so a member naming a proxy-group, a provider-sourced name, or a proxy
+ *  that was since renamed/removed still round-trips untouched instead of
+ *  being silently dropped on save. */
+function ProxyMemberPicker({
+  t,
+  field,
+  value,
+  available,
+  onChange,
+}: {
+  t: Translator;
+  field: FieldDescriptor;
+  value: unknown;
+  available: string[];
+  onChange: (value: string[]) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const selected = Array.isArray(value) ? value.map(String) : [];
+  const selectedSet = new Set(selected);
+  const candidates = available.filter(
+    (name) => !selectedSet.has(name) && (!search || name.toLowerCase().includes(search.toLowerCase())),
+  );
+
+  return (
+    <div className="py-3 first:pt-0 last:pb-0">
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="text-sm font-medium">{field.label}</span>
+        <span className="text-xs text-muted-foreground">
+          {t("table.memberPicker.selectedCount", { count: selected.length })}
+        </span>
+      </div>
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {selected.map((name) => (
+            <Badge key={name} variant="secondary" className="gap-1 pr-1">
+              <span className="max-w-40 truncate">{displayValue(name)}</span>
+              <button
+                type="button"
+                onClick={() => onChange(selected.filter((n) => n !== name))}
+                className="rounded-full hover:bg-background/60 p-0.5"
+                aria-label={t("table.memberPicker.remove", { name })}>
+                <X className="w-3 h-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      )}
+      <Input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={t("table.memberPicker.searchPlaceholder")}
+        className="mb-2"
+      />
+      <div className="max-h-40 overflow-y-auto rounded-md border divide-y divide-border/60">
+        {available.length === 0 ? (
+          <p className="text-xs text-muted-foreground p-3">{t("table.memberPicker.empty")}</p>
+        ) : candidates.length === 0 ? (
+          <p className="text-xs text-muted-foreground p-3">{t("table.memberPicker.noMatches")}</p>
+        ) : (
+          candidates.map((name) => (
+            <button
+              key={name}
+              type="button"
+              onClick={() => onChange([...selected, name])}
+              className="w-full text-left px-3 py-1.5 text-sm hover:bg-accent">
+              {name}
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Shared add/edit dialog for the two object-shaped table categories
+ *  (proxies/proxy-groups). `draftRow` is seeded as a full clone of the row
+ *  being edited (not rebuilt from the field set) so any key the field set
+ *  doesn't describe — a hand-written option config-metadata.json doesn't
+ *  know about — survives the edit untouched; only `FieldRenderer`'s
+ *  `onChange` for a specific `field.key` ever touches a key of the draft, so
+ *  every other key on the row is structurally never read or dropped, same
+ *  discipline as `setAtPath` in use-config-form.ts. The type/protocol
+ *  selector is locked while editing (matches the clash-cfg-edit reference
+ *  this task is scoped from) — switching a saved row's protocol mid-edit
+ *  would otherwise silently orphan every field the old protocol declared
+ *  that the new one doesn't. */
+function ObjectRowEditDialog({
+  t,
+  open,
+  onOpenChange,
+  categoryId,
+  categoryLabel,
+  fieldSets,
+  initialRow,
+  rowIndex,
+  memberPickerFieldKey,
+  memberPickerAvailable,
+  onSave,
+}: {
+  t: Translator;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  categoryId: string;
+  categoryLabel: string;
+  fieldSets: FieldSetLookup[];
+  initialRow: Record<string, unknown> | null;
+  rowIndex: number | null;
+  memberPickerFieldKey?: string;
+  memberPickerAvailable: string[];
+  onSave: (row: Record<string, unknown>) => void;
+}) {
+  const isEdit = initialRow !== null;
+
+  const [draftRow, setDraftRow] = useState<Record<string, unknown>>(() =>
+    initialRow ? structuredClone(initialRow) : buildDefaultRow(fieldSets[0]),
+  );
+
+  const activeFieldSet = fieldSets.find((fs) => fs.type === draftRow.type) ?? fieldSets[0];
+  const rowPath = `${categoryId}[${rowIndex ?? "new"}]`;
+
+  const handleTypeChange = (newType: string) => {
+    const fieldSet = fieldSets.find((fs) => fs.type === newType);
+    if (!fieldSet) return;
+    setDraftRow((prev) => {
+      const next = buildDefaultRow(fieldSet);
+      if (typeof prev.name === "string") next.name = prev.name;
+      return next;
+    });
+  };
+
+  const setFieldDraft = (key: string, value: unknown) =>
+    setDraftRow((prev) => ({ ...prev, [key]: value }));
+
+  const resetFieldDraft = (key: string) =>
+    setDraftRow((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+
+  const handleSave = () => {
+    for (const field of activeFieldSet.fields) {
+      if (!field.required) continue;
+      const value = draftRow[field.key];
+      const empty = value === undefined || value === "" || (Array.isArray(value) && value.length === 0);
+      if (empty) {
+        toast.error(t("table.requiredFieldError", { field: field.label }));
+        return;
+      }
+    }
+    onSave(draftRow);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>
+            {isEdit
+              ? t("table.editTitle", { category: categoryLabel })
+              : t("table.addTitle", { category: categoryLabel })}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="divide-y divide-border/60">
+          <div className="py-3 first:pt-0">
+            <span className="text-sm font-medium block mb-1.5">{t("table.typeLabel")}</span>
+            <Select value={draftRow.type as string} onValueChange={handleTypeChange} disabled={isEdit}>
+              <SelectTrigger className="w-full" aria-label={t("table.typeLabel")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {fieldSets.map((fs) => (
+                  <SelectItem key={fs.type} value={fs.type}>
+                    {fs.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {activeFieldSet.fields.map((field) =>
+            memberPickerFieldKey && field.key === memberPickerFieldKey ? (
+              <ProxyMemberPicker
+                key={field.key}
+                t={t}
+                field={field}
+                value={draftRow[field.key]}
+                available={memberPickerAvailable}
+                onChange={(v) => setFieldDraft(field.key, v)}
+              />
+            ) : (
+              <FieldRenderer
+                key={field.key}
+                field={field}
+                value={draftRow[field.key]}
+                path={`${rowPath}.${field.key}`}
+                siblingValues={draftRow}
+                dirty={false}
+                onChange={(v) => setFieldDraft(field.key, v)}
+                onReset={() => resetFieldDraft(field.key)}
+              />
+            ),
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {t("table.cancel")}
+          </Button>
+          <Button onClick={handleSave}>{t("table.save")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type EditingState = { index: number | null } | null;
+
+function ProxiesTable({ category, form }: { category: TableCategory; form: UseConfigFormResult }) {
+  const t = useTranslations("configEditor") as unknown as Translator;
+  const protocols = category.protocols ?? [];
+  const { rows, dirty, addRow, replaceRow, removeRow, moveRow } = useRowArray<Record<string, unknown>>(
+    form,
+    "proxies",
+  );
+  const [editing, setEditing] = useState<EditingState>(null);
+  const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
+  const categoryLabel = t(`categories.${category.id}`);
+
+  return (
+    <Card>
+      <CardContent className="p-5 space-y-4">
+        <TableToolbar t={t} label={categoryLabel} dirty={dirty} onAdd={() => setEditing({ index: null })} />
+        <div className="rounded-md border overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t("table.columns.name")}</TableHead>
+                <TableHead>{t("table.columns.type")}</TableHead>
+                <TableHead>{t("table.columns.server")}</TableHead>
+                <TableHead className="text-right">{t("table.columns.actions")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                    {t("table.empty", { category: categoryLabel })}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                rows.map((row, index) => {
+                  const fieldSet = protocols.find((p) => p.type === row.type);
+                  return (
+                    <TableRow key={index}>
+                      <TableCell className="font-medium">{displayValue(row.name)}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{fieldSet?.label ?? displayValue(row.type)}</Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {displayValue(row.server)}
+                        {row.port !== undefined && row.server !== MASKED_SENTINEL
+                          ? `:${displayValue(row.port)}`
+                          : ""}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <RowActions
+                          t={t}
+                          editDisabled={!fieldSet}
+                          editDisabledTitle={t("table.unsupportedType")}
+                          onEdit={() => setEditing({ index })}
+                          onDelete={() => setDeleteIndex(index)}
+                          onMoveUp={() => moveRow(index, -1)}
+                          onMoveDown={() => moveRow(index, 1)}
+                          moveUpDisabled={index === 0}
+                          moveDownDisabled={index === rows.length - 1}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+
+      {editing && (
+        <ObjectRowEditDialog
+          key={editing.index ?? "add"}
+          t={t}
+          open
+          onOpenChange={(open) => !open && setEditing(null)}
+          categoryId="proxies"
+          categoryLabel={categoryLabel}
+          fieldSets={protocols}
+          initialRow={editing.index !== null ? rows[editing.index] : null}
+          rowIndex={editing.index}
+          memberPickerAvailable={[]}
+          onSave={(row) => {
+            if (editing.index !== null) replaceRow(editing.index, row);
+            else addRow(row);
+            setEditing(null);
+          }}
+        />
+      )}
+
+      <DeleteRowDialog
+        t={t}
+        open={deleteIndex !== null}
+        name={deleteIndex !== null ? displayValue(rows[deleteIndex]?.name) : ""}
+        onOpenChange={(open) => !open && setDeleteIndex(null)}
+        onConfirm={() => {
+          if (deleteIndex !== null) removeRow(deleteIndex);
+          setDeleteIndex(null);
+        }}
+      />
+    </Card>
+  );
+}
+
+function ProxyGroupsTable({ category, form }: { category: TableCategory; form: UseConfigFormResult }) {
+  const t = useTranslations("configEditor") as unknown as Translator;
+  const types = category.types ?? [];
+  const { rows, dirty, addRow, replaceRow, removeRow, moveRow } = useRowArray<Record<string, unknown>>(
+    form,
+    "proxy-groups",
+  );
+  const [editing, setEditing] = useState<EditingState>(null);
+  const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
+  const categoryLabel = t(`categories.${category.id}`);
+  const proxyNames = collectNames(form.document, "proxies");
+
+  return (
+    <Card>
+      <CardContent className="p-5 space-y-4">
+        <TableToolbar t={t} label={categoryLabel} dirty={dirty} onAdd={() => setEditing({ index: null })} />
+        <div className="rounded-md border overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t("table.columns.name")}</TableHead>
+                <TableHead>{t("table.columns.type")}</TableHead>
+                <TableHead>{t("table.columns.members")}</TableHead>
+                <TableHead className="text-right">{t("table.columns.actions")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                    {t("table.empty", { category: categoryLabel })}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                rows.map((row, index) => {
+                  const fieldSet = types.find((ty) => ty.type === row.type);
+                  const members = Array.isArray(row.proxies) ? (row.proxies as unknown[]) : [];
+                  return (
+                    <TableRow key={index}>
+                      <TableCell className="font-medium">{displayValue(row.name)}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{fieldSet?.label ?? displayValue(row.type)}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1 max-w-xs">
+                          {members.length === 0 ? (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          ) : (
+                            <>
+                              {members.slice(0, 3).map((m, i) => (
+                                <Badge key={i} variant="secondary" className="text-[10px]">
+                                  {displayValue(m)}
+                                </Badge>
+                              ))}
+                              {members.length > 3 && (
+                                <Badge variant="outline" className="text-[10px]">
+                                  +{members.length - 3}
+                                </Badge>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <RowActions
+                          t={t}
+                          editDisabled={!fieldSet}
+                          editDisabledTitle={t("table.unsupportedType")}
+                          onEdit={() => setEditing({ index })}
+                          onDelete={() => setDeleteIndex(index)}
+                          onMoveUp={() => moveRow(index, -1)}
+                          onMoveDown={() => moveRow(index, 1)}
+                          moveUpDisabled={index === 0}
+                          moveDownDisabled={index === rows.length - 1}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+
+      {editing && (
+        <ObjectRowEditDialog
+          key={editing.index ?? "add"}
+          t={t}
+          open
+          onOpenChange={(open) => !open && setEditing(null)}
+          categoryId="proxy-groups"
+          categoryLabel={categoryLabel}
+          fieldSets={types}
+          initialRow={editing.index !== null ? rows[editing.index] : null}
+          rowIndex={editing.index}
+          memberPickerFieldKey="proxies"
+          memberPickerAvailable={proxyNames}
+          onSave={(row) => {
+            if (editing.index !== null) replaceRow(editing.index, row);
+            else addRow(row);
+            setEditing(null);
+          }}
+        />
+      )}
+
+      <DeleteRowDialog
+        t={t}
+        open={deleteIndex !== null}
+        name={deleteIndex !== null ? displayValue(rows[deleteIndex]?.name) : ""}
+        onOpenChange={(open) => !open && setDeleteIndex(null)}
+        onConfirm={() => {
+          if (deleteIndex !== null) removeRow(deleteIndex);
+          setDeleteIndex(null);
+        }}
+      />
+    </Card>
+  );
+}
+
+interface ParsedRule {
+  masked: boolean;
+  type: string;
+  payload: string;
+  policy: string;
+  hasValue: boolean;
+}
+
+/** Mihomo rule format: `"TYPE,PAYLOAD,POLICY"`, or `"TYPE,POLICY"` for a
+ *  rule type with no payload segment (MATCH). Mirrors clash-cfg-edit's
+ *  `RuleTable.vue` `parseRule`/`formatRule` reference exactly (splits/joins
+ *  on `,`, falls back to a payload-bearing 3-segment read when the type
+ *  isn't recognized). A raw string exactly equal to the masking sentinel
+ *  (possible: yaml-mask.ts's value-equality pass masks ANY string in the
+ *  document that matches a previously-collected secret verbatim, including
+ *  a whole rule string, however rare in practice) is surfaced as `masked`
+ *  rather than parsed — same "replace wholesale, never in place" rule
+ *  FieldRenderer's masked-field control already follows for object fields. */
+function parseRuleRow(raw: string, ruleTypes: RuleTypeDescriptor[]): ParsedRule {
+  if (raw === MASKED_SENTINEL) {
+    return { masked: true, type: "", payload: "", policy: "", hasValue: true };
+  }
+  const parts = raw.split(",");
+  const type = parts[0] ?? "";
+  const descriptor = ruleTypes.find((rt) => rt.type === type);
+  const hasValue = descriptor ? descriptor.hasValue : true;
+  if (!hasValue) {
+    return { masked: false, type, payload: "", policy: parts[1] ?? "", hasValue };
+  }
+  return { masked: false, type, payload: parts[1] ?? "", policy: parts[2] ?? "", hasValue };
+}
+
+function RuleEditDialog({
+  t,
+  open,
+  onOpenChange,
+  ruleTypes,
+  policyOptions,
+  initialRaw,
+  onSave,
+}: {
+  t: Translator;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  ruleTypes: RuleTypeDescriptor[];
+  policyOptions: string[];
+  initialRaw: string | null;
+  onSave: (raw: string) => void;
+}) {
+  const isEdit = initialRaw !== null;
+  const parsedInitial = initialRaw !== null ? parseRuleRow(initialRaw, ruleTypes) : null;
+  const startFresh = !parsedInitial || parsedInitial.masked;
+
+  const [type, setType] = useState(startFresh ? (ruleTypes[0]?.type ?? "") : parsedInitial!.type);
+  const [payload, setPayload] = useState(startFresh ? "" : parsedInitial!.payload);
+  const [policy, setPolicy] = useState(startFresh ? (policyOptions[0] ?? "DIRECT") : parsedInitial!.policy);
+
+  const descriptor = ruleTypes.find((rt) => rt.type === type);
+  const hasValue = descriptor ? descriptor.hasValue : true;
+
+  const handleTypeChange = (next: string) => {
+    setType(next);
+    const nextDescriptor = ruleTypes.find((rt) => rt.type === next);
+    if (nextDescriptor && !nextDescriptor.hasValue) setPayload("");
+  };
+
+  const handleSave = () => {
+    if (hasValue && !payload.trim()) {
+      toast.error(t("table.rules.payloadRequired"));
+      return;
+    }
+    if (!policy.trim()) {
+      toast.error(t("table.rules.policyRequired"));
+      return;
+    }
+    onSave(hasValue ? `${type},${payload},${policy}` : `${type},${policy}`);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {isEdit
+              ? t("table.editTitle", { category: t("categories.rules") })
+              : t("table.addTitle", { category: t("categories.rules") })}
+          </DialogTitle>
+          {parsedInitial?.masked && <DialogDescription>{t("table.rules.maskedRow")}</DialogDescription>}
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div>
+            <span className="text-sm font-medium block mb-1.5">{t("table.rules.typeLabel")}</span>
+            <Select value={type} onValueChange={handleTypeChange}>
+              <SelectTrigger className="w-full" aria-label={t("table.rules.typeLabel")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ruleTypes.map((rt) => (
+                  <SelectItem key={rt.type} value={rt.type}>
+                    {rt.label} ({rt.type})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {hasValue ? (
+            <div>
+              <span className="text-sm font-medium block mb-1.5">{t("table.rules.payloadLabel")}</span>
+              <Input value={payload} onChange={(e) => setPayload(e.target.value)} />
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">{t("table.rules.noPayloadHint")}</p>
+          )}
+
+          <div>
+            <span className="text-sm font-medium block mb-1.5">{t("table.rules.policyLabel")}</span>
+            <Select value={policy} onValueChange={setPolicy}>
+              <SelectTrigger className="w-full" aria-label={t("table.rules.policyLabel")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {policyOptions.map((opt) => (
+                  <SelectItem key={opt} value={opt}>
+                    {opt}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {t("table.cancel")}
+          </Button>
+          <Button onClick={handleSave}>{t("table.save")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RulesTable({ category, form }: { category: TableCategory; form: UseConfigFormResult }) {
+  const t = useTranslations("configEditor") as unknown as Translator;
+  const ruleTypes = category.ruleTypes ?? [];
+  const { rows, dirty, addRow, replaceRow, removeRow, moveRow } = useRowArray<string>(form, "rules");
+  const [editing, setEditing] = useState<EditingState>(null);
+  const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
+  const categoryLabel = t(`categories.${category.id}`);
+  const policyOptions = ["DIRECT", "REJECT", ...collectNames(form.document, "proxy-groups")];
+
+  return (
+    <Card>
+      <CardContent className="p-5 space-y-4">
+        <TableToolbar t={t} label={categoryLabel} dirty={dirty} onAdd={() => setEditing({ index: null })} />
+        <div className="rounded-md border overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">{t("table.rules.columnIndex")}</TableHead>
+                <TableHead>{t("table.rules.columnType")}</TableHead>
+                <TableHead>{t("table.rules.columnPayload")}</TableHead>
+                <TableHead>{t("table.rules.columnPolicy")}</TableHead>
+                <TableHead className="text-right">{t("table.columns.actions")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                    {t("table.empty", { category: categoryLabel })}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                rows.map((raw, index) => {
+                  const parsed = parseRuleRow(raw, ruleTypes);
+                  const typeLabel = ruleTypes.find((rt) => rt.type === parsed.type)?.label ?? parsed.type;
+                  return (
+                    <TableRow key={index}>
+                      <TableCell className="text-muted-foreground text-xs">{index + 1}</TableCell>
+                      {parsed.masked ? (
+                        <TableCell colSpan={3} className="text-muted-foreground text-xs">
+                          {t("table.rules.maskedRow")}
+                        </TableCell>
+                      ) : (
+                        <>
+                          <TableCell>
+                            <Badge variant="outline">{typeLabel || "—"}</Badge>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground max-w-56 truncate">
+                            {parsed.hasValue ? displayValue(parsed.payload) : "—"}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="secondary">{parsed.policy || "—"}</Badge>
+                          </TableCell>
+                        </>
+                      )}
+                      <TableCell className="text-right">
+                        <RowActions
+                          t={t}
+                          onEdit={() => setEditing({ index })}
+                          onDelete={() => setDeleteIndex(index)}
+                          onMoveUp={() => moveRow(index, -1)}
+                          onMoveDown={() => moveRow(index, 1)}
+                          moveUpDisabled={index === 0}
+                          moveDownDisabled={index === rows.length - 1}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+
+      {editing && (
+        <RuleEditDialog
+          key={editing.index ?? "add"}
+          t={t}
+          open
+          onOpenChange={(open) => !open && setEditing(null)}
+          ruleTypes={ruleTypes}
+          policyOptions={policyOptions}
+          initialRaw={editing.index !== null ? rows[editing.index] : null}
+          onSave={(raw) => {
+            if (editing.index !== null) replaceRow(editing.index, raw);
+            else addRow(raw);
+            setEditing(null);
+          }}
+        />
+      )}
+
+      <DeleteRowDialog
+        t={t}
+        open={deleteIndex !== null}
+        name={deleteIndex !== null ? displayValue(rows[deleteIndex]) : ""}
+        onOpenChange={(open) => !open && setDeleteIndex(null)}
+        onConfirm={() => {
+          if (deleteIndex !== null) removeRow(deleteIndex);
+          setDeleteIndex(null);
+        }}
+      />
+    </Card>
+  );
+}
+
+export function ConfigTableEditor({
+  category,
+  form,
+}: {
+  category: TableCategory;
+  form: UseConfigFormResult;
+}) {
+  switch (category.id) {
+    case "proxies":
+      return <ProxiesTable category={category} form={form} />;
+    case "proxy-groups":
+      return <ProxyGroupsTable category={category} form={form} />;
+    case "rules":
+      return <RulesTable category={category} form={form} />;
+    default:
+      return null;
+  }
+}

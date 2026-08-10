@@ -290,7 +290,6 @@
       "proxy-groups": "Proxy Groups",
       "rules": "Rules"
     },
-    "tableCategoryComingSoon": "Visual editing for this category will land in a later task.",
     "loadError": "Failed to load config",
     "offlineBanner": "Can't reach this backend — config data isn't available right now",
     "retry": "Retry",
@@ -315,6 +314,50 @@
       "addItemPlaceholder": "Type and press Enter to add",
       "removeItem": "Remove {item}",
       "invalidJson": "Not valid JSON — this change won't be saved"
+    },
+    "table": {
+      "add": "Add",
+      "edit": "Edit",
+      "delete": "Delete",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "cancel": "Cancel",
+      "save": "Save",
+      "typeLabel": "Type",
+      "addTitle": "Add {category}",
+      "editTitle": "Edit {category}",
+      "empty": "No {category} yet — click Add above to create one",
+      "unsupportedType": "Visual editing isn't supported for this type",
+      "requiredFieldError": "Please fill in the required field: {field}",
+      "confirmDeleteTitle": "Confirm delete",
+      "confirmDeleteDescription": "Delete \"{name}\"? This can't be undone.",
+      "columns": {
+        "name": "Name",
+        "type": "Type",
+        "server": "Server",
+        "members": "Members",
+        "actions": "Actions"
+      },
+      "memberPicker": {
+        "searchPlaceholder": "Search proxies",
+        "selectedCount": "{count} selected",
+        "empty": "No proxies in the current config yet — add some under the Proxies tab first",
+        "noMatches": "No matching proxies",
+        "remove": "Remove {name}"
+      },
+      "rules": {
+        "typeLabel": "Rule type",
+        "payloadLabel": "Match value",
+        "policyLabel": "Policy",
+        "noPayloadHint": "This rule type doesn't take a match value",
+        "payloadRequired": "Please enter a match value",
+        "policyRequired": "Please select a policy",
+        "maskedRow": "This rule contains a hidden sensitive value — editing replaces it entirely",
+        "columnIndex": "#",
+        "columnType": "Type",
+        "columnPayload": "Match value",
+        "columnPolicy": "Policy"
+      }
     },
     "gate": {
       "title": "Config Editing Unavailable",

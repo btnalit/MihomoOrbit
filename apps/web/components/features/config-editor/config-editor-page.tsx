@@ -12,6 +12,10 @@
  * `useConfigForm`'s live `document`. This page's job stops at loading state
  * + correct, dirty-tracked form state that maps 1:1 onto the parsed YAML.
  *
+ * M2b Task 9: the 3 `isTable` categories now render `ConfigTableEditor`
+ * (config-table-editor.tsx) instead of the placeholder Task 8 left in
+ * their place.
+ *
  * Data flow (brief, binding): `useConfigCurrent` -> `yaml.parse
  * (maskedContent)` (inside `useConfigForm`) -> form state. Two distinct
  * empty states, per the brief: `current.parseError === true` (server
@@ -43,6 +47,7 @@ import { cn } from "@/lib/utils";
 import { apiErrorCode, isUnreachableError } from "@/lib/api";
 import { useConfigCurrent } from "@/hooks/api/use-config-editor";
 import { FieldRenderer } from "./field-renderer";
+import { ConfigTableEditor } from "./config-table-editor";
 import { useConfigForm, type UseConfigFormResult } from "./use-config-form";
 import type { ConfigMetadata, FlatCategory } from "@/lib/types/config-metadata";
 
@@ -144,7 +149,7 @@ function ConfigEditorForm({
       {categories.map((category) => (
         <TabsContent key={category.id} value={category.id} className="overflow-hidden">
           {category.isTable ? (
-            <TableCategoryPlaceholder />
+            <ConfigTableEditor category={category} form={form} />
           ) : (
             <FlatCategoryForm category={category} form={form} />
           )}
@@ -180,15 +185,6 @@ function FlatCategoryForm({
         ))}
       </CardContent>
     </Card>
-  );
-}
-
-function TableCategoryPlaceholder() {
-  const t = useTranslations("configEditor");
-  return (
-    <div className="p-12 text-center text-muted-foreground border rounded-xl">
-      <p>{t("tableCategoryComingSoon")}</p>
-    </div>
   );
 }
 
