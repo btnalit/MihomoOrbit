@@ -814,6 +814,110 @@ export function patchRuntimeConfig(backendId: number, patch: Partial<MihomoRunti
   );
 }
 
+// --- Config editor (M2) ----------------------------------------------
+// REST contract: plan 2026-08-09-m2b-config-editing.md §写侧 API, mirrored
+// by apps/collector/src/modules/config-editor/config-editor.controller.ts.
+// Every URL is a template literal on API_BASE so `pnpm check:api-routes`
+// can pair it with the collector's routes.
+
+/** GET /:backendId/current response. `parseError` is additive beyond the
+ *  plan's literal shape (collector Task 5/6 handoff note): true when the
+ *  stored content no longer parses as YAML — callers should refuse to
+ *  offer editing rather than mask garbage. */
+export interface ConfigCurrent {
+  versionId: number;
+  hash: string;
+  size: number;
+  filePath: string;
+  createdAt: string;
+  maskedContent: string;
+  maskedPaths: string[];
+  parseError: boolean;
+}
+
+export interface ConfigVersionMeta {
+  versionId: number;
+  hash: string;
+  size: number;
+  source: string;
+  createdAt: string;
+}
+
+export interface ApplyConfigResult {
+  commandId: string;
+  versionId: number;
+}
+
+export type ConfigCommandState =
+  | "pending"
+  | "dispatched"
+  | "applied"
+  | "conflict"
+  | "rolled-back"
+  | "failed";
+
+export interface ConfigCommandStatus {
+  commandId: string;
+  state: ConfigCommandState;
+  reason: string;
+  createdAt: string;
+  dispatchedAt: string | null;
+  resolvedAt: string | null;
+  expired: boolean;
+}
+
+export interface LatestCommandResponse {
+  command: ConfigCommandStatus | null;
+}
+
+/** Throws a 404 `NO_CONFIG_REPORTED` ApiError when the agent hasn't
+ *  reported a config file for this backend yet. */
+export function fetchConfigCurrent(backendId: number) {
+  return fetchJson<ConfigCurrent>(`${API_BASE}/config-editor/${backendId}/current`);
+}
+
+export function fetchConfigVersions(backendId: number) {
+  return fetchJson<{ versions: ConfigVersionMeta[] }>(
+    `${API_BASE}/config-editor/${backendId}/versions`,
+  );
+}
+
+export function applyConfig(
+  backendId: number,
+  body: { content: string; baseHash: string },
+) {
+  return fetchJson<ApplyConfigResult>(
+    `${API_BASE}/config-editor/${backendId}/apply`,
+    "POST",
+    body,
+  );
+}
+
+export function rollbackConfig(backendId: number, versionId: number) {
+  return fetchJson<ApplyConfigResult>(
+    `${API_BASE}/config-editor/${backendId}/rollback/${versionId}`,
+    "POST",
+  );
+}
+
+export function fetchLatestCommand(backendId: number) {
+  return fetchJson<LatestCommandResponse>(
+    `${API_BASE}/config-editor/${backendId}/commands/latest`,
+  );
+}
+
+/** Reveals the plaintext value at a masked path. Server-side audited
+ *  (logged before the value leaves the process) and only succeeds when
+ *  `path` is a member of the latest version's `maskedPaths` — callers must
+ *  not persist the returned value (component state only). */
+export function revealConfigValue(backendId: number, path: string) {
+  return fetchJson<{ value: unknown }>(
+    `${API_BASE}/config-editor/${backendId}/reveal`,
+    "POST",
+    { path },
+  );
+}
+
 // Helper functions for time range
 export function getPresetTimeRange(
   preset: "1m" | "5m" | "15m" | "30m" | "1h" | "7d" | "30d" | "24h" | "today",

@@ -17,7 +17,8 @@
     "groups": "Proxy Groups",
     "connections": "Connections",
     "logs": "Logs",
-    "runtime": "Runtime Settings"
+    "runtime": "Runtime Settings",
+    "config-editor": "Config Editor"
   },
   "header": {
     "title": "MihomoOrbit",
@@ -277,6 +278,28 @@
   "network": {
     "title": "Network",
     "comingSoon": "Real-time connection monitoring coming soon..."
+  },
+  "configEditor": {
+    "comingSoon": "The config editor is coming soon...",
+    "gate": {
+      "title": "Config Editing Unavailable",
+      "agentHint": "An agent is available for this backend — bind it in settings to enable config editing.",
+      "unavailable": "Config editing isn't available for this backend yet — bind an agent first.",
+      "openSettings": "Open Backend Settings"
+    },
+    "errors": {
+      "yamlInvalid": "The config content is not valid YAML",
+      "maskPathMissing": "The submitted content is missing a required sensitive field",
+      "selfLockFieldChanged": "Changing fields that could lock you out isn't allowed",
+      "baseHashStale": "The on-disk config has changed — refresh and try again",
+      "commandInFlight": "A command is already in progress — please wait",
+      "unsupportedGateway": "This gateway type doesn't support config editing",
+      "noConfigReported": "No config has been reported for this backend yet",
+      "versionNotFound": "That version could not be found",
+      "applyFailed": "Failed to apply config",
+      "rollbackFailed": "Failed to roll back config",
+      "revealFailed": "Failed to reveal value"
+    }
   },
   "management": {
     "delayTestRunning": "This group is already being tested — please wait",

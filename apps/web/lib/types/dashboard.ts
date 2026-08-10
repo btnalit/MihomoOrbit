@@ -24,4 +24,5 @@ export type TabId =
   | "groups"
   | "connections"
   | "logs"
-  | "runtime";
+  | "runtime"
+  | "config-editor";

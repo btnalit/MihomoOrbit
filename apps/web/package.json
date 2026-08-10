@@ -30,6 +30,7 @@
     "country-flag-icons": "^1.6.17",
     "d3-scale": "^4.0.2",
     "date-fns": "^4.4.0",
+    "diff": "^9.0.0",
     "framer-motion": "^12.40.0",
     "lucide-react": "^1.17.0",
     "next": "^16.2.7",
@@ -44,7 +45,8 @@
     "recharts": "^3.8.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
-    "vaul": "^1.1.2"
+    "vaul": "^1.1.2",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.0",

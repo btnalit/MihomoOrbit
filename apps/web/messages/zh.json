@@ -17,7 +17,8 @@
     "groups": "代理组",
     "connections": "连接",
     "logs": "日志",
-    "runtime": "运行时设置"
+    "runtime": "运行时设置",
+    "config-editor": "配置编辑"
   },
   "header": {
     "title": "MihomoOrbit",
@@ -277,6 +278,28 @@
   "network": {
     "title": "网络",
     "comingSoon": "实时连接监控功能开发中..."
+  },
+  "configEditor": {
+    "comingSoon": "配置编辑器功能开发中...",
+    "gate": {
+      "title": "配置编辑不可用",
+      "agentHint": "此后端已有可用 agent,请前往设置完成绑定以启用配置编辑",
+      "unavailable": "该后端暂不支持配置编辑,需先绑定 agent",
+      "openSettings": "打开后端设置"
+    },
+    "errors": {
+      "yamlInvalid": "配置内容不是合法的 YAML",
+      "maskPathMissing": "提交的内容中缺少必要的敏感字段",
+      "selfLockFieldChanged": "不允许修改可能导致失联的字段",
+      "baseHashStale": "磁盘配置已变更,请刷新后重试",
+      "commandInFlight": "已有指令正在执行,请稍候",
+      "unsupportedGateway": "该网关类型不支持配置编辑",
+      "noConfigReported": "尚未收到该后端上报的配置",
+      "versionNotFound": "未找到该历史版本",
+      "applyFailed": "应用配置失败",
+      "rollbackFailed": "回滚配置失败",
+      "revealFailed": "显示明文失败"
+    }
   },
   "management": {
     "delayTestRunning": "该分组正在测速,请稍候",

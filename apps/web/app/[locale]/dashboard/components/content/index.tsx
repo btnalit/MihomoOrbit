@@ -16,6 +16,7 @@ import { HealthContent } from "@/components/features/health";
 import { WorldTrafficMap, CountryTrafficList } from "@/components/features/countries";
 import { DomainsTable, IPsTable } from "@/components/features/stats/table";
 import { ConnectionsPage, GroupsPage, LogsPage, ManagementGate, RuntimePage } from "@/components/features/management";
+import { ConfigEditGate } from "@/components/features/config-editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -319,6 +320,21 @@ const NetworkContent = memo(function NetworkContent() {
   );
 });
 
+// Config Editor Content Component — placeholder body only. Tasks 8-11
+// replace this with the real editor (metadata-driven category tabs, diff
+// preview, apply/rollback, command timeline); the gate + remount-on-
+// backend-switch wiring below is final.
+const ConfigEditorContent = memo(function ConfigEditorContent() {
+  const t = useTranslations("configEditor");
+  return (
+    <div className="space-y-6">
+      <div className="p-12 text-center text-muted-foreground border rounded-xl">
+        <p>{t("comingSoon")}</p>
+      </div>
+    </div>
+  );
+});
+
 export function Content({
   activeTab,
   data,
@@ -436,6 +452,16 @@ export function Content({
                 to a different backend. */}
             <RuntimePage key={activeBackendId} backendId={activeBackendId} />
           </ManagementGate>
+        );
+      case "config-editor":
+        return (
+          <ConfigEditGate backend={activeBackend} onBackendChange={onBackendChange}>
+            {/* Same remount-on-backend-switch rationale as groups/
+                connections/logs/runtime above — Tasks 8-11's editor state
+                (form values, dirty tracking, in-flight command polling)
+                must not survive a switch to a different backend. */}
+            <ConfigEditorContent key={activeBackendId} />
+          </ConfigEditGate>
         );
       default:
         return (

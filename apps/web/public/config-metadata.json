@@ -1,0 +1,592 @@
+{
+  "categories": [
+    {
+      "id": "basic",
+      "name": "基础配置",
+      "icon": "Setting",
+      "fields": [
+        {
+          "key": "port",
+          "label": "HTTP代理端口",
+          "type": "number",
+          "default": 7890,
+          "description": "HTTP(S) 代理服务器端口",
+          "example": 7890
+        },
+        {
+          "key": "socks-port",
+          "label": "SOCKS5代理端口",
+          "type": "number",
+          "default": 7891,
+          "description": "SOCKS5 代理端口",
+          "example": 7891
+        },
+        {
+          "key": "mixed-port",
+          "label": "混合端口",
+          "type": "number",
+          "default": 10801,
+          "description": "HTTP(S) 和 SOCKS 代理混合端口，同时支持HTTP和SOCKS协议",
+          "example": 10801
+        },
+        {
+          "key": "redir-port",
+          "label": "透明代理端口",
+          "type": "number",
+          "description": "透明代理端口，用于 Linux 和 MacOS",
+          "example": 7892
+        },
+        {
+          "key": "tproxy-port",
+          "label": "TProxy端口",
+          "type": "number",
+          "description": "Linux TProxy 透明代理端口 (TProxy TCP 和 TProxy UDP)",
+          "example": 7893
+        },
+        {
+          "key": "allow-lan",
+          "label": "允许局域网连接",
+          "type": "boolean",
+          "default": false,
+          "description": "是否允许局域网内的设备连接到此代理",
+          "example": true
+        },
+        {
+          "key": "bind-address",
+          "label": "绑定地址",
+          "type": "string",
+          "default": "*",
+          "description": "绑定的 IP 地址，仅在 allow-lan 为 true 时生效，'*' 表示所有地址",
+          "example": "*"
+        },
+        {
+          "key": "mode",
+          "label": "运行模式",
+          "type": "select",
+          "default": "rule",
+          "options": ["rule", "global", "direct"],
+          "description": "运行模式：rule(规则模式)、global(全局代理)、direct(全局直连)",
+          "example": "rule"
+        },
+        {
+          "key": "log-level",
+          "label": "日志级别",
+          "type": "select",
+          "default": "info",
+          "options": ["silent", "error", "warning", "info", "debug"],
+          "description": "日志输出级别，silent为不输出，debug为最详细",
+          "example": "info"
+        },
+        {
+          "key": "ipv6",
+          "label": "启用IPv6",
+          "type": "boolean",
+          "default": true,
+          "description": "开启 IPv6 总开关，关闭会阻断所有 IPv6 连接和屏蔽 DNS 请求 AAAA 记录",
+          "example": true
+        },
+        {
+          "key": "external-controller",
+          "label": "外部控制器地址",
+          "type": "string",
+          "default": "0.0.0.0:9093",
+          "description": "RESTful API 监听地址，用于外部控制",
+          "example": "0.0.0.0:9093"
+        },
+        {
+          "key": "external-ui",
+          "label": "外部UI目录",
+          "type": "string",
+          "description": "配置 WEB UI 目录，使用 http://{{external-controller}}/ui 访问",
+          "example": "/path/to/ui/folder/"
+        },
+        {
+          "key": "secret",
+          "label": "API密钥",
+          "type": "string",
+          "description": "RESTful API 的密钥，使用 Authorization: Bearer {secret} 访问",
+          "example": "123456"
+        }
+      ]
+    },
+    {
+      "id": "network",
+      "name": "网络配置",
+      "icon": "Connection",
+      "fields": [
+        {
+          "key": "authentication",
+          "label": "代理认证",
+          "type": "array",
+          "description": "HTTP/SOCKS 入口的验证用户名和密码，格式: username:password",
+          "example": ["user1:pass1", "user2:pass2"]
+        },
+        {
+          "key": "skip-auth-prefixes",
+          "label": "跳过认证IP段",
+          "type": "array",
+          "description": "设置跳过验证的 IP 段",
+          "example": ["127.0.0.1/8", "::1/128"]
+        },
+        {
+          "key": "lan-allowed-ips",
+          "label": "允许的局域网IP",
+          "type": "array",
+          "description": "允许连接的 IP 地址段，仅在 allow-lan 为 true 时生效",
+          "example": ["0.0.0.0/0", "::/0"]
+        },
+        {
+          "key": "lan-disallowed-ips",
+          "label": "禁止的局域网IP",
+          "type": "array",
+          "description": "禁止连接的 IP 地址段，黑名单优先级高于白名单",
+          "example": ["192.168.0.3/32"]
+        },
+        {
+          "key": "find-process-mode",
+          "label": "进程匹配模式",
+          "type": "select",
+          "default": "strict",
+          "options": ["always", "strict", "off"],
+          "description": "always: 强制匹配所有进程; strict: 由mihomo判断; off: 不匹配(路由器推荐)",
+          "example": "strict"
+        },
+        {
+          "key": "interface-name",
+          "label": "出口网卡",
+          "type": "string",
+          "description": "设置出口网卡名称",
+          "example": "en0"
+        },
+        {
+          "key": "routing-mark",
+          "label": "路由标记",
+          "type": "number",
+          "description": "配置 fwmark，仅用于 Linux",
+          "example": 6666
+        },
+        {
+          "key": "global-client-fingerprint",
+          "label": "全局TLS指纹",
+          "type": "select",
+          "options": ["chrome", "firefox", "safari", "ios", "random", "none"],
+          "description": "全局 TLS 指纹，优先级低于节点内的 client-fingerprint",
+          "example": "chrome"
+        }
+      ]
+    },
+    {
+      "id": "tun",
+      "name": "TUN配置",
+      "icon": "Share",
+      "fields": [
+        {
+          "key": "tun.enable",
+          "label": "启用TUN",
+          "type": "boolean",
+          "default": false,
+          "description": "是否启用 TUN 模式",
+          "example": false
+        },
+        {
+          "key": "tun.stack",
+          "label": "网络栈",
+          "type": "select",
+          "default": "system",
+          "options": ["system", "gvisor", "mixed"],
+          "description": "TUN 网络栈实现: system(系统栈)、gvisor(虚拟栈)、mixed(混合)",
+          "example": "system"
+        },
+        {
+          "key": "tun.dns-hijack",
+          "label": "DNS劫持",
+          "type": "array",
+          "description": "需要劫持的 DNS 地址列表",
+          "example": ["0.0.0.0:53", "tcp://0.0.0.0:53"]
+        },
+        {
+          "key": "tun.auto-route",
+          "label": "自动路由",
+          "type": "boolean",
+          "description": "自动配置路由表",
+          "example": true
+        },
+        {
+          "key": "tun.auto-redirect",
+          "label": "自动重定向",
+          "type": "boolean",
+          "description": "自动配置 iptables 以重定向 TCP 连接，仅支持 Linux",
+          "example": false
+        },
+        {
+          "key": "tun.auto-detect-interface",
+          "label": "自动检测接口",
+          "type": "boolean",
+          "description": "自动识别出口网卡",
+          "example": true
+        },
+        {
+          "key": "tun.mtu",
+          "label": "MTU",
+          "type": "number",
+          "description": "最大传输单元",
+          "example": 9000
+        }
+      ]
+    },
+    {
+      "id": "dns",
+      "name": "DNS配置",
+      "icon": "Connection",
+      "fields": [
+        {
+          "key": "dns.enable",
+          "label": "启用DNS",
+          "type": "boolean",
+          "default": false,
+          "description": "是否启用内置 DNS 服务器，关闭将使用系统 DNS",
+          "example": true
+        },
+        {
+          "key": "dns.listen",
+          "label": "DNS监听地址",
+          "type": "string",
+          "description": "DNS 服务器监听地址",
+          "example": "0.0.0.0:53"
+        },
+        {
+          "key": "dns.ipv6",
+          "label": "DNS IPv6",
+          "type": "boolean",
+          "description": "是否解析 IPv6 地址，false 将返回 AAAA 的空结果",
+          "example": false
+        },
+        {
+          "key": "dns.enhanced-mode",
+          "label": "增强模式",
+          "type": "select",
+          "options": ["fake-ip", "redir-host"],
+          "description": "DNS 增强模式: fake-ip(虚拟IP) 或 redir-host(域名映射)",
+          "example": "fake-ip"
+        },
+        {
+          "key": "dns.fake-ip-range",
+          "label": "Fake-IP地址池",
+          "type": "string",
+          "default": "198.18.0.1/16",
+          "description": "Fake-IP 地址池范围",
+          "example": "198.18.0.1/16"
+        },
+        {
+          "key": "dns.fake-ip-filter",
+          "label": "Fake-IP过滤",
+          "type": "array",
+          "description": "不使用 fake-ip 的域名列表",
+          "example": ["*.lan", "localhost.ptlogin2.qq.com"]
+        },
+        {
+          "key": "dns.default-nameserver",
+          "label": "默认DNS服务器",
+          "type": "array",
+          "description": "用于解析其他 DNS 服务器域名的 DNS，只能使用纯 IP 地址",
+          "example": ["114.114.114.114", "8.8.8.8"]
+        },
+        {
+          "key": "dns.nameserver",
+          "label": "主DNS服务器",
+          "type": "array",
+          "description": "主要 DNS 服务器列表，支持 UDP/TCP/DoT/DoH/DoQ",
+          "example": ["114.114.114.114", "https://doh.pub/dns-query"]
+        },
+        {
+          "key": "dns.fallback",
+          "label": "后备DNS服务器",
+          "type": "array",
+          "description": "后备 DNS 服务器，当主 DNS 返回非中国 IP 时使用",
+          "example": ["tls://1.1.1.1", "https://dns.google/dns-query"]
+        },
+        {
+          "key": "dns.nameserver-policy",
+          "label": "DNS策略",
+          "type": "object",
+          "description": "为特定域名指定 DNS 服务器",
+          "example": {
+            "geosite:cn": ["https://doh.pub/dns-query"],
+            "www.baidu.com": ["114.114.114.114"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "sniffer",
+      "name": "嗅探配置",
+      "icon": "View",
+      "fields": [
+        {
+          "key": "sniffer.enable",
+          "label": "启用嗅探",
+          "type": "boolean",
+          "default": false,
+          "description": "是否启用域名嗅探功能",
+          "example": true
+        },
+        {
+          "key": "sniffer.force-dns-mapping",
+          "label": "强制DNS映射",
+          "type": "boolean",
+          "description": "对 redir-host 类型流量进行强制嗅探",
+          "example": false
+        },
+        {
+          "key": "sniffer.parse-pure-ip",
+          "label": "解析纯IP",
+          "type": "boolean",
+          "description": "对所有未获取到域名的流量进行强制嗅探",
+          "example": false
+        },
+        {
+          "key": "sniffer.override-destination",
+          "label": "覆盖目标",
+          "type": "boolean",
+          "description": "是否使用嗅探结果作为实际访问目标",
+          "example": false
+        }
+      ]
+    },
+    {
+      "id": "proxies",
+      "name": "代理节点",
+      "icon": "Connection",
+      "isTable": true,
+      "description": "配置各种类型的代理节点",
+      "protocols": [
+        {
+          "type": "ss",
+          "label": "Shadowsocks",
+          "fields": [
+            {"key": "name", "label": "名称", "type": "string", "required": true},
+            {"key": "server", "label": "服务器", "type": "string", "required": true},
+            {"key": "port", "label": "端口", "type": "number", "required": true},
+            {"key": "cipher", "label": "加密方式", "type": "select", "required": true, 
+             "options": ["aes-128-gcm", "aes-192-gcm", "aes-256-gcm", "chacha20-ietf-poly1305", "xchacha20-ietf-poly1305"]},
+            {"key": "password", "label": "密码", "type": "string", "required": true},
+            {"key": "udp", "label": "UDP", "type": "boolean", "default": false},
+            {"key": "dialer-proxy", "label": "前置代理", "type": "dialer-proxy"}
+          ]
+        },
+        {
+          "type": "vmess",
+          "label": "VMess",
+          "fields": [
+            {"key": "name", "label": "名称", "type": "string", "required": true},
+            {"key": "server", "label": "服务器", "type": "string", "required": true},
+            {"key": "port", "label": "端口", "type": "number", "required": true},
+            {"key": "uuid", "label": "UUID", "type": "string", "required": true},
+            {"key": "alterId", "label": "Alter ID", "type": "number", "default": 0},
+            {"key": "cipher", "label": "加密", "type": "select", "default": "auto",
+             "options": ["auto", "aes-128-gcm", "chacha20-poly1305", "none"]},
+            {"key": "tls", "label": "TLS", "type": "boolean", "default": false},
+            {"key": "skip-cert-verify", "label": "跳过证书验证", "type": "boolean", "default": false, "showWhen": {"field": "tls", "value": true}},
+            {"key": "servername", "label": "SNI", "type": "string", "showWhen": {"field": "tls", "value": true}},
+            {"key": "client-fingerprint", "label": "TLS指纹", "type": "select", "options": ["", "chrome", "firefox", "safari", "ios", "random", "none"], "showWhen": {"field": "tls", "value": true}},
+            {"key": "network", "label": "传输协议", "type": "select", "default": "tcp",
+             "options": ["tcp", "ws", "h2", "grpc"]},
+            {"key": "udp", "label": "UDP", "type": "boolean", "default": true},
+            {"key": "ws-opts", "label": "WebSocket选项", "type": "object", "showWhen": {"field": "network", "value": "ws"}, "nestedFields": [
+              {"key": "path", "label": "路径", "type": "string"},
+              {"key": "headers", "label": "请求头", "type": "object", "nestedFields": [
+                {"key": "Host", "label": "Host", "type": "string"}
+              ]}
+            ]},
+            {"key": "grpc-opts", "label": "gRPC选项", "type": "object", "showWhen": {"field": "network", "value": "grpc"}, "nestedFields": [
+              {"key": "grpc-service-name", "label": "服务名称", "type": "string"}
+            ]},
+            {"key": "dialer-proxy", "label": "前置代理", "type": "dialer-proxy"}
+          ]
+        },
+        {
+          "type": "trojan",
+          "label": "Trojan",
+          "fields": [
+            {"key": "name", "label": "名称", "type": "string", "required": true},
+            {"key": "server", "label": "服务器", "type": "string", "required": true},
+            {"key": "port", "label": "端口", "type": "number", "required": true},
+            {"key": "password", "label": "密码", "type": "string", "required": true},
+            {"key": "sni", "label": "SNI", "type": "string"},
+            {"key": "skip-cert-verify", "label": "跳过证书验证", "type": "boolean", "default": false},
+            {"key": "udp", "label": "UDP", "type": "boolean", "default": true},
+            {"key": "network", "label": "传输协议", "type": "select", "default": "tcp", "options": ["tcp", "ws", "grpc"]},
+            {"key": "client-fingerprint", "label": "TLS指纹", "type": "select", "options": ["", "chrome", "firefox", "safari", "ios", "random", "none"]},
+            {"key": "ws-opts", "label": "WebSocket选项", "type": "object", "showWhen": {"field": "network", "value": "ws"}, "nestedFields": [
+              {"key": "path", "label": "路径", "type": "string"},
+              {"key": "headers", "label": "请求头", "type": "object", "nestedFields": [
+                {"key": "Host", "label": "Host", "type": "string"}
+              ]}
+            ]},
+            {"key": "grpc-opts", "label": "gRPC选项", "type": "object", "showWhen": {"field": "network", "value": "grpc"}, "nestedFields": [
+              {"key": "grpc-service-name", "label": "服务名称", "type": "string"}
+            ]},
+            {"key": "dialer-proxy", "label": "前置代理", "type": "dialer-proxy"}
+          ]
+        },
+        {
+          "type": "hysteria2",
+          "label": "Hysteria2",
+          "fields": [
+            {"key": "name", "label": "名称", "type": "string", "required": true},
+            {"key": "server", "label": "服务器", "type": "string", "required": true},
+            {"key": "port", "label": "端口", "type": "number", "required": true},
+            {"key": "password", "label": "密码", "type": "string", "required": true},
+            {"key": "up", "label": "上行带宽", "type": "string"},
+            {"key": "down", "label": "下行带宽", "type": "string"},
+            {"key": "obfs", "label": "混淆", "type": "string"},
+            {"key": "dialer-proxy", "label": "前置代理", "type": "dialer-proxy"}
+          ]
+        },
+        {
+          "type": "vless",
+          "label": "VLESS",
+          "fields": [
+            {"key": "name", "label": "名称", "type": "string", "required": true},
+            {"key": "server", "label": "服务器", "type": "string", "required": true},
+            {"key": "port", "label": "端口", "type": "number", "required": true},
+            {"key": "uuid", "label": "UUID", "type": "string", "required": true},
+            {"key": "flow", "label": "流控", "type": "select", "options": ["", "xtls-rprx-vision"]},
+            {"key": "tls", "label": "TLS", "type": "boolean", "default": false},
+            {"key": "network", "label": "传输协议", "type": "select", "default": "tcp", "options": ["tcp", "ws", "grpc", "h2"]},
+            {"key": "servername", "label": "SNI", "type": "string", "showWhen": {"field": "tls", "value": true}},
+            {"key": "skip-cert-verify", "label": "跳过证书验证", "type": "boolean", "default": false, "showWhen": {"field": "tls", "value": true}},
+            {"key": "client-fingerprint", "label": "TLS指纹", "type": "select", "options": ["", "chrome", "firefox", "safari", "ios", "random", "none"], "showWhen": {"field": "tls", "value": true}},
+            {"key": "udp", "label": "UDP", "type": "boolean", "default": true},
+            {"key": "reality-opts", "label": "REALITY选项", "type": "object", "showWhen": {"field": "tls", "value": true}, "nestedFields": [
+              {"key": "public-key", "label": "公钥", "type": "string", "required": true},
+              {"key": "short-id", "label": "Short ID", "type": "string"}
+            ]},
+            {"key": "ws-opts", "label": "WebSocket选项", "type": "object", "showWhen": {"field": "network", "value": "ws"}, "nestedFields": [
+              {"key": "path", "label": "路径", "type": "string"},
+              {"key": "headers", "label": "请求头", "type": "object", "nestedFields": [
+                {"key": "Host", "label": "Host", "type": "string"}
+              ]}
+            ]},
+            {"key": "grpc-opts", "label": "gRPC选项", "type": "object", "showWhen": {"field": "network", "value": "grpc"}, "nestedFields": [
+              {"key": "grpc-service-name", "label": "服务名称", "type": "string"}
+            ]},
+            {"key": "dialer-proxy", "label": "前置代理", "type": "dialer-proxy"}
+          ]
+        },
+        {
+          "type": "socks5",
+          "label": "SOCKS5",
+          "fields": [
+            {"key": "name", "label": "名称", "type": "string", "required": true},
+            {"key": "server", "label": "服务器", "type": "string", "required": true},
+            {"key": "port", "label": "端口", "type": "number", "required": true},
+            {"key": "username", "label": "用户名", "type": "string"},
+            {"key": "password", "label": "密码", "type": "string"},
+            {"key": "tls", "label": "TLS", "type": "boolean", "default": false},
+            {"key": "skip-cert-verify", "label": "跳过证书验证", "type": "boolean", "default": false, "showWhen": {"field": "tls", "value": true}},
+            {"key": "sni", "label": "SNI", "type": "string", "showWhen": {"field": "tls", "value": true}},
+            {"key": "fingerprint", "label": "TLS指纹", "type": "select", "options": ["", "chrome", "firefox", "safari", "ios", "random", "none"], "showWhen": {"field": "tls", "value": true}},
+            {"key": "udp", "label": "UDP", "type": "boolean", "default": true},
+            {"key": "dialer-proxy", "label": "前置代理", "type": "dialer-proxy"}
+          ]
+        },
+        {
+          "type": "http",
+          "label": "HTTP",
+          "fields": [
+            {"key": "name", "label": "名称", "type": "string", "required": true},
+            {"key": "server", "label": "服务器", "type": "string", "required": true},
+            {"key": "port", "label": "端口", "type": "number", "required": true},
+            {"key": "username", "label": "用户名", "type": "string"},
+            {"key": "password", "label": "密码", "type": "string"},
+            {"key": "tls", "label": "TLS", "type": "boolean", "default": false},
+            {"key": "skip-cert-verify", "label": "跳过证书验证", "type": "boolean", "default": false, "showWhen": {"field": "tls", "value": true}},
+            {"key": "sni", "label": "SNI", "type": "string", "showWhen": {"field": "tls", "value": true}},
+            {"key": "dialer-proxy", "label": "前置代理", "type": "dialer-proxy"}
+          ]
+        },
+        {
+          "type": "anytls",
+          "label": "AnyTLS",
+          "fields": [
+            {"key": "name", "label": "名称", "type": "string", "required": true},
+            {"key": "server", "label": "服务器", "type": "string", "required": true},
+            {"key": "port", "label": "端口", "type": "number", "required": true},
+            {"key": "password", "label": "密码", "type": "string", "required": true},
+            {"key": "sni", "label": "SNI", "type": "string"},
+            {"key": "alpn", "label": "ALPN", "type": "array"},
+            {"key": "skip-cert-verify", "label": "跳过证书验证", "type": "boolean", "default": false},
+            {"key": "udp", "label": "UDP", "type": "boolean", "default": true},
+            {"key": "dialer-proxy", "label": "前置代理", "type": "dialer-proxy"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "proxy-groups",
+      "name": "代理组",
+      "icon": "Connection",
+      "isTable": true,
+      "description": "配置代理组，用于策略选择",
+      "types": [
+        {
+          "type": "select",
+          "label": "手动选择",
+          "fields": [
+            {"key": "name", "label": "名称", "type": "string", "required": true},
+            {"key": "proxies", "label": "代理列表", "type": "array", "required": true}
+          ]
+        },
+        {
+          "type": "url-test",
+          "label": "自动测速",
+          "fields": [
+            {"key": "name", "label": "名称", "type": "string", "required": true},
+            {"key": "proxies", "label": "代理列表", "type": "array", "required": true},
+            {"key": "url", "label": "测试URL", "type": "string", "default": "http://www.gstatic.com/generate_204"},
+            {"key": "interval", "label": "测试间隔(秒)", "type": "number", "default": 300}
+          ]
+        },
+        {
+          "type": "fallback",
+          "label": "故障转移",
+          "fields": [
+            {"key": "name", "label": "名称", "type": "string", "required": true},
+            {"key": "proxies", "label": "代理列表", "type": "array", "required": true},
+            {"key": "url", "label": "测试URL", "type": "string", "default": "http://www.gstatic.com/generate_204"},
+            {"key": "interval", "label": "测试间隔(秒)", "type": "number", "default": 300}
+          ]
+        },
+        {
+          "type": "load-balance",
+          "label": "负载均衡",
+          "fields": [
+            {"key": "name", "label": "名称", "type": "string", "required": true},
+            {"key": "proxies", "label": "代理列表", "type": "array", "required": true},
+            {"key": "url", "label": "测试URL", "type": "string", "default": "http://www.gstatic.com/generate_204"},
+            {"key": "interval", "label": "测试间隔(秒)", "type": "number", "default": 300},
+            {"key": "strategy", "label": "策略", "type": "select", "options": ["consistent-hashing", "round-robin"]}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rules",
+      "name": "规则配置",
+      "icon": "List",
+      "isTable": true,
+      "description": "配置路由规则",
+      "ruleTypes": [
+        {"type": "DOMAIN", "label": "域名", "hasValue": true},
+        {"type": "DOMAIN-SUFFIX", "label": "域名后缀", "hasValue": true},
+        {"type": "DOMAIN-KEYWORD", "label": "域名关键字", "hasValue": true},
+        {"type": "IP-CIDR", "label": "IP段", "hasValue": true},
+        {"type": "SRC-IP-CIDR", "label": "源IP地址", "hasValue": true},
+        {"type": "GEOIP", "label": "GeoIP", "hasValue": true},
+        {"type": "GEOSITE", "label": "GeoSite", "hasValue": true},
+        {"type": "MATCH", "label": "全匹配", "hasValue": false}
+      ]
+    }
+  ]
+}
