@@ -30,7 +30,13 @@ export function formatNumber(num: number): string {
   return num.toString();
 }
 
-function parseApiTimestamp(dateString: string): Date {
+// Exported (M2b Task 11): command-timeline.tsx/version-history.tsx need the
+// exact same SQLite-timestamp-without-timezone handling as formatDuration
+// below (server timestamps like "2026-08-09 12:00:00" or the ISO-without-Z
+// variant must be parsed as UTC, not local time) but want an ABSOLUTE
+// date/time string, not a relative "Xm ago" one — reusing this rather than
+// duplicating the format-detection regexes.
+export function parseApiTimestamp(dateString: string): Date {
   const raw = (dateString || "").trim();
   if (!raw) return new Date(Number.NaN);
 
@@ -71,4 +77,24 @@ export function formatDuration(dateString: string): string {
   if (hours > 0) return `${hours}h ago`;
   if (minutes > 0) return `${minutes}m ago`;
   return `${seconds}s ago`;
+}
+
+/** Absolute local date/time for a server timestamp — command-timeline.tsx's
+ *  createdAt/dispatchedAt/resolvedAt and version-history.tsx's createdAt.
+ *  `undefined` locale (browser default) matches the majority precedent
+ *  elsewhere in this codebase (backend-health-chart.tsx, trend-chart.tsx),
+ *  not next-intl's `useLocale()` (only time-range-picker.tsx ties date
+ *  formatting to the app locale, for its own picker-specific reasons). */
+export function formatTimestamp(dateString: string | null | undefined): string {
+  if (!dateString) return "-";
+  const date = parseApiTimestamp(dateString);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }

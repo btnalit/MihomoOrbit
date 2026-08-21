@@ -20,7 +20,7 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { Eye, Pencil, RotateCcw, X } from "lucide-react";
+import { Eye, EyeOff, Loader2, Pencil, RotateCcw, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { useRevealValue } from "@/hooks/api/use-config-editor";
 import type { FieldDescriptor, FieldMetaValue, FieldShowWhen } from "@/lib/types/config-metadata";
 
 /** Cross-milestone contract — must match apps/collector/src/modules/
@@ -53,9 +54,9 @@ interface FieldRendererProps {
   field: FieldDescriptor;
   value: unknown;
   /** Absolute document path for this field (dot-joined, matching
-   *  `ConfigCurrent.maskedPaths` entries) — not consumed by this task, but
-   *  threaded through now so Task 11's reveal-eye button doesn't need a
-   *  second pass to plumb it in. */
+   *  `ConfigCurrent.maskedPaths` entries) — MUST exactly match yaml-mask.ts's
+   *  path-builder format (`key.key`, `key[index]`) since it's sent verbatim
+   *  to `POST /reveal`, which 404s (`PATH_NOT_MASKED`) on any mismatch. */
   path: string;
   /** This field's SIBLINGS in the same field-set (the same array
    *  `FieldDescriptor[]` this field itself came from), keyed by their own
@@ -65,6 +66,59 @@ interface FieldRendererProps {
   dirty: boolean;
   onChange: (value: unknown) => void;
   onReset: () => void;
+  /** For `useRevealValue(backendId)` inside the masked-field control. */
+  backendId: number | undefined;
+  /** M2b Task 11 review: an array-table row's own index-based `path`
+   *  segment (`proxies[N]`) drifts out of sync with the SERVER's
+   *  maskedPaths (computed fresh from the last-saved content, not the
+   *  client's in-progress edits) the instant that row's ARRAY is reordered
+   *  locally (`config-table-editor.tsx`'s `moveRow`/add/remove — all of
+   *  which dirty the whole array, per that file's `useRowArray`). Revealing
+   *  through a drifted index would silently return a DIFFERENT row's real
+   *  secret, misattributed to the row on screen — not a 404, no visible
+   *  signal. Callers pass `true` here whenever the enclosing array is dirty
+   *  (`form.isFieldDirty(categoryId, categoryId)`) to fail closed: disables
+   *  the reveal button (not the field itself) with an explanatory title,
+   *  until the array's edits are applied or discarded and indices are
+   *  trustworthy again. Flat-category fields never hit this (their `path`
+   *  has no array segment), so `FlatCategoryForm` leaves this at its
+   *  default `false`. */
+  revealDisabled?: boolean;
+}
+
+/** Best-effort coercion of a freshly-revealed value into whatever shape the
+ *  target field's edit control expects, used ONLY when seeding "编辑" from a
+ *  just-revealed value (see `FieldRenderer` below). yaml-mask.ts masks a
+ *  sensitive-keyed value regardless of its actual YAML type (maskByKey masks
+ *  unconditionally; only the SEPARATE `secretValues`-collection step is
+ *  string+length-gated) — so a revealed value is not guaranteed to already
+ *  be a string even for a `type: "string"` field. Without this, several
+ *  `FieldControl` branches' own strict `typeof` checks (`typeof value ===
+ *  "string" ? value : ""`, etc.) would silently render an EMPTY control
+ *  instead of the value the user just saw, which would look exactly like
+ *  the reveal having failed. `undefined` means "don't seed, start blank" —
+ *  the existing pre-Task-11 behavior — not "seed with an empty value". */
+function coerceSeedValue(field: FieldDescriptor, raw: unknown): unknown {
+  switch (field.type) {
+    case "string":
+    case "dialer-proxy":
+    case "select":
+      if (raw === undefined || raw === null) return undefined;
+      return typeof raw === "string" ? raw : String(raw);
+    case "number": {
+      if (typeof raw === "number") return raw;
+      if (typeof raw === "string" && raw.trim() !== "" && !Number.isNaN(Number(raw))) return Number(raw);
+      return undefined;
+    }
+    case "boolean":
+      return !!raw;
+    case "array":
+      return Array.isArray(raw) ? raw : undefined;
+    case "object":
+      return raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw : undefined;
+    default:
+      return raw;
+  }
 }
 
 function shouldShow(showWhen: FieldShowWhen | undefined, siblingValues: Record<string, unknown>): boolean {
@@ -88,16 +142,43 @@ export function FieldRenderer({
   dirty,
   onChange,
   onReset,
+  backendId,
+  revealDisabled = false,
 }: FieldRendererProps) {
   const t = useTranslations("configEditor.field");
   const [maskedEditing, setMaskedEditing] = useState(false);
+  // M2b Task 11 — plaintext lives ONLY in this component's own state, never
+  // in React Query's cache (`useRevealValue` is a mutation, its result is
+  // never stored by the query client) and never in the form document
+  // (`onChange` is not called just by revealing). Cleared explicitly on
+  // blur (see `handleFieldBlur` below) and on "取消编辑,恢复隐藏"; cleared
+  // implicitly on unmount (component teardown) and on a Radix Tabs
+  // tab-switch (`TabsContent` unmounts inactive panels by default — no
+  // `forceMount` is used anywhere in this feature — so switching tabs is
+  // already an unmount, no extra code needed for that case).
+  const [revealedValue, setRevealedValue] = useState<{ value: unknown } | null>(null);
 
   if (!shouldShow(field.showWhen, siblingValues)) return null;
 
   const isMasked = value === MASKED_SENTINEL && !maskedEditing;
 
+  // Attached to the WHOLE field row (not just one input) so that clicking
+  // the "替换此值" button right after a reveal doesn't race its own blur:
+  // a plain `onBlur` on the revealed input alone would fire (and clear
+  // `revealedValue`) the instant focus leaves it, which happens BEFORE the
+  // newly-clicked button's own onClick in the DOM's real event order —
+  // defeating "seed the edit control with the revealed value" before it
+  // ever runs. Checking `relatedTarget` containment instead only clears
+  // when focus leaves the ENTIRE row (a real "moved away from this
+  // field"), not when it moves between two controls inside the same row.
+  const handleFieldBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+      setRevealedValue(null);
+    }
+  };
+
   return (
-    <div className="py-3 first:pt-0 last:pb-0">
+    <div className="py-3 first:pt-0 last:pb-0" onBlur={handleFieldBlur}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
@@ -117,13 +198,28 @@ export function FieldRenderer({
         </div>
         <div className="w-full sm:w-72 shrink-0">
           {isMasked ? (
-            <MaskedFieldControl path={path} />
+            <MaskedFieldControl
+              path={path}
+              backendId={backendId}
+              disabled={revealDisabled}
+              revealedValue={revealedValue}
+              onRevealed={(v) => setRevealedValue({ value: v })}
+              onHide={() => setRevealedValue(null)}
+            />
           ) : (
             <>
               <FieldControl
                 field={field}
-                value={value === MASKED_SENTINEL ? undefined : value}
+                value={
+                  value === MASKED_SENTINEL
+                    ? maskedEditing && revealedValue
+                      ? coerceSeedValue(field, revealedValue.value)
+                      : undefined
+                    : value
+                }
                 path={path}
+                backendId={backendId}
+                revealDisabled={revealDisabled}
                 onChange={onChange}
               />
               {maskedEditing && (
@@ -131,6 +227,7 @@ export function FieldRenderer({
                   type="button"
                   onClick={() => {
                     setMaskedEditing(false);
+                    setRevealedValue(null);
                     onReset();
                   }}
                   className="text-xs text-muted-foreground hover:text-foreground mt-1 inline-flex items-center gap-1"
@@ -161,34 +258,78 @@ export function FieldRenderer({
   );
 }
 
-/** Sentinel display: dots + a disabled reveal-eye button (Task 11 wires its
- *  click behavior — this task only renders the disabled placeholder so the
- *  affordance is visually present from day one) + an enabled pencil button
- *  that hands control back to `FieldRenderer` (`maskedEditing`) so the
- *  masked value can be replaced WHOLESALE by a fresh control — never by
- *  editing `__ORBIT_MASKED__` text in place. */
-function MaskedFieldControl({ path }: { path: string }) {
+/** Sentinel display: dots + an eye button that reveals the plaintext value
+ *  via `useRevealValue(backendId).mutate(path)` (M2b Task 11) — the result
+ *  is handed to the PARENT (`FieldRenderer`'s `revealedValue` state) via
+ *  `onRevealed`, never stored here or in React Query's cache, so it
+ *  survives the transition into "编辑" mode (seeding the edit control) —
+ *  see that file's doc comments for the full "reveal ≠ edit" contract. Once
+ *  revealed, the eye becomes an eye-off toggle that just clears the parent's
+ *  state (`onHide`) — no re-fetch needed to hide again. Also renders an
+ *  enabled pencil button that hands control back to `FieldRenderer`
+ *  (`maskedEditing`) so the masked value can be replaced WHOLESALE by a
+ *  fresh control — never by editing `__ORBIT_MASKED__` text in place. */
+function MaskedFieldControl({
+  path,
+  backendId,
+  disabled,
+  revealedValue,
+  onRevealed,
+  onHide,
+}: {
+  path: string;
+  backendId: number | undefined;
+  disabled: boolean;
+  revealedValue: { value: unknown } | null;
+  onRevealed: (value: unknown) => void;
+  onHide: () => void;
+}) {
   const t = useTranslations("configEditor.field");
+  const revealMutation = useRevealValue(backendId);
+
+  const handleToggle = () => {
+    if (revealedValue) {
+      onHide();
+      return;
+    }
+    revealMutation.mutate(path, {
+      onSuccess: (result) => onRevealed(result.value),
+    });
+  };
+
+  const displayText = revealedValue
+    ? typeof revealedValue.value === "string"
+      ? revealedValue.value
+      : JSON.stringify(revealedValue.value)
+    : "••••••••";
+
   return (
     <div className="flex items-center gap-1.5">
       <Input
-        value="••••••••"
+        value={displayText}
         readOnly
-        disabled
-        aria-label={t("masked")}
+        disabled={!revealedValue}
+        aria-label={revealedValue ? t("revealedValue") : t("masked")}
         title={path}
-        className="font-mono tracking-widest"
+        className={cn("font-mono", !revealedValue && "tracking-widest")}
       />
       <Button
         type="button"
         variant="ghost"
         size="icon"
-        disabled
-        aria-label={t("reveal")}
-        title={t("revealComingSoon")}
+        onClick={handleToggle}
+        disabled={disabled || revealMutation.isPending}
+        aria-label={revealedValue ? t("hide") : t("reveal")}
+        title={disabled ? t("revealDisabledDirty") : revealedValue ? t("hide") : t("reveal")}
         className="shrink-0"
       >
-        <Eye className="w-4 h-4" />
+        {revealMutation.isPending ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : revealedValue ? (
+          <EyeOff className="w-4 h-4" />
+        ) : (
+          <Eye className="w-4 h-4" />
+        )}
       </Button>
     </div>
   );
@@ -198,11 +339,15 @@ function FieldControl({
   field,
   value,
   path,
+  backendId,
+  revealDisabled,
   onChange,
 }: {
   field: FieldDescriptor;
   value: unknown;
   path: string;
+  backendId: number | undefined;
+  revealDisabled?: boolean;
   onChange: (value: unknown) => void;
 }) {
   const t = useTranslations("configEditor.field");
@@ -291,6 +436,8 @@ function FieldControl({
                 : {}
             }
             parentPath={path}
+            backendId={backendId}
+            revealDisabled={revealDisabled}
             onChange={onChange}
           />
         );
@@ -463,11 +610,15 @@ function NestedObjectFields({
   fields,
   value,
   parentPath,
+  backendId,
+  revealDisabled,
   onChange,
 }: {
   fields: FieldDescriptor[];
   value: Record<string, unknown>;
   parentPath: string;
+  backendId: number | undefined;
+  revealDisabled?: boolean;
   onChange: (value: Record<string, unknown>) => void;
 }) {
   const siblingValues: Record<string, unknown> = {};
@@ -483,6 +634,8 @@ function NestedObjectFields({
           path={`${parentPath}.${nestedField.key}`}
           siblingValues={siblingValues}
           dirty={false}
+          backendId={backendId}
+          revealDisabled={revealDisabled}
           onChange={(v) => onChange({ ...value, [nestedField.key]: v })}
           onReset={() => {
             const next = { ...value };

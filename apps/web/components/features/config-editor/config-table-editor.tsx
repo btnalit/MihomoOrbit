@@ -408,6 +408,8 @@ function ObjectRowEditDialog({
   rowIndex,
   memberPickerFieldKey,
   memberPickerAvailable,
+  backendId,
+  revealDisabled,
   onSave,
 }: {
   t: Translator;
@@ -420,6 +422,13 @@ function ObjectRowEditDialog({
   rowIndex: number | null;
   memberPickerFieldKey?: string;
   memberPickerAvailable: string[];
+  backendId: number | undefined;
+  /** M2b Task 11 — true when this category's whole array is dirty (any
+   *  add/remove/move/replace since the last save), which drifts every
+   *  row's `path` index out of sync with the server's `maskedPaths` — see
+   *  field-renderer.tsx's `FieldRendererProps.revealDisabled` doc comment
+   *  for the full hazard this guards against. */
+  revealDisabled: boolean;
   onSave: (row: Record<string, unknown>) => void;
 }) {
   const isEdit = initialRow !== null;
@@ -510,6 +519,8 @@ function ObjectRowEditDialog({
                 path={`${rowPath}.${field.key}`}
                 siblingValues={draftRow}
                 dirty={false}
+                backendId={backendId}
+                revealDisabled={revealDisabled}
                 onChange={(v) => setFieldDraft(field.key, v)}
                 onReset={() => resetFieldDraft(field.key)}
               />
@@ -530,7 +541,15 @@ function ObjectRowEditDialog({
 
 type EditingState = { index: number | null } | null;
 
-function ProxiesTable({ category, form }: { category: TableCategory; form: UseConfigFormResult }) {
+function ProxiesTable({
+  category,
+  form,
+  backendId,
+}: {
+  category: TableCategory;
+  form: UseConfigFormResult;
+  backendId: number | undefined;
+}) {
   const t = useTranslations("configEditor") as unknown as Translator;
   const protocols = category.protocols ?? [];
   const { rows, dirty, addRow, replaceRow, removeRow, moveRow } = useRowArray<Record<string, unknown>>(
@@ -611,6 +630,8 @@ function ProxiesTable({ category, form }: { category: TableCategory; form: UseCo
           initialRow={editing.index !== null ? rows[editing.index] : null}
           rowIndex={editing.index}
           memberPickerAvailable={[]}
+          backendId={backendId}
+          revealDisabled={dirty}
           onSave={(row) => {
             if (editing.index !== null) replaceRow(editing.index, row);
             else addRow(row);
@@ -633,7 +654,15 @@ function ProxiesTable({ category, form }: { category: TableCategory; form: UseCo
   );
 }
 
-function ProxyGroupsTable({ category, form }: { category: TableCategory; form: UseConfigFormResult }) {
+function ProxyGroupsTable({
+  category,
+  form,
+  backendId,
+}: {
+  category: TableCategory;
+  form: UseConfigFormResult;
+  backendId: number | undefined;
+}) {
   const t = useTranslations("configEditor") as unknown as Translator;
   const types = category.types ?? [];
   const { rows, dirty, addRow, replaceRow, removeRow, moveRow } = useRowArray<Record<string, unknown>>(
@@ -731,6 +760,8 @@ function ProxyGroupsTable({ category, form }: { category: TableCategory; form: U
           rowIndex={editing.index}
           memberPickerFieldKey="proxies"
           memberPickerAvailable={proxyNames}
+          backendId={backendId}
+          revealDisabled={dirty}
           onSave={(row) => {
             if (editing.index !== null) replaceRow(editing.index, row);
             else addRow(row);
@@ -1036,16 +1067,22 @@ function RulesTable({ category, form }: { category: TableCategory; form: UseConf
 export function ConfigTableEditor({
   category,
   form,
+  backendId,
 }: {
   category: TableCategory;
   form: UseConfigFormResult;
+  backendId: number | undefined;
 }) {
   switch (category.id) {
     case "proxies":
-      return <ProxiesTable category={category} form={form} />;
+      return <ProxiesTable category={category} form={form} backendId={backendId} />;
     case "proxy-groups":
-      return <ProxyGroupsTable category={category} form={form} />;
+      return <ProxyGroupsTable category={category} form={form} backendId={backendId} />;
     case "rules":
+      // No FieldRenderer usage here — rules are edited via RuleEditDialog's
+      // own type/payload/policy inputs (a masked whole-rule string is
+      // surfaced as a locked replace-only row, never revealed per-field —
+      // see RuleEditDialog's header comment), so no `backendId` needed.
       return <RulesTable category={category} form={form} />;
     default:
       return null;

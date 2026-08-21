@@ -307,7 +307,9 @@
       "changed": "Changed",
       "masked": "Hidden sensitive value",
       "reveal": "Reveal value",
-      "revealComingSoon": "Revealing values will be supported soon",
+      "hide": "Hide value",
+      "revealedValue": "Revealed value",
+      "revealDisabledDirty": "This table has unapplied changes — to avoid matching the wrong row, values can't be revealed right now. Apply or discard your changes first.",
       "editMasked": "Replace this value",
       "cancelEdit": "Cancel edit, restore hidden value",
       "noneOption": "None",
@@ -371,6 +373,7 @@
       "selfLockFieldChanged": "Changing fields that could lock you out isn't allowed",
       "baseHashStale": "The on-disk config has changed — refresh and try again",
       "commandInFlight": "A command is already in progress — please wait",
+      "viewInFlight": "View in-progress apply",
       "unsupportedGateway": "This gateway type doesn't support config editing",
       "noConfigReported": "No config has been reported for this backend yet",
       "versionNotFound": "That version could not be found",
@@ -406,6 +409,42 @@
       "replayed": "Fetched the latest config and replayed your changes — please review and confirm again",
       "discarded": "Your changes have been discarded",
       "entrySkipped": "\"{field}\" was changed on disk by something else — your edit wasn't replayed; please re-edit it against the latest content"
+    },
+    "timeline": {
+      "title": "Apply status",
+      "stepPending": "Created",
+      "stepDispatched": "Dispatched",
+      "stepOutcome": "Outcome",
+      "statePending": "Waiting to dispatch",
+      "stateDispatched": "Dispatched, awaiting receipt",
+      "stateApplied": "Applied",
+      "stateConflict": "Conflict",
+      "stateRolledBack": "Rolled back",
+      "stateFailed": "Failed",
+      "expiredHint": "Timed out — a receipt may still arrive late",
+      "reasonLabel": "Reason:",
+      "createdAt": "Created: {time}",
+      "dispatchedAt": "Dispatched: {time}",
+      "resolvedAt": "Resolved: {time}"
+    },
+    "history": {
+      "title": "Version history",
+      "loading": "Loading…",
+      "empty": "No saved versions yet",
+      "current": "Current version",
+      "rollback": "Roll back",
+      "columns": {
+        "createdAt": "Created",
+        "source": "Source",
+        "size": "Size",
+        "hash": "Hash",
+        "actions": "Actions"
+      },
+      "confirmTitle": "Roll back to this version?",
+      "confirmDescription": "This version was created at {time} (source: {source}). Rolling back issues a new apply command that redispatches this version's content to the agent.",
+      "confirmDirtyWarning": "You have unsaved changes — rolling back will discard them, and this can't be undone.",
+      "cancel": "Cancel",
+      "confirmAction": "Confirm rollback"
     }
   },
   "management": {

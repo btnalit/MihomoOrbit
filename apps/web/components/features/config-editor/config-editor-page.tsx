@@ -63,6 +63,8 @@ import { useConfigCurrent } from "@/hooks/api/use-config-editor";
 import { FieldRenderer } from "./field-renderer";
 import { ConfigTableEditor } from "./config-table-editor";
 import { ApplyDialog } from "./apply-dialog";
+import { CommandTimeline } from "./command-timeline";
+import { VersionHistory } from "./version-history";
 import {
   useConfigForm,
   getAtPath,
@@ -314,6 +316,17 @@ function ConfigEditorForm({
         </Button>
       </div>
 
+      {/* M2b Task 11 — self-contained: renders nothing when there's no
+          latest command, owns its own polling. See that file's header for
+          why `onRefetchAndReplay`/`onDiscard` are passed through rather
+          than reimplemented (same handlers ApplyDialog's conflict card
+          already calls). */}
+      <CommandTimeline
+        backendId={backendId}
+        onRefetchAndReplay={handleRefetchAndReplay}
+        onDiscard={handleDiscard}
+      />
+
       <Tabs defaultValue={defaultTab} className="w-full">
         <TabsList className="glass h-auto flex-wrap justify-start gap-1 p-1">
           {categories.map((category) => {
@@ -330,13 +343,21 @@ function ConfigEditorForm({
         {categories.map((category) => (
           <TabsContent key={category.id} value={category.id} className="overflow-hidden">
             {category.isTable ? (
-              <ConfigTableEditor category={category} form={form} />
+              <ConfigTableEditor category={category} form={form} backendId={backendId} />
             ) : (
-              <FlatCategoryForm category={category} form={form} />
+              <FlatCategoryForm category={category} form={form} backendId={backendId} />
             )}
           </TabsContent>
         ))}
       </Tabs>
+
+      {/* M2b Task 11 — self-contained (own useConfigVersions/useRollbackConfig).
+          `currentVersionId` decides which row is "current" (no rollback
+          button); `hasAnyDirty` drives the confirm dialog's data-loss
+          warning (rollback resets useConfigForm's working document, same as
+          a successful apply, but the user didn't just consume their own
+          edits by doing it). */}
+      <VersionHistory backendId={backendId} currentVersionId={current.versionId} hasAnyDirty={form.hasAnyDirty} />
 
       {/* (Finding 3, review fix) Mounted ONLY while open — matches
           config-table-editor.tsx's `ObjectRowEditDialog`/`RuleEditDialog`
@@ -363,9 +384,11 @@ function ConfigEditorForm({
 function FlatCategoryForm({
   category,
   form,
+  backendId,
 }: {
   category: FlatCategory;
   form: UseConfigFormResult;
+  backendId: number | undefined;
 }) {
   const categoryValues = form.values[category.id] ?? {};
 
@@ -380,6 +403,14 @@ function FlatCategoryForm({
             path={field.key}
             siblingValues={categoryValues}
             dirty={form.isFieldDirty(category.id, field.key)}
+            backendId={backendId}
+            // No `revealDisabled` here (defaults to false in
+            // FieldRendererProps): a flat category's field `key` IS the
+            // full document path already (use-config-form.ts's header —
+            // "always the FULL absolute path from the document root"), so
+            // it never contains an array-row index that could drift the
+            // way a table row's `path` can — see that prop's doc comment
+            // in field-renderer.tsx.
             onChange={(value) => form.setFieldValue(category.id, field.key, value)}
             onReset={() => form.resetField(category.id, field.key)}
           />

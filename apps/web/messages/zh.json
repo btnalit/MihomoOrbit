@@ -307,7 +307,9 @@
       "changed": "已修改",
       "masked": "已隐藏的敏感值",
       "reveal": "显示明文",
-      "revealComingSoon": "查看明文功能即将支持",
+      "hide": "隐藏明文",
+      "revealedValue": "已显示的明文值",
+      "revealDisabledDirty": "该表格存在未应用的改动，为避免核对到错误的行，暂不可显示明文，请先应用或放弃修改",
       "editMasked": "替换此值",
       "cancelEdit": "取消编辑，恢复隐藏",
       "noneOption": "无",
@@ -371,6 +373,7 @@
       "selfLockFieldChanged": "不允许修改可能导致失联的字段",
       "baseHashStale": "磁盘配置已变更,请刷新后重试",
       "commandInFlight": "已有指令正在执行,请稍候",
+      "viewInFlight": "查看进行中的应用",
       "unsupportedGateway": "该网关类型不支持配置编辑",
       "noConfigReported": "尚未收到该后端上报的配置",
       "versionNotFound": "未找到该历史版本",
@@ -406,6 +409,42 @@
       "replayed": "已拉取最新配置并重放您的修改，请重新查看确认",
       "discarded": "已放弃本次修改",
       "entrySkipped": "「{field}」在磁盘上已被他人修改，你的修改未重放，请基于最新内容重新编辑"
+    },
+    "timeline": {
+      "title": "配置应用状态",
+      "stepPending": "已创建",
+      "stepDispatched": "已下发",
+      "stepOutcome": "处理结果",
+      "statePending": "等待下发",
+      "stateDispatched": "已下发，等待回执",
+      "stateApplied": "已应用",
+      "stateConflict": "存在冲突",
+      "stateRolledBack": "已回滚",
+      "stateFailed": "应用失败",
+      "expiredHint": "已超时，回执仍可能迟到",
+      "reasonLabel": "原因：",
+      "createdAt": "创建时间：{time}",
+      "dispatchedAt": "下发时间：{time}",
+      "resolvedAt": "完成时间：{time}"
+    },
+    "history": {
+      "title": "历史版本",
+      "loading": "加载中…",
+      "empty": "暂无历史版本",
+      "current": "当前版本",
+      "rollback": "回滚",
+      "columns": {
+        "createdAt": "创建时间",
+        "source": "来源",
+        "size": "大小",
+        "hash": "哈希",
+        "actions": "操作"
+      },
+      "confirmTitle": "确认回滚到该版本？",
+      "confirmDescription": "该版本创建于 {time}（来源：{source}）。回滚会生成一条新的应用指令，将该版本的内容重新下发给 agent。",
+      "confirmDirtyWarning": "当前有未保存的修改，回滚将丢弃它们，此操作无法撤销。",
+      "cancel": "取消",
+      "confirmAction": "确认回滚"
     }
   },
   "management": {

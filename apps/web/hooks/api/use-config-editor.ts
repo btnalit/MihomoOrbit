@@ -11,6 +11,7 @@ import {
   fetchLatestCommand,
   revealConfigValue,
   rollbackConfig,
+  type ConfigCommandState,
   type ConfigCurrent,
   type ConfigVersionMeta,
   type LatestCommandResponse,
@@ -146,9 +147,32 @@ export function useRollbackConfig(backendId: number | undefined) {
   });
 }
 
-/** Polls the in-flight command's state while `poll` is true (i.e. right
- *  after an apply/rollback, until it reaches a terminal state or expires —
- *  Task 11 owns turning `poll` off). */
+/** Command states that will never change again — a command reaching one of
+ *  these is exactly what stops polling below (mirrors the collector's own
+ *  `IN_FLIGHT_STATES = ['pending', 'dispatched']` in
+ *  config-command.repository.ts, from the terminal side). */
+const TERMINAL_COMMAND_STATES = new Set<ConfigCommandState>([
+  "applied",
+  "conflict",
+  "rolled-back",
+  "failed",
+]);
+
+/** Polls the in-flight command's state while `opts.poll` is true — Task 11.
+ *
+ *  The actual refetch FREQUENCY is a `refetchInterval` FUNCTION (TanStack
+ *  Query v5 supports `(query) => number | false`, evaluated against the
+ *  query's own latest `state.data` on every check), not a caller-managed
+ *  boolean flipped from the outside — that avoids the exact
+ *  chicken-and-egg problem a static boolean would create (the decision to
+ *  keep polling depends on the LATEST fetched command, which is this same
+ *  query's own data). Polling stops the instant the latest command is
+ *  `null`, reaches a `TERMINAL_COMMAND_STATES` member, or is `expired`
+ *  (the collector's `isExpired` — config-command.repository.ts — only ever
+ *  returns true for `pending`/`dispatched`, so terminal+expired can't
+ *  co-occur, but the check is written defensively regardless). Callers
+ *  (command-timeline.tsx) just pass `poll: true` unconditionally and this
+ *  hook stops itself — no component-level state machine needed. */
 export function useLatestCommand(
   backendId: number | undefined,
   opts: { poll: boolean },
@@ -157,7 +181,15 @@ export function useLatestCommand(
     queryKey: configLatestCommandQueryKey(backendId),
     queryFn: () => fetchLatestCommand(backendId as number),
     enabled: backendId !== undefined,
-    refetchInterval: opts.poll ? 3_000 : false,
+    refetchInterval: opts.poll
+      ? (query) => {
+          const command = query.state.data?.command;
+          if (!command) return false;
+          if (TERMINAL_COMMAND_STATES.has(command.state)) return false;
+          if (command.expired) return false;
+          return 3_000;
+        }
+      : false,
   });
 }
 

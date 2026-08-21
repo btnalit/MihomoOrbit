@@ -40,17 +40,30 @@
  *   ABOVE the diff (dialog stays open, still showing the diff/preview for
  *   context) rather than a generic toast alone, since "reveal/re-enter that
  *   field" is actionable guidance the generic error mapping doesn't carry.
- * - Every other code (`YAML_INVALID`, `SELF_LOCK_FIELD_CHANGED`,
- *   `CONFIG_COMMAND_IN_FLIGHT`, etc.): `useApplyConfig`'s own `onError`
- *   (use-config-editor.ts, Task 7) fires the mapped toast — this dialog
- *   does nothing further for those. `BASE_HASH_STALE`/`MASK_PATH_MISSING`
- *   are passed as `silentCodes` (M2b Task 10 review fix, Finding 1) so
- *   that hook-level toast does NOT also fire for the two codes this
+ * - `CONFIG_COMMAND_IN_FLIGHT` (M2b Task 11 — the handoff note left at the
+ *   end of Task 10's report): another command is already in flight for
+ *   this backend. This dialog closes itself (there's nothing left to
+ *   confirm — the server already rejected it) and shows a toast with a
+ *   "查看进行中的应用" action button that scrolls/focuses
+ *   command-timeline.tsx's root element (`COMMAND_TIMELINE_ELEMENT_ID`).
+ *   `configLatestCommandQueryKey` is invalidated eagerly (not only inside
+ *   the button's `onClick`) so `CommandTimeline` — mounted as a sibling the
+ *   whole time, subscribed to the same query key — already has the
+ *   in-flight command's data by the time the user acts; the `onClick`
+ *   itself still awaits that same invalidation promise before scrolling,
+ *   so a click before the refetch lands doesn't scroll to a not-yet-
+ *   rendered (still-null-command) element.
+ * - Every other code (`YAML_INVALID`, `SELF_LOCK_FIELD_CHANGED`, etc.):
+ *   `useApplyConfig`'s own `onError` (use-config-editor.ts, Task 7) fires
+ *   the mapped toast — this dialog does nothing further for those.
+ *   `BASE_HASH_STALE`/`MASK_PATH_MISSING`/`CONFIG_COMMAND_IN_FLIGHT` are
+ *   passed as `silentCodes` (M2b Task 10 review fix, Finding 1, extended by
+ *   Task 11) so that hook-level toast does NOT also fire for the codes this
  *   dialog owns dedicated UI for — TanStack Query v5 calls BOTH the
  *   hook-level `onError` and this per-`mutate()`-call `onError` on every
  *   failure, so without `silentCodes` the generic toast and this dialog's
- *   conflict card / inline explanation would appear at the same instant,
- *   both describing the same failure.
+ *   own UI would appear at the same instant, both describing the same
+ *   failure.
  *
  * On success: `useApplyConfig`'s own `onSuccess` already invalidates
  * current/versions/latestCommand (Task 7) — this dialog only adds a
@@ -61,6 +74,7 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import {
@@ -76,17 +90,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiErrorCode } from "@/lib/api";
 import { isApiError } from "@/lib/api-error";
-import { useApplyConfig } from "@/hooks/api/use-config-editor";
+import { useApplyConfig, configLatestCommandQueryKey } from "@/hooks/api/use-config-editor";
 import { buildSubmittedText } from "./use-submit-content";
 import { ConfigDiffView } from "./config-diff-view";
+import { COMMAND_TIMELINE_ELEMENT_ID } from "./command-timeline";
 import type { DirtyEntry } from "./use-config-form";
 
 /** Codes this dialog owns dedicated UI for — see Finding 1 in the file
- *  header. Module-level constant so it's the SAME array reference every
- *  render (not that `useApplyConfig` depends on referential stability
- *  today, but there's no reason to allocate a new literal every render
- *  either). */
-const SILENT_ERROR_CODES = ["BASE_HASH_STALE", "MASK_PATH_MISSING"];
+ *  header (extended by M2b Task 11 with `CONFIG_COMMAND_IN_FLIGHT`).
+ *  Module-level constant so it's the SAME array reference every render (not
+ *  that `useApplyConfig` depends on referential stability today, but
+ *  there's no reason to allocate a new literal every render either). */
+const SILENT_ERROR_CODES = ["BASE_HASH_STALE", "MASK_PATH_MISSING", "CONFIG_COMMAND_IN_FLIGHT"];
 
 function maskPathFromError(error: unknown): string | undefined {
   if (!isApiError(error)) return undefined;
@@ -124,7 +139,9 @@ export function ApplyDialog({
 }: ApplyDialogProps) {
   const t = useTranslations("configEditor.apply");
   const tConflict = useTranslations("configEditor.conflict");
+  const tErrors = useTranslations("configEditor.errors");
   const applyMutation = useApplyConfig(backendId, { silentCodes: SILENT_ERROR_CODES });
+  const queryClient = useQueryClient();
 
   // Plain `useState` — no reset-on-open logic needed. The parent only
   // mounts this component while `applyOpen` is true (see the file header),
@@ -183,6 +200,39 @@ export function ApplyDialog({
           }
           if (code === "MASK_PATH_MISSING") {
             setMaskPathMissing(maskPathFromError(error) ?? "");
+            return;
+          }
+          if (code === "CONFIG_COMMAND_IN_FLIGHT") {
+            // Nothing left to confirm — the server already rejected this
+            // apply. Close first so the toast's action isn't fighting a
+            // modal for visual priority, then invalidate EAGERLY (not only
+            // inside the button's onClick) so CommandTimeline — mounted the
+            // whole time as a sibling, subscribed to the same query key —
+            // already has the in-flight command by the time the user acts.
+            onOpenChange(false);
+            const refetched = queryClient.invalidateQueries({
+              queryKey: configLatestCommandQueryKey(backendId),
+            });
+            toast.error(tErrors("commandInFlight"), {
+              action: {
+                label: tErrors("viewInFlight"),
+                onClick: () => {
+                  // Await the SAME promise rather than assuming it's already
+                  // settled — a click right after the toast appears could
+                  // otherwise race the refetch and scroll to an
+                  // element that isn't rendered yet (CommandTimeline
+                  // returns null until `command` is non-null).
+                  refetched.then(() => {
+                    requestAnimationFrame(() => {
+                      const el = document.getElementById(COMMAND_TIMELINE_ELEMENT_ID);
+                      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      el?.focus();
+                    });
+                  });
+                },
+              },
+            });
+            return;
           }
           // Every other code: use-config-editor.ts's onError already toasted
           // the mapped message (Task 7) — nothing further to do here.
