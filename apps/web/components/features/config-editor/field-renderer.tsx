@@ -290,6 +290,12 @@ function MaskedFieldControl({
   const handleToggle = () => {
     if (revealedValue) {
       onHide();
+      // M2b final-review minor fix: clear the mutation's own settled
+      // `data`/`error` (the just-revealed plaintext, in this case) the
+      // instant the user hides it again — paired with `gcTime: 0` on
+      // useRevealValue, this is the "reset on hide" half: don't wait for
+      // garbage collection to drop a reveal already dismissed from view.
+      revealMutation.reset();
       return;
     }
     revealMutation.mutate(path, {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { load } from 'js-yaml';
-import { MASK_SENTINEL } from './yaml-mask.js';
+import { parseDocument } from 'yaml';
+import { MASK_SENTINEL, maskYamlSecrets } from './yaml-mask.js';
 import { prepareApply, SELF_LOCK_FIELDS, VERIFY_KEYS, type ApplyInput } from './apply-pipeline.js';
 
 const HASH = 'agent-hash-v1';
@@ -130,6 +131,32 @@ describe('prepareApply', () => {
       'allow-lan': true,
     });
     expect(r.prepared.verify).not.toHaveProperty('dns');
+  });
+
+  // I2 (M2b final review): a case-difference-only edit to mode/log-level
+  // must not survive into `verify` at its original case — mihomo's own
+  // GET /configs reports these lower-case, so an un-lowercased 'Rule'
+  // would spuriously mismatch the agent's post-apply health-gate compare
+  // and roll back an otherwise-successful apply.
+  it('I2: verify extraction lowercases mode and log-level (case-insensitive compare)', () => {
+    const submitted = BASE_YAML.replace('mode: rule', 'mode: Rule').replace('log-level: info', 'log-level: INFO');
+    const r = prepareApply(input(submitted), BASE_YAML, HASH);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.prepared.verify.mode).toBe('rule');
+    expect(r.prepared.verify['log-level']).toBe('info');
+    // The submitted casing is still what's actually written to disk — only
+    // the extracted verify value is normalized, not finalContent itself.
+    expect(r.prepared.finalContent).toContain('mode: Rule');
+    expect(r.prepared.finalContent).toContain('log-level: INFO');
+  });
+
+  it('I2: numeric and boolean verify keys are unaffected by the case-insensitive lowercasing (scoped to mode/log-level only)', () => {
+    const r = prepareApply(input(BASE_YAML), BASE_YAML, HASH);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.prepared.verify.port).toBe(7890);
+    expect(r.prepared.verify['allow-lan']).toBe(true);
   });
 
   // Scenario 7
@@ -539,5 +566,62 @@ describe('prepareApply', () => {
       const parsedFinal = load(r.prepared.finalContent) as { dns: { nameserver: string[] } };
       expect(parsedFinal.dns.nameserver).toEqual(['8.8.8.8', 'masked-nameserver-secret']);
     });
+  });
+
+  // C1 test debt (M2b final review, root-fix ruling): before the C1 rewrite,
+  // maskYamlSecrets returned a js-yaml DUMP — comment-free by construction
+  // — so every "comment survival" test up to this point built its submitted
+  // fixture BY HAND, never actually round-tripping through the real masking
+  // step. That was an empty premise: hand-written comments in a fixture
+  // prove nothing about whether maskYamlSecrets itself preserves them. This
+  // test closes that gap by using maskYamlSecrets's REAL output as the
+  // starting point, patching it the way the web's use-submit-content.ts
+  // does (parseDocument(maskedContent) -> patch ONE dirty, NON-masked leaf
+  // -> toString(), never a full re-dump) before handing it to prepareApply
+  // — so a C1 regression (maskedContent losing comments again) fails HERE,
+  // end-to-end, not just in yaml-mask.test.ts's more isolated unit tests.
+  it('C1 test debt: a submission built from the REAL maskYamlSecrets output of a commented base keeps the base comments end-to-end', () => {
+    const commentedBase = [
+      '# device of record — do not remove this banner',
+      'port: 7890 # primary inbound port',
+      'mode: rule',
+      'log-level: info',
+      'allow-lan: true',
+      'external-controller: 127.0.0.1:9090',
+      'secret: base-secret-value',
+      'bind-address: "*"',
+      'external-ui: ui',
+      'password: real-password-value # comment right after the secret',
+    ].join('\n') + '\n';
+
+    const masked = maskYamlSecrets(commentedBase);
+    expect(masked.parseError).toBe(false);
+    // Sanity check on the masking step itself — this is the exact C1
+    // guarantee this test exists to keep honest end-to-end.
+    expect(masked.maskedContent).toContain('# device of record — do not remove this banner');
+    expect(masked.maskedContent).toContain('# primary inbound port');
+    expect(masked.maskedContent).toContain('# comment right after the secret');
+    expect(masked.maskedContent).toContain(MASK_SENTINEL);
+    expect(masked.maskedContent).not.toContain('real-password-value');
+
+    // Web-side dirty-leaf patch: parse the MASKED content's own CST and
+    // change a NON-masked field (port) — the sentinel itself is never
+    // touched by this patch, keeping this test isolated from sentinel
+    // resubstitution mechanics (already covered by the other tests above).
+    const doc = parseDocument(masked.maskedContent);
+    doc.set('port', 7899);
+    const submitted = doc.toString();
+    expect(submitted).toContain(MASK_SENTINEL);
+
+    const r = prepareApply(input(submitted), commentedBase, HASH);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.prepared.finalContent).toContain('# device of record — do not remove this banner');
+    expect(r.prepared.finalContent).toContain('# primary inbound port');
+    expect(r.prepared.finalContent).toContain('# comment right after the secret');
+    expect(r.prepared.finalContent).not.toContain(MASK_SENTINEL);
+    const parsedFinal = load(r.prepared.finalContent) as Record<string, unknown>;
+    expect(parsedFinal.port).toBe(7899);
+    expect(parsedFinal.password).toBe('real-password-value');
   });
 });

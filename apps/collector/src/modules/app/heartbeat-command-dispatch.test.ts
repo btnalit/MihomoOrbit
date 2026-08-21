@@ -227,6 +227,190 @@ describe('heartbeat command dispatch + receipt ingestion (M2b)', () => {
     });
   });
 
+  // C2 (M2b whole-branch final review, CRITICAL): a non-applied receipt
+  // (conflict/rolled-back/failed) must delete its command's own
+  // config_versions row IFF that row is still the backend's latest —
+  // reverting the staleness baseline to whatever is actually on disk,
+  // instead of the conflict loop the pre-fix behavior produced (latest
+  // stuck on never-written editor content for up to ~1h).
+  describe('C2: non-applied receipt cleans up its own now-stale editor version', () => {
+    function seedAgentReportVersion(backendId: number, content: string): number {
+      const { id } = db.configVersions.insertIfChanged({
+        backendId,
+        hash: sha256(content),
+        content,
+        size: Buffer.byteLength(content, 'utf8'),
+        source: 'agent-report',
+        filePath: '/etc/mihomo/config.yaml',
+      });
+      return id;
+    }
+
+    it('a rolled-back receipt deletes the command\'s editor version row, reverting latest to the prior agent-report row', async () => {
+      const id = mkBoundBackend('c2-1', 'agent-c2-1');
+      const agentReportId = seedAgentReportVersion(id, 'port: 7890\n');
+      const commandId = 'cmd_c2_1aaaaaaaaaaaaaaaaaaaaaaaaa';
+      const { versionId: editorVersionId } = seedCommand(id, commandId);
+      expect(db.configVersions.getLatest(id)?.id).toBe(editorVersionId);
+
+      const res = await heartbeat(app, {
+        backendId: id,
+        token: 'c2-1',
+        agentId: 'agent-c2-1',
+        protocolVersion: 2,
+        commandResults: [{ commandId, result: 'rolled-back', reason: 'reload failed', completedAtMs: Date.now() }],
+      });
+      expect(res.statusCode).toBe(200);
+
+      // The editor row this command created is gone, and latest reverts to
+      // the agent-report row that predates it — not stuck on never-written
+      // editor content.
+      expect(db.configVersions.getLatest(id)?.id).toBe(agentReportId);
+      expect(db.configVersions.getLatest(id)?.source).toBe('agent-report');
+    });
+
+    it('a conflict receipt also deletes the command\'s editor version row', async () => {
+      const id = mkBoundBackend('c2-2', 'agent-c2-2');
+      const agentReportId = seedAgentReportVersion(id, 'port: 7890\n');
+      const commandId = 'cmd_c2_2aaaaaaaaaaaaaaaaaaaaaaaaa';
+      seedCommand(id, commandId);
+
+      await heartbeat(app, {
+        backendId: id,
+        token: 'c2-2',
+        agentId: 'agent-c2-2',
+        protocolVersion: 2,
+        commandResults: [{ commandId, result: 'conflict', reason: 'base-hash-mismatch', completedAtMs: Date.now() }],
+      });
+
+      expect(db.configVersions.getLatest(id)?.id).toBe(agentReportId);
+    });
+
+    it('a failed receipt also deletes the command\'s editor version row', async () => {
+      const id = mkBoundBackend('c2-3', 'agent-c2-3');
+      const agentReportId = seedAgentReportVersion(id, 'port: 7890\n');
+      const commandId = 'cmd_c2_3aaaaaaaaaaaaaaaaaaaaaaaaa';
+      seedCommand(id, commandId);
+
+      await heartbeat(app, {
+        backendId: id,
+        token: 'c2-3',
+        agentId: 'agent-c2-3',
+        protocolVersion: 2,
+        commandResults: [{ commandId, result: 'failed', reason: 'write config: disk full', completedAtMs: Date.now() }],
+      });
+
+      expect(db.configVersions.getLatest(id)?.id).toBe(agentReportId);
+    });
+
+    it('an applied receipt leaves the editor version row in place (it is now the real on-disk content)', async () => {
+      const id = mkBoundBackend('c2-4', 'agent-c2-4');
+      seedAgentReportVersion(id, 'port: 7890\n');
+      const commandId = 'cmd_c2_4aaaaaaaaaaaaaaaaaaaaaaaaa';
+      const { versionId: editorVersionId } = seedCommand(id, commandId);
+
+      await heartbeat(app, {
+        backendId: id,
+        token: 'c2-4',
+        agentId: 'agent-c2-4',
+        protocolVersion: 2,
+        commandResults: [{ commandId, result: 'applied', reason: '', completedAtMs: Date.now() }],
+      });
+
+      expect(db.configVersions.getLatest(id)?.id).toBe(editorVersionId);
+      expect(db.configVersions.getLatest(id)?.source).toBe('editor');
+    });
+
+    it('guard: does NOT delete when the command\'s row is no longer latest (superseded by a later apply)', async () => {
+      const id = mkBoundBackend('c2-5', 'agent-c2-5');
+      seedAgentReportVersion(id, 'port: 7890\n');
+      const commandId = 'cmd_c2_5aaaaaaaaaaaaaaaaaaaaaaaaa';
+      const { versionId: firstEditorVersionId } = seedCommand(id, commandId);
+      // Resolve the first command terminally so a second one can be
+      // created (config_commands allows only one in-flight per backend,
+      // but nothing stops a second terminal-resolved command's row from
+      // becoming latest afterward).
+      db.configCommands.resolve(commandId, id, 'applied', '', new Date().toISOString());
+
+      // A second, LATER editor apply supersedes the first command's row as
+      // latest.
+      const laterContent = 'port: 9999\n# superseding apply\n';
+      const { id: laterVersionId } = db.configVersions.insertIfChanged({
+        backendId: id,
+        hash: sha256(laterContent),
+        content: laterContent,
+        size: Buffer.byteLength(laterContent, 'utf8'),
+        source: 'editor',
+        filePath: '/etc/mihomo/config.yaml',
+      });
+      expect(db.configVersions.getLatest(id)?.id).toBe(laterVersionId);
+      expect(laterVersionId).not.toBe(firstEditorVersionId);
+
+      // A late, out-of-order receipt for the FIRST command must not delete
+      // the later row it no longer corresponds to — but resolve() itself
+      // now no-ops too (the first command is already terminal from the
+      // 'applied' resolve above), so seed a SECOND in-flight command
+      // pointing at the (now-superseded) first editor version id to
+      // exercise the "latest moved on" guard specifically, independent of
+      // resolve()'s own idempotency.
+      const staleCommandId = 'cmd_c2_5_stale_aaaaaaaaaaaaaaaa';
+      db.configCommands.create({
+        commandId: staleCommandId,
+        backendId: id,
+        versionId: firstEditorVersionId,
+        baseHash: 'stale-base-hash',
+        payload: JSON.stringify({ commandId: staleCommandId, type: 'apply-config', baseHash: 'stale-base-hash', content: '', verify: {}, issuedAtMs: Date.now() }),
+      });
+
+      await heartbeat(app, {
+        backendId: id,
+        token: 'c2-5',
+        agentId: 'agent-c2-5',
+        protocolVersion: 2,
+        commandResults: [{ commandId: staleCommandId, result: 'rolled-back', reason: 'stale', completedAtMs: Date.now() }],
+      });
+
+      // latest is untouched — still the later (superseding) row.
+      expect(db.configVersions.getLatest(id)?.id).toBe(laterVersionId);
+      // The first editor row itself must also still exist (guard prevented
+      // deletion, not just "latest didn't change" by coincidence).
+      expect(db.configVersions.getById(id, firstEditorVersionId)).toBeDefined();
+    });
+
+    it('guard: does NOT delete when the command\'s versionId points at a reused (non-editor) row — a no-op apply\'s dedup reuse', async () => {
+      const id = mkBoundBackend('c2-6', 'agent-c2-6');
+      const agentReportId = seedAgentReportVersion(id, 'port: 7890\n');
+
+      // Simulate a no-op apply: insertIfChanged() reused the EXISTING
+      // agent-report row's id (same hash, nothing new written) — the
+      // command's version_id points at that row directly, per
+      // enqueueCommand's real behavior when finalContent hashes identical
+      // to the current latest.
+      const commandId = 'cmd_c2_6aaaaaaaaaaaaaaaaaaaaaaaaa';
+      db.configCommands.create({
+        commandId,
+        backendId: id,
+        versionId: agentReportId,
+        baseHash: 'base-hash-noop',
+        payload: JSON.stringify({ commandId, type: 'apply-config', baseHash: 'base-hash-noop', content: 'port: 7890\n', verify: {}, issuedAtMs: Date.now() }),
+      });
+
+      await heartbeat(app, {
+        backendId: id,
+        token: 'c2-6',
+        agentId: 'agent-c2-6',
+        protocolVersion: 2,
+        commandResults: [{ commandId, result: 'rolled-back', reason: 'reused-row-guard', completedAtMs: Date.now() }],
+      });
+
+      // The reused agent-report row must survive — source !== 'editor'
+      // guards it even though it was still "latest" and this command's own
+      // version_id.
+      expect(db.configVersions.getLatest(id)?.id).toBe(agentReportId);
+      expect(db.configVersions.getLatest(id)?.source).toBe('agent-report');
+    });
+  });
+
   describe('dual-contract: only /api/agent/heartbeat may attach commands (scenario 6)', () => {
     it('/api/agent/report response has no commands key', async () => {
       const id = mkBoundBackend('f1', 'agent-f1');

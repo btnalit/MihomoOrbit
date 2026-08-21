@@ -31,14 +31,18 @@
  * agent-reported row" would permanently keep pointing at the PRE-apply
  * hash, deadlocking every subsequent apply with a spurious BASE_HASH_STALE.
  *
- * Documented residual (not fixed here — no Task-6-scoped fix exists): if
- * the agent's receipt for a command is `conflict`, the collector's latest
- * config_versions row is still the un-applied editor content (disk never
- * changed, so the agent's next config-file report dedupes against it and
- * never corrects it). Every subsequent apply then bases off content that
- * is not actually on disk until a future write path exists to reconcile
- * this (e.g. forcing a fresh agent config-file report after a conflict
- * receipt). Left for a follow-up task.
+ * RESIDUAL CLOSED (M2b whole-branch final review, C2 — CRITICAL): the
+ * conflict-loop residual documented here through Task 6 (a `conflict`/
+ * `rolled-back`/`failed` receipt left the un-applied editor content as
+ * "latest" indefinitely, deadlocking every subsequent apply with a
+ * spurious BASE_HASH_STALE for up to the agent's next unrelated
+ * config-file report, ~1h) is fixed at the heartbeat receipt handler
+ * (app.ts's POST /api/agent/heartbeat, commandResults ingestion loop): a
+ * non-applied receipt now deletes that command's own config_versions row
+ * when it is still the backend's latest — see
+ * ConfigVersionRepository.deleteIfLatestEditorVersion's doc comment for
+ * the full guard rationale. `latest` here reverts to whatever the agent
+ * actually has on disk immediately, not eventually.
  */
 
 import { randomBytes, createHash } from 'crypto';
@@ -46,6 +50,7 @@ import { load } from 'js-yaml';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import { maskYamlSecrets } from './yaml-mask.js';
 import { prepareApply, type ApplyPrepared, type ApplyRejection } from './apply-pipeline.js';
+import { CONFIG_FILE_MAX_BYTES } from './limits.js';
 import type { ConfigVersion } from '../../database/repositories/config-version.repository.js';
 
 interface BackendParams {
@@ -106,13 +111,30 @@ function sendApplyRejection(reply: FastifyReply, rejection: ApplyRejection) {
  * column, and its `file_path` carries forward into the new config_versions
  * row purely as continuity metadata (the agent's write target comes from
  * its own local config, never from this payload).
+ *
+ * I1 fix (M2b final-review): rejects with `contentTooLarge: true` when
+ * `prepared.finalContent` — what actually gets stored/dispatched, not the
+ * raw submitted body (resubstitution can only ever grow content, never
+ * shrink it, so checking the FINAL content is the conservative choice) —
+ * exceeds CONFIG_FILE_MAX_BYTES, the SAME cap the agent's own config-file
+ * ingest endpoint enforces (app.ts). Before this fix there was no
+ * collector-side cap on the write path at all: an oversized apply/rollback
+ * would enqueue a command the agent could only reject client-side (its own
+ * ingest cap), silently expiring after the command TTL with nothing
+ * actionable surfaced back to the editor. Checked here (shared by both
+ * apply and rollback, since both funnel through this one function) rather
+ * than duplicated at each call site.
  */
 function enqueueCommand(
   fastify: FastifyInstance,
   backendId: number,
   latest: ConfigVersion,
   prepared: ApplyPrepared,
-): { commandId: string; versionId: number } {
+): { ok: true; commandId: string; versionId: number } | { ok: false; contentTooLarge: true } {
+  if (Buffer.byteLength(prepared.finalContent, 'utf8') > CONFIG_FILE_MAX_BYTES) {
+    return { ok: false, contentTooLarge: true };
+  }
+
   const finalHash = createHash('sha256').update(prepared.finalContent, 'utf8').digest('hex');
   const { id: versionId } = fastify.db.configVersions.insertIfChanged({
     backendId,
@@ -141,7 +163,7 @@ function enqueueCommand(
     payload: JSON.stringify(envelope),
   });
 
-  return { commandId, versionId };
+  return { ok: true, commandId, versionId };
 }
 
 /**
@@ -269,7 +291,10 @@ const configEditorController: FastifyPluginAsync = async (fastify: FastifyInstan
       }
 
       const enqueued = enqueueCommand(fastify, backendId, latest, result.prepared);
-      return reply.status(202).send(enqueued);
+      if (!enqueued.ok) {
+        return reply.status(422).send({ code: 'CONTENT_TOO_LARGE' });
+      }
+      return reply.status(202).send({ commandId: enqueued.commandId, versionId: enqueued.versionId });
     },
   );
 
@@ -317,7 +342,10 @@ const configEditorController: FastifyPluginAsync = async (fastify: FastifyInstan
       }
 
       const enqueued = enqueueCommand(fastify, backendId, latest, result.prepared);
-      return reply.status(202).send(enqueued);
+      if (!enqueued.ok) {
+        return reply.status(422).send({ code: 'CONTENT_TOO_LARGE' });
+      }
+      return reply.status(202).send({ commandId: enqueued.commandId, versionId: enqueued.versionId });
     },
   );
 

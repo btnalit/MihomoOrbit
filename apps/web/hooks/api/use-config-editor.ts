@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -48,6 +49,9 @@ const ERROR_CODE_KEYS: Record<string, string> = {
   UNSUPPORTED_GATEWAY: "unsupportedGateway",
   NO_CONFIG_REPORTED: "noConfigReported",
   VERSION_NOT_FOUND: "versionNotFound",
+  // I1 (M2b final-review fix): collector-side content size cap on the
+  // apply/rollback write endpoints.
+  CONTENT_TOO_LARGE: "contentTooLarge",
 };
 
 /** `ApiError.message` is always truthy (`"API Error 404: <url>"` — the
@@ -115,12 +119,26 @@ export function useApplyConfig(
       applyConfig(backendId as number, body),
     retry: false,
     onSuccess: () => {
+      // I3 fix (M2b final review): configCurrent is deliberately NOT
+      // invalidated here. A 202 means the command was only ENQUEUED — the
+      // agent hasn't written it to disk yet, let alone health-gate
+      // confirmed it — so refetching configCurrent at this point would
+      // optimistically show the submitted content as the new masked
+      // baseline before it is actually real, and a subsequent apply based
+      // off that premature baseline could be built against content that
+      // was never truly on disk. configCurrent is instead invalidated by
+      // useLatestCommand, the instant the POLLED command is observed to
+      // transition into 'applied' — the only state where the agent has
+      // confirmedly written AND health-gated the new content. See that
+      // hook's doc comment for the full rationale. The conflict-card
+      // explicit onRefetchCurrent flow (config-editor-page.tsx) is
+      // unrelated and unchanged by this fix.
+      //
       // Await both invalidations like useSelectProxy/usePatchRuntimeConfig
       // (use-management.ts) do — keeps `isPending` true through the actual
       // refetch, and the latest-command query needs to pick up the new
       // in-flight command right away for the polling flow (Task 11).
       return Promise.all([
-        queryClient.invalidateQueries({ queryKey: configCurrentQueryKey(backendId) }),
         queryClient.invalidateQueries({ queryKey: configVersionsQueryKey(backendId) }),
         queryClient.invalidateQueries({ queryKey: configLatestCommandQueryKey(backendId) }),
       ]);
@@ -137,8 +155,10 @@ export function useRollbackConfig(backendId: number | undefined) {
     mutationFn: (versionId: number) => rollbackConfig(backendId as number, versionId),
     retry: false,
     onSuccess: () => {
+      // I3 fix — see useApplyConfig's onSuccess doc comment: same
+      // optimistic-baseline hazard, same fix (configCurrent invalidates on
+      // the polled command's 'applied' transition, not here).
       return Promise.all([
-        queryClient.invalidateQueries({ queryKey: configCurrentQueryKey(backendId) }),
         queryClient.invalidateQueries({ queryKey: configVersionsQueryKey(backendId) }),
         queryClient.invalidateQueries({ queryKey: configLatestCommandQueryKey(backendId) }),
       ]);
@@ -172,18 +192,33 @@ const TERMINAL_COMMAND_STATES = new Set<ConfigCommandState>([
  *  returns true for `pending`/`dispatched`, so terminal+expired can't
  *  co-occur, but the check is written defensively regardless). Callers
  *  (command-timeline.tsx) just pass `poll: true` unconditionally and this
- *  hook stops itself — no component-level state machine needed. */
+ *  hook stops itself — no component-level state machine needed.
+ *
+ *  I3 fix (M2b final review): configCurrent is invalidated FROM HERE, the
+ *  instant the polled command is OBSERVED to transition into `applied` —
+ *  chosen over invalidating in useApplyConfig/useRollbackConfig's onSuccess
+ *  (a 202 means only "enqueued", not "written to disk and health-gate
+ *  confirmed" — see those hooks' doc comments) and over a component-level
+ *  effect in command-timeline.tsx (this hook already owns the command's
+ *  full lifecycle; centralizing here means every future poller of this
+ *  same query gets the fix for free, not just today's one caller). A plain
+ *  `useEffect` keyed on the command's `state` string only re-fires when
+ *  that value actually CHANGES between renders — not on every poll tick
+ *  that returns the same already-applied state — so this fires at most
+ *  once per apply/rollback, exactly on the pending/dispatched -> applied
+ *  transition. */
 export function useLatestCommand(
   backendId: number | undefined,
   opts: { poll: boolean },
 ) {
-  return useQuery<LatestCommandResponse>({
+  const queryClient = useQueryClient();
+  const query = useQuery<LatestCommandResponse>({
     queryKey: configLatestCommandQueryKey(backendId),
     queryFn: () => fetchLatestCommand(backendId as number),
     enabled: backendId !== undefined,
     refetchInterval: opts.poll
-      ? (query) => {
-          const command = query.state.data?.command;
+      ? (q) => {
+          const command = q.state.data?.command;
           if (!command) return false;
           if (TERMINAL_COMMAND_STATES.has(command.state)) return false;
           if (command.expired) return false;
@@ -191,17 +226,40 @@ export function useLatestCommand(
         }
       : false,
   });
+
+  const state = query.data?.command?.state;
+  useEffect(() => {
+    if (state === "applied") {
+      queryClient.invalidateQueries({ queryKey: configCurrentQueryKey(backendId) });
+    }
+  }, [state, backendId, queryClient]);
+
+  return query;
 }
 
 /** Reveals the plaintext value at a masked path. Caller owns keeping the
  *  result out of any persistent store (component state only, cleared on
- *  blur/navigation) — this hook does not cache it in React Query. */
+ *  blur/navigation) — this hook does not cache it in React Query.
+ *
+ *  `gcTime: 0` (M2b final-review minor fix, hardening the Task 11 deferred
+ *  item): TanStack Query's mutationCache otherwise keeps a settled
+ *  mutation's `data` — here, the revealed PLAINTEXT SECRET — around for its
+ *  default gcTime (5 minutes) after the component that called `mutate()`
+ *  unmounts, even though `field-renderer.tsx` never reads the mutation's
+ *  own cached `data` again (it captures the result via `onSuccess` into its
+ *  own local component state, per this hook's own doc comment above).
+ *  `gcTime: 0` makes the mutation eligible for garbage collection the
+ *  instant it's no longer referenced by an active observer, instead of
+ *  leaving plaintext sitting in memory on the off chance nothing else
+ *  reads it. Not a persistence-layer fix (nothing here was ever
+ *  persisted) — purely shrinks the in-memory exposure window. */
 export function useRevealValue(backendId: number | undefined) {
   const t = useTranslations("configEditor.errors");
 
   return useMutation({
     mutationFn: (path: string) => revealConfigValue(backendId as number, path),
     retry: false,
+    gcTime: 0,
     onError: (error: Error) => reportConfigError(error, t, "revealFailed"),
   });
 }

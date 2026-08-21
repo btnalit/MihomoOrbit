@@ -25,7 +25,7 @@ import { StatsService, statsController } from '../stats/index.js';
 import { AuthService, authController } from '../auth/index.js';
 import { configController } from '../config/index.js';
 import { ManagementService, managementController } from '../management/index.js';
-import { configEditorController } from '../config-editor/index.js';
+import { configEditorController, CONFIG_FILE_MAX_BYTES } from '../config-editor/index.js';
 
 // Extend Fastify instance to include services
 declare module 'fastify' {
@@ -732,8 +732,22 @@ export async function createApp(options: AppOptions) {
       const outcome = result.result;
       if (outcome === 'applied' || outcome === 'conflict' || outcome === 'rolled-back' || outcome === 'failed') {
         const reason = typeof result.reason === 'string' ? result.reason : '';
-        if (!db.configCommands.resolve(commandId, outcome, reason, commandResultsNowIso)) {
+        const resolved = db.configCommands.resolve(commandId, backendId, outcome, reason, commandResultsNowIso);
+        if (!resolved) {
           console.warn(`[Agent:${backendId}] heartbeat commandResults: unknown or already-resolved commandId ${commandId}`);
+        } else if (outcome !== 'applied') {
+          // C2 fix (M2b whole-branch final review, CRITICAL): a
+          // conflict/rolled-back/failed receipt means the disk was never
+          // actually updated to this command's own editor content — if the
+          // config_versions row that content is stored under is STILL the
+          // backend's latest, delete it (doubly guarded inside the
+          // repository call: only the latest row, only if source='editor')
+          // so the next apply's staleness baseline reverts to what's
+          // actually on disk instead of permanently basing off
+          // never-written content. See ConfigVersionRepository's
+          // deleteIfLatestEditorVersion doc comment for the full guard
+          // rationale (a no-op apply's reused row id must never be touched).
+          db.configVersions.deleteIfLatestEditorVersion(backendId, resolved.version_id);
         }
       } else {
         console.warn(`[Agent:${backendId}] heartbeat commandResults: unrecognized result "${String(outcome)}" for commandId ${commandId}`);
@@ -1063,7 +1077,10 @@ export async function createApp(options: AppOptions) {
   // config.yaml as a capped per-backend version history for later viewing/
   // editing (M2b). Auth mirrors the other agent ingest endpoints — public
   // route + isAgentBackendAuthorized, not the admin cookie/Bearer check.
-  const CONFIG_FILE_MAX_BYTES = 256 * 1024;
+  // CONFIG_FILE_MAX_BYTES lives in config-editor/limits.ts (M2b final-review
+  // fix, I1) — shared with the editor's own write endpoints, which enforce
+  // this same cap on their own content (see config-editor.controller.ts's
+  // enqueueCommand).
   app.post('/api/agent/config-file', async (request, reply) => {
     const body = request.body as AgentConfigFilePayload;
     const backendId = parseBackendId(body?.backendId);

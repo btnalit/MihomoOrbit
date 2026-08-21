@@ -104,20 +104,39 @@ export class ConfigCommandRepository {
    * (including one that has aged past the TTL — expired is a read-time
    * concept, not stored, so late receipts still land). Idempotent:
    * repeated receipts for an already-terminal command are no-ops and
-   * return false (first receipt wins).
+   * return null (first receipt wins).
+   *
+   * SCOPED by `backendId` (M2b final-review minor fix): a receipt is only
+   * ever accepted for a command that belongs to the SAME backend the
+   * heartbeat authenticated as — defense in depth against a compromised or
+   * buggy agent for backend A submitting a `commandResults` entry carrying
+   * a commandId that actually belongs to backend B (commandId is already
+   * effectively unguessable, 32 random hex chars, but this closes the class
+   * regardless of that).
+   *
+   * Returns the resolved row (post-update) on success — not just a boolean
+   * — so callers get `version_id` and the new `state` from the SAME atomic
+   * update, with no separate lookup race. Returns null if nothing matched
+   * (unknown commandId, wrong backendId, or already-terminal).
    */
   resolve(
     commandId: string,
+    backendId: number,
     result: 'applied' | 'conflict' | 'rolled-back' | 'failed',
     reason: string,
     nowIso: string,
-  ): boolean {
+  ): ConfigCommand | null {
     const res = this.db.prepare(`
       UPDATE config_commands
       SET state = ?, reason = ?, resolved_at = ?
-      WHERE command_id = ? AND state IN (${IN_FLIGHT_STATES.map(() => '?').join(', ')})
-    `).run(result, reason, nowIso, commandId, ...IN_FLIGHT_STATES);
-    return res.changes > 0;
+      WHERE command_id = ? AND backend_id = ? AND state IN (${IN_FLIGHT_STATES.map(() => '?').join(', ')})
+    `).run(result, reason, nowIso, commandId, backendId, ...IN_FLIGHT_STATES);
+    if (res.changes === 0) return null;
+    return this.db.prepare(`
+      SELECT ${SELECT_COLUMNS}
+      FROM config_commands
+      WHERE command_id = ?
+    `).get(commandId) as ConfigCommand;
   }
 
   /**

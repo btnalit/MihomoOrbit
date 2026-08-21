@@ -264,12 +264,27 @@ func verifyMatches(actual, want map[string]interface{}) bool {
 	return true
 }
 
+// looseEqual reports whether a (the collector's expected verify value) and
+// b (mihomo's own GET /configs value) match, loosely: numeric values
+// compared as float64, and — I2 fix, M2b final review — a string-vs-string
+// pair compared case-INsensitively via strings.EqualFold. Mirrors the
+// collector's own lowercasing of `mode`/`log-level` at verify-extraction
+// time (apply-pipeline.ts): a user editing `mode: Rule` must not roll back
+// an otherwise-successful apply just because mihomo reports it back as
+// lower-case `"rule"`. Any other type combination (or either value not a
+// plain string) falls back to the pre-existing %v-formatted comparison —
+// unaffected by this fix.
 func looseEqual(a, b interface{}) bool {
 	if af, aok := toFloat64(a); aok {
 		if bf, bok := toFloat64(b); bok {
 			return af == bf
 		}
 		return false
+	}
+	if as, aok := a.(string); aok {
+		if bs, bok := b.(string); bok {
+			return strings.EqualFold(as, bs)
+		}
 	}
 	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
 }
@@ -383,9 +398,20 @@ func (a *Applier) restore(backupPath string, mode os.FileMode) error {
 	return nil
 }
 
-// atomicWrite writes content to a temp file in target's directory, sets its
-// mode, and renames it over target. The temp file is removed on any failure
-// so a failed rename never leaves debris behind (scenario 9).
+// atomicWrite writes content to a temp file in target's directory, syncs it
+// to durable storage, sets its mode, and renames it over target. The temp
+// file is removed on any failure so a failed rename never leaves debris
+// behind (scenario 9). Used for BOTH the config file itself and
+// orbit-agent-state.json (state.go's SaveState) — this one fix covers both.
+//
+// Minor fix (M2b final review): tmp.Sync() runs BEFORE tmp.Close(), not
+// just relying on Close() to flush. Without it, a crash/power-loss between
+// the rename and the OS actually persisting the temp file's write-back
+// cache could leave the renamed target (config.yaml, or the agent's own
+// crash-recovery state) truncated or zero-length on disk despite Rename()
+// having already reported success — os.Rename is only atomic with respect
+// to the directory entry, not with respect to whether the file's own
+// content has actually reached the disk yet.
 func atomicWrite(target string, content []byte, mode os.FileMode) error {
 	dir := filepath.Dir(target)
 	tmp, err := os.CreateTemp(dir, filepath.Base(target)+".tmp-*")
@@ -395,6 +421,11 @@ func atomicWrite(target string, content []byte, mode os.FileMode) error {
 	tmpPath := tmp.Name()
 
 	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return err

@@ -583,3 +583,70 @@ func TestAtomicWriteCleansUpTempFileOnRenameFailure(t *testing.T) {
 		}
 	}
 }
+
+// I2 (M2b final review): looseEqual must compare a string-vs-string pair
+// case-insensitively (mirrors the collector's own lowercasing of
+// mode/log-level at verify-extraction time) while leaving every other
+// comparison shape untouched.
+func TestLooseEqualCaseInsensitiveStrings(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b interface{}
+		want bool
+	}{
+		{"exact match", "rule", "rule", true},
+		{"case-only difference, expected upper", "Rule", "rule", true},
+		{"case-only difference, actual upper", "rule", "RULE", true},
+		{"different values entirely", "rule", "direct", false},
+		{"numeric still compares as float64, not string", 7890, 7890.0, true},
+		{"numeric mismatch", 7890, 7891.0, false},
+		// `a` is a string but `b` is not, so the new string-vs-string branch
+		// doesn't apply (its own `bok` check fails) — falls through to the
+		// pre-existing %v-formatted comparison, unchanged by this fix ("7890"
+		// vs float64 7890.0 both format to "7890", so this was already true
+		// before I2 and stays true after — pinned here as a no-regression
+		// check, not a new case-insensitivity assertion).
+		{"string vs number falls back to pre-existing formatted compare (unchanged by this fix)", "7890", 7890.0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := looseEqual(c.a, c.b)
+			if got != c.want {
+				t.Fatalf("looseEqual(%#v, %#v) = %v, want %v", c.a, c.b, got, c.want)
+			}
+		})
+	}
+}
+
+// I2 end-to-end: a `mode: Rule` verify expectation (as the collector would
+// send it, pre-lowercasing-fix) must still health-gate-pass against
+// mihomo's own lower-case `"rule"` report — pins the agent-side half of the
+// case-insensitivity fix at the Apply() level, not just the looseEqual unit.
+func TestApplyVerifyCaseInsensitiveModeMatches(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	original := []byte("mode: rule\n")
+	writeFile(t, configPath, original, 0644)
+
+	gw := &fakeGateway{
+		configsFn: func(int) (map[string]interface{}, error) {
+			return map[string]interface{}{"mode": "rule"}, nil // mihomo's own lower-case report
+		},
+		proxiesFn: func(int) (int, error) { return 2, nil },
+	}
+	clock := &fakeClock{t: time.Now()}
+	applier := newApplier(configPath, gw, clock)
+
+	cmd := Command{
+		CommandID: "cmd-i2",
+		BaseHash:  sha256Hex(original),
+		Content:   "mode: Rule\n",
+		Verify:    map[string]interface{}{"mode": "Rule"}, // collector's verify, unlowercased on purpose
+	}
+
+	res := applier.Apply(context.Background(), cmd)
+
+	if res.Result != StatusApplied {
+		t.Fatalf("expected applied (case-insensitive verify match), got %+v", res)
+	}
+}

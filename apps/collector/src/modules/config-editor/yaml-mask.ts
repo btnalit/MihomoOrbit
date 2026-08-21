@@ -1,65 +1,127 @@
 /**
- * YAML secret masking — M2a
+ * YAML secret masking — M2a, rewritten M2b final-review (C1)
  *
- * Parses a Mihomo config.yaml with js-yaml, walks the resulting value tree
- * at any depth (objects and arrays alike), and replaces every value keyed by
- * a case-insensitive match against SENSITIVE_KEYS with a fixed sentinel
- * string, then re-serializes with js-yaml's dumper.
+ * ROOT FIX (M2b whole-branch final review, C1 — CRITICAL): the M1/M2a
+ * implementation parsed with js-yaml and re-serialized with `dump()`, which
+ * discards comments, expands anchors and normalizes formatting. That made
+ * `maskedContent` a comment-free, anchor-free reconstruction — so EVERY
+ * downstream comment-preservation layer (apply-pipeline.ts's CST splice,
+ * the web's Task-8 `parseDocument(maskedContent)`-then-patch flow) operated
+ * on already-comment-free text, no matter how carefully those layers
+ * themselves preserved formatting. There was nothing left to preserve.
+ *
+ * This rewrite mirrors apply-pipeline.ts's own technique (read that module
+ * first — its docstring is the canonical explanation of why range-splicing
+ * on the ORIGINAL text, not tree-dump, is the only sound approach here):
+ * parse with the `yaml` (eemeli) package's position-aware CST
+ * (`parseDocument` + per-node `range`), collect the exact byte ranges of
+ * every Scalar (or whole Map/Seq, for a non-scalar secret) that must be
+ * masked, and splice `MASK_SENTINEL` into the ORIGINAL source text at those
+ * ranges, right-to-left. Comments, anchors, aliases, key order and all
+ * other formatting survive BY CONSTRUCTION — the walk below simply never
+ * touches any byte outside a collected range. js-yaml is no longer used
+ * anywhere in this module (it remains a dependency for apply-pipeline.ts's
+ * base-version parsing and round-trip safety net, which are unaffected by
+ * this rewrite).
  *
  * MASK_SENTINEL is a cross-milestone contract: M2b's apply path resubstitutes
  * this exact literal with the original value (matched by baseHash), so it
  * must never change once agents/collectors in the field depend on it.
  *
- * Parse failures never leak the original (possibly-sensitive) text: on any
- * YAMLException — from the parse itself, or from an unexpected failure in
- * the masking/dump step below — maskedContent comes back empty with
- * parseError: true. Safer to show nothing than to risk masking failing
- * silently on malformed input.
+ * Parse failures never leak the original (possibly-sensitive) text: any
+ * parse error (`doc.errors.length > 0`), or an unexpected failure in the
+ * masking/splicing step below, or the post-splice re-parse safety net
+ * failing, all degrade to maskedContent '' with parseError: true. Safer to
+ * show nothing than to risk masking failing silently on malformed input.
  *
- * Two-pass masking (key-based, then value-based):
- * js-yaml gives mapping/sequence aliases a *shared object reference* at
- * every alias site (mutating one mutates all of them for free), but scalar
- * aliases — which is what every real secret actually is — are independent
- * primitive copies at each site. A `password: &pw s3cret` / `notes: *pw`
- * document has two sites holding the identical string, neither aware of the
- * other; masking by key alone only reaches the `password` site and leaves
- * the alias site (`notes`, not a sensitive key) holding the plaintext
- * verbatim. So after the key-based pass, every ORIGINAL secret STRING value
- * (before its own sentinel substitution) that is >= MIN_SECRET_VALUE_LENGTH
- * characters is collected, and a second pass masks any OTHER site anywhere
- * in the tree whose value is exactly equal to one of those strings — this
- * is intentionally fail-closed: a coincidentally-equal non-secret string
- * gets over-masked rather than risk under-masking a real alias.
+ * An empty or comment-only document (`doc.contents === null`, no errors) is
+ * a VALID empty result, not malformed input — but unlike the pre-rewrite
+ * behavior (which returned an empty maskedContent even for a comment-only
+ * document, since js-yaml's value tree has nothing to dump), the ORIGINAL
+ * text is returned verbatim here: a comment-only file has nothing to mask
+ * (no Scalar nodes exist at all), so there is nothing unsafe about showing
+ * it, and doing so preserves the user's comments instead of silently
+ * discarding them.
  *
- * Documented residuals:
- * - Only STRING secrets are value-propagated. A numeric scalar alias of a
- *   numeric secret (e.g. a `port`-like field that happens to equal a
- *   numeric `token:`) is NOT propagated — masking every occurrence of an
- *   equal *number* anywhere in the document would corrupt unrelated ports/
- *   counts/timeouts, and a numeric secret living under a non-sensitive key
- *   is judged out of this threat model.
+ * Three-pass masking, identical in spirit to the pre-rewrite js-yaml
+ * version (see the historical structure this mirrors), but operating on
+ * CST nodes/ranges instead of a mutated value tree + re-dump:
+ *
+ * Pass 1 (key-based + structural provider urls): walks the CST top-down.
+ * At each Map, a child reached via a case-insensitive SENSITIVE_KEYS match
+ * masks that child's WHOLE range as one unit (a Scalar's own range, or an
+ * entire Map/Seq's range when the sensitive key's value is non-scalar,
+ * e.g. `authentication:` holding a list) — never recurses further into an
+ * already-decided-masked subtree. Separately, the actual top-level
+ * `proxy-providers`/`rule-providers` maps are walked structurally (real
+ * CST object traversal, never a reconstructed path string — see the
+ * providers-key comment below for why) to mask each provider entry's `url`
+ * Scalar specifically. Both contribute matched STRING values (>=
+ * MIN_SECRET_VALUE_LENGTH) to `secretValues` for pass 2.
+ *
+ * A sensitive key (or provider url) whose value is itself an Alias node
+ * (e.g. `password: *anchoredElsewhere`) is resolved via `Alias.resolve(doc)`
+ * — which returns the SAME node object the anchor site was parsed into, not
+ * a copy (verified empirically against this repo's installed `yaml`
+ * version) — and the RESOLVED node's range is what actually gets masked
+ * (the alias site itself has no independent text to blank, but its own
+ * path is still recorded in maskedPaths).
+ *
+ * Pass 2 (value-equality propagation): after pass 1 completes, if any
+ * secret values were collected, walks EVERY remaining (not-yet-masked)
+ * Scalar node in the tree and masks any whose string value exactly equals
+ * a collected secret — this is what catches a scalar alias sitting under a
+ * NON-sensitive key (js-yaml's value tree gave scalar aliases independent
+ * primitive copies at each site with no shared-reference way to find them;
+ * the CST equivalent is this same string-equality scan, since a *bare*
+ * duplicated scalar has no CST-level relationship to its twin either). Only
+ * STRING secrets propagate this way (see the documented residual below).
+ * Deliberately fail-closed: a coincidentally-equal non-secret value is
+ * over-masked rather than risking under-masking a real alias.
+ *
+ * Pass 3 (alias awareness): walks every Alias node in the tree and checks
+ * whether `Alias.resolve(doc)` returns a node already in the masked set
+ * (from pass 1 or 2) — if so, the alias's OWN path is added to
+ * maskedPaths (never a range: an alias site's source text, e.g. `*pw`, never
+ * contains the secret itself, so there is nothing to blank there — the
+ * anchor's own masked range already keeps the plaintext out of the
+ * document). This is what keeps `notes: *pw` (aliasing a masked `password:
+ * &pw ...`) discoverable/revealable in the editor UI even though its own
+ * site's text is untouched.
+ *
+ * All three passes skip recursing into any node already in the masked set
+ * (a whole Map/Seq masked by pass 1, or a Scalar masked by pass 1/2) — both
+ * because there is nothing further to find inside it, and because
+ * collecting a range NESTED inside an already-collected range would corrupt
+ * the right-to-left splice (an inner range's offsets become invalid once
+ * the outer range spanning it has already been replaced). As defense in
+ * depth beyond the per-pass skip (alias resolution can otherwise discover a
+ * node whose ancestor gets independently masked by an unrelated decision,
+ * in either document order), `spliceRanges` also explicitly drops any
+ * collected range that is a subset of another before splicing — CST node
+ * ranges from the same tree are always either nested or disjoint, never
+ * partially overlapping, so containment is the only case to guard.
+ *
+ * Documented residuals (carried over from the pre-rewrite version, still
+ * accurate under the CST rewrite):
+ * - Only STRING secrets are value-propagated (pass 2). A numeric scalar
+ *   alias of a numeric secret is NOT propagated — masking every occurrence
+ *   of an equal *number* anywhere in the document would corrupt unrelated
+ *   ports/counts/timeouts, and a numeric secret living under a
+ *   non-sensitive key is judged out of this threat model.
  * - The MIN_SECRET_VALUE_LENGTH floor exists to avoid over-masking trivial
  *   values (short placeholder strings, enum-like tags) that happen to
  *   collide.
- * - `<<:` YAML merge keys are NOT flattened by js-yaml 5.2.3's default
- *   schema (unlike js-yaml 4.x's DEFAULT_SCHEMA) — `<<` survives as a
- *   literal key holding the referenced mapping as a nested value, which the
- *   generic recursive walk below still descends into and masks correctly.
- *   This safety is incidental to the current default schema, not a design
- *   guarantee of this module — re-run the alias/merge-key tests in
- *   yaml-mask.test.ts on any js-yaml version bump.
+ * - A sensitive key masked WHOLESALE (its value is a Map/Seq, e.g.
+ *   `authentication:` holding a list) does not propagate ANY of its
+ *   individual elements' values into secretValues — matches the pre-rewrite
+ *   js-yaml behavior exactly (the whole-value replace branch never
+ *   inspected element values either), so an alias elsewhere referencing one
+ *   specific element inside such a wholesale-masked collection is not
+ *   independently discoverable. Pre-existing, not a rewrite regression.
  */
-import { dump, load, YAMLException } from 'js-yaml';
-
-// js-yaml 5.x's load() throws (rather than returning undefined, as 4.x did)
-// when a document contains no content at all — an empty string, or a
-// whitespace/comment-only body that resolves to zero YAML documents — and
-// this exact reason string is the only call site that throws it (see
-// js-yaml's loader: `if (documents.length === 0) throw new
-// YAMLException("expected a document, but the input is empty")`). That is a
-// VALID empty document (nothing to mask), not malformed input, so it must
-// not surface as parseError: true.
-const EMPTY_DOCUMENT_REASON = 'expected a document, but the input is empty';
+import { parseDocument, isMap, isSeq, isScalar, isAlias } from 'yaml';
+import type { Document } from 'yaml';
 
 export const MASK_SENTINEL = '__ORBIT_MASKED__';
 
@@ -98,10 +160,9 @@ const SENSITIVE_KEYS = new Set([
 // Top-level keys under which every entry is a provider config map keyed by
 // an arbitrary, user-chosen provider name. The provider's `url` (a
 // subscription link that routinely embeds an auth token as a query param)
-// lives at PROVIDERS_KEY.<name>.url — see maskProviderMapUrls, which handles
-// this STRUCTURALLY (real object traversal, keyed off the actual top-level
-// object) rather than by reconstructing/matching the `.`-joined path
-// string. A path-string regex was tried first and rejected: maskedPaths
+// lives at PROVIDERS_KEY.<name>.url — handled STRUCTURALLY below (real CST
+// object traversal, keyed off the actual top-level map's own items) rather
+// than by reconstructing/matching the `.`-joined path string: maskedPaths
 // entries join keys with `.` purely for human-readable reporting, and a
 // provider name containing a literal `.` (e.g. `sub.example`) or `[`/`]`
 // makes the joined string structurally ambiguous — indistinguishable from
@@ -111,201 +172,310 @@ const SENSITIVE_KEYS = new Set([
 // may contain any character at all.
 const PROVIDERS_KEYS = ['proxy-providers', 'rule-providers'] as const;
 
-/**
- * Masks the `url` field of every entry in a top-level providers map
- * (`proxy-providers` / `rule-providers`), structurally: iterates the map's
- * actual own keys (provider names) rather than matching against a
- * reconstructed path string, so provider names containing dots, brackets,
- * or anything else are handled correctly. Only `providersMap` itself needs
- * to be the top-level value — the caller is responsible for only invoking
- * this on the actual top-level `proxy-providers`/`rule-providers` value,
- * which is what keeps this scoped and out of reach of an unrelated
- * same-named nested map elsewhere in the document.
- *
- * Runs after the generic key-based pass (maskByKey) so it can still add the
- * original url to secretValues for pass 2's alias propagation, same as any
- * other masked secret.
- */
-function maskProviderMapUrls(
-  providersMap: unknown,
-  parentKey: string,
-  maskedPaths: string[],
-  secretValues: Set<string>,
-): void {
-  if (providersMap === null || typeof providersMap !== 'object' || Array.isArray(providersMap)) {
-    return;
-  }
-  for (const providerName of Object.keys(providersMap as Record<string, unknown>)) {
-    const entry = (providersMap as Record<string, unknown>)[providerName];
-    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
-      continue;
-    }
-    const entryRecord = entry as Record<string, unknown>;
-    const urlValue = entryRecord.url;
-    if (typeof urlValue !== 'string' || urlValue === MASK_SENTINEL) {
-      continue;
-    }
-    if (urlValue.length >= MIN_SECRET_VALUE_LENGTH) {
-      secretValues.add(urlValue);
-    }
-    entryRecord.url = MASK_SENTINEL;
-    maskedPaths.push(`${parentKey}.${providerName}.url`);
-  }
-}
-
-// Floor for cross-site value-equality propagation (pass 2 below) — a
-// collected secret shorter than this is judged too likely to collide with
-// unrelated legitimate values, so it is masked only at its own key site.
+// Floor for cross-site value-equality propagation (pass 2) — a collected
+// secret shorter than this is judged too likely to collide with unrelated
+// legitimate values, so it is masked only at its own key site.
 const MIN_SECRET_VALUE_LENGTH = 6;
 
-/**
- * Pass 1: masks sensitive-keyed values in a parsed YAML value tree and
- * collects the ORIGINAL string values that got masked (before sentinel
- * substitution) into `secretValues`, for pass 2 to propagate by value.
- * Mutates and returns arrays/objects in place (rather than cloning) so that
- * mapping/sequence alias references js-yaml resolved to the same object
- * instance stay masked at every alias site, not just the first one visited.
- *
- * `value !== MASK_SENTINEL` guards against a shared-object alias site being
- * revisited after an earlier visit already mutated it: without the guard,
- * the second visit would read back MASK_SENTINEL itself (>= the length
- * floor) and pollute secretValues with the sentinel string, causing pass 2
- * to spuriously "re-mask" every already-masked site in the document.
- */
-function maskByKey(node: unknown, path: string, maskedPaths: string[], secretValues: Set<string>): unknown {
-  if (Array.isArray(node)) {
-    for (let i = 0; i < node.length; i++) {
-      const item = node[i];
-      // A string array element that already matches a secret collected
-      // earlier in this same top-down pass (e.g. a scalar alias appearing
-      // after its anchor) is masked directly rather than recursed into —
-      // recursing would no-op on a string and leave it untouched. This
-      // mirrors the identical check in maskByValue's array branch, which is
-      // what actually closes this gap in the common case (pass 2 runs after
-      // ALL secrets are collected, not just the ones visited so far).
-      if (typeof item === 'string' && item !== MASK_SENTINEL && secretValues.has(item)) {
-        node[i] = MASK_SENTINEL;
-        maskedPaths.push(`${path}[${i}]`);
-      } else {
-        node[i] = maskByKey(item, `${path}[${i}]`, maskedPaths, secretValues);
-      }
-    }
-    return node;
-  }
+interface WalkCtx {
+  doc: Document;
+  /** CST node objects (Scalar | YAMLMap | YAMLSeq) whose whole range has
+   *  been decided as masked — reference-keyed, since the CST gives every
+   *  real (non-alias) location in the tree exactly one node object. Used
+   *  both to skip re-descending into an already-masked subtree and, in
+   *  pass 3, to test whether an Alias resolves to a masked node. */
+  maskedNodes: Set<object>;
+  ranges: Array<[number, number]>;
+  paths: string[];
+  secretValues: Set<string>;
+}
 
-  if (node !== null && typeof node === 'object') {
-    for (const key of Object.keys(node as Record<string, unknown>)) {
+function keyString(keyNode: unknown): string {
+  return isScalar(keyNode) ? String((keyNode as { value: unknown }).value) : String(keyNode);
+}
+
+/** Registers `node`'s whole source range as masked (idempotent — a node
+ *  already in `maskedNodes` is left alone) and, for a string-valued Scalar,
+ *  feeds pass 2's value-equality propagation. Does NOT touch `paths` —
+ *  callers own recording whichever logical path(s) this masking decision
+ *  corresponds to, since a single physical range can be reached via an
+ *  alias site whose own path differs from the range's own location. */
+function maskWholeRange(node: unknown, ctx: WalkCtx): void {
+  if (node === null || typeof node !== 'object') return;
+  if (ctx.maskedNodes.has(node)) return;
+  ctx.maskedNodes.add(node);
+  const range = (node as { range?: [number, number, number] | null }).range;
+  if (range) {
+    ctx.ranges.push([range[0], range[1]]);
+  }
+  if (
+    isScalar(node) &&
+    typeof node.value === 'string' &&
+    node.value.length >= MIN_SECRET_VALUE_LENGTH &&
+    node.value !== MASK_SENTINEL
+  ) {
+    ctx.secretValues.add(node.value);
+  }
+}
+
+/** A site (sensitive-key value, or a provider's `url`) that must be masked
+ *  regardless of its node kind. An Alias here is resolved first — the
+ *  ANCHOR's node is what actually holds the plaintext, so that is what gets
+ *  its range masked, while `path` (this site's own location) is what gets
+ *  recorded in maskedPaths. */
+function maskSensitiveSite(node: unknown, path: string, ctx: WalkCtx): void {
+  if (node === null || node === undefined) return;
+  if (isAlias(node)) {
+    const target = node.resolve(ctx.doc);
+    if (target !== undefined) {
+      maskWholeRange(target, ctx);
+    }
+    ctx.paths.push(path);
+    return;
+  }
+  maskWholeRange(node, ctx);
+  ctx.paths.push(path);
+}
+
+/** Pass 1: generic key-based walk. Decides masking at the PARENT (Map) level
+ *  — a sensitive-keyed child is masked wholesale via maskSensitiveSite and
+ *  never recursed into further; everything else recurses normally. Bare
+ *  Scalars and Aliases reached without a sensitive-key decision are no-ops
+ *  here (a Scalar has nothing to decide on its own; an Alias is handled in
+ *  pass 3, once the masked set is final). */
+function walkKeys(node: unknown, path: string, ctx: WalkCtx): void {
+  if (node === null || node === undefined) return;
+
+  if (isMap(node)) {
+    for (const pair of node.items) {
+      const key = keyString(pair.key);
       const childPath = path ? `${path}.${key}` : key;
-      const value = (node as Record<string, unknown>)[key];
       if (SENSITIVE_KEYS.has(key.toLowerCase())) {
-        if (typeof value === 'string' && value.length >= MIN_SECRET_VALUE_LENGTH && value !== MASK_SENTINEL) {
-          secretValues.add(value);
-        }
-        (node as Record<string, unknown>)[key] = MASK_SENTINEL;
-        maskedPaths.push(childPath);
+        maskSensitiveSite(pair.value, childPath, ctx);
       } else {
-        (node as Record<string, unknown>)[key] = maskByKey(value, childPath, maskedPaths, secretValues);
+        walkKeys(pair.value, childPath, ctx);
       }
     }
-    return node;
+    return;
   }
 
-  return node;
+  if (isSeq(node)) {
+    node.items.forEach((item, i) => walkKeys(item, `${path}[${i}]`, ctx));
+    return;
+  }
+
+  // Scalar / Alias — nothing to decide at this level.
+}
+
+/** Resolves an Alias to its target node; passes any other node through
+ *  unchanged. Used by the provider-url pass so an aliased url is still
+ *  recognized as string-valued (and thus maskable) without hand-rolling a
+ *  second alias branch there. */
+function resolveIfAlias(node: unknown, doc: Document): unknown {
+  return isAlias(node) ? node.resolve(doc) : node;
+}
+
+/** Structural provider-url pass: masks the actual TOP-LEVEL
+ *  `proxy-providers`/`rule-providers` maps' `<name>.url` entries — real CST
+ *  traversal of `root`'s own items, so it can never reach into a same-named
+ *  map nested elsewhere in the document (see PROVIDERS_KEYS's comment).
+ *  Narrower than the generic sensitive-key handling: only a url whose
+ *  (alias-resolved) value is a plain string is masked, matching the
+ *  pre-rewrite behavior exactly. */
+function maskProviderUrls(root: unknown, ctx: WalkCtx): void {
+  if (!isMap(root)) return;
+  for (const providersKey of PROVIDERS_KEYS) {
+    const providersPair = root.items.find((p) => isScalar(p.key) && keyString(p.key) === providersKey);
+    const providersMap = providersPair?.value;
+    if (!isMap(providersMap)) continue;
+    for (const providerPair of providersMap.items) {
+      const providerName = keyString(providerPair.key);
+      const entryNode = providerPair.value;
+      if (!isMap(entryNode)) continue;
+      const urlPair = entryNode.items.find((p) => isScalar(p.key) && keyString(p.key) === 'url');
+      if (!urlPair) continue;
+      const urlNode = urlPair.value;
+      const resolved = resolveIfAlias(urlNode, ctx.doc);
+      if (!isScalar(resolved) || typeof resolved.value !== 'string' || resolved.value === MASK_SENTINEL) continue;
+      maskSensitiveSite(urlNode, `${providersKey}.${providerName}.url`, ctx);
+    }
+  }
+}
+
+/** Shared generic walker for passes 2 and 3: stops (does not recurse
+ *  further) the instant it reaches a node already in `maskedNodes` — both
+ *  because nothing further needs finding beneath a wholesale-masked
+ *  subtree, and to guarantee no range gets collected nested inside another
+ *  (see the module docstring's containment note). */
+function walkGeneric(
+  node: unknown,
+  path: string,
+  ctx: WalkCtx,
+  onScalar: (node: import('yaml').Scalar, path: string) => void,
+  onAlias: (node: import('yaml').Alias, path: string) => void,
+): void {
+  if (node === null || node === undefined) return;
+  if (typeof node === 'object' && ctx.maskedNodes.has(node)) return;
+
+  if (isAlias(node)) {
+    onAlias(node, path);
+    return;
+  }
+  if (isScalar(node)) {
+    onScalar(node, path);
+    return;
+  }
+  if (isMap(node)) {
+    for (const pair of node.items) {
+      const key = keyString(pair.key);
+      const childPath = path ? `${path}.${key}` : key;
+      walkGeneric(pair.value, childPath, ctx, onScalar, onAlias);
+    }
+    return;
+  }
+  if (isSeq(node)) {
+    node.items.forEach((item, i) => walkGeneric(item, `${path}[${i}]`, ctx, onScalar, onAlias));
+    return;
+  }
+}
+
+/** Pass 2: value-equality propagation — see the module docstring. */
+function maskByValueEquality(root: unknown, ctx: WalkCtx): void {
+  walkGeneric(
+    root,
+    '',
+    ctx,
+    (scalarNode, path) => {
+      if (typeof scalarNode.value === 'string' && ctx.secretValues.has(scalarNode.value)) {
+        maskWholeRange(scalarNode, ctx);
+        ctx.paths.push(path);
+      }
+    },
+    () => {
+      /* aliases are pass 3's concern */
+    },
+  );
+}
+
+/** Pass 3: alias awareness — see the module docstring. */
+function collectMaskedAliasPaths(root: unknown, ctx: WalkCtx): void {
+  walkGeneric(
+    root,
+    '',
+    ctx,
+    () => {
+      /* scalars already fully resolved by passes 1-2 */
+    },
+    (aliasNode, path) => {
+      const target = aliasNode.resolve(ctx.doc);
+      if (target !== undefined && ctx.maskedNodes.has(target)) {
+        ctx.paths.push(path);
+      }
+    },
+  );
 }
 
 /**
- * Pass 2: masks any site anywhere in the tree whose value exactly equals a
- * secret string collected by pass 1 — this is what catches a scalar alias
- * of a masked secret sitting under a non-sensitive key. Sites pass 1 already
- * masked hold MASK_SENTINEL, which is never a member of secretValues (see
- * the guard in maskByKey), so they're skipped here rather than re-added to
- * maskedPaths.
+ * Splices MASK_SENTINEL into `content` at every collected range,
+ * right-to-left so earlier offsets stay valid as later ranges are replaced
+ * first. Ranges that are a strict subset of another collected range are
+ * dropped first (defense in depth beyond the per-pass "don't recurse into
+ * an already-masked node" skip — see the module docstring) since splicing
+ * both would corrupt the outer replacement's already-substituted text.
+ *
+ * A block-style Map/Seq's range (unlike a plain scalar's) extends through
+ * its OWN trailing line break — verified empirically: masking `authentication:`
+ * wholesale when it is NOT the document's last key showed the sibling key
+ * that immediately follows getting glued onto the same line as the
+ * sentinel, because that trailing `\n` is simultaneously "the end of this
+ * node's content" and "the only separator before the next sibling". The fix
+ * generalizes to every range, not just collections: whenever the ORIGINAL
+ * text being replaced itself ended in a line break, that exact line break is
+ * preserved immediately after the sentinel. This is a no-op for the common
+ * plain-scalar case (a scalar's range never includes a trailing newline).
  */
-function maskByValue(node: unknown, path: string, maskedPaths: string[], secretValues: Set<string>): unknown {
-  if (Array.isArray(node)) {
-    for (let i = 0; i < node.length; i++) {
-      const item = node[i];
-      // A string element sitting directly in a sequence (e.g. `allow:\n  -
-      // *pw`) has no key of its own, so the object-branch's `typeof value
-      // === 'string' && secretValues.has(value)` check below never runs for
-      // it — recursing into a string is a no-op (falls through to the final
-      // `return node` with nothing matched). Without this check, a scalar
-      // alias landing directly in a sequence leaks the plaintext verbatim.
-      if (typeof item === 'string' && secretValues.has(item)) {
-        node[i] = MASK_SENTINEL;
-        maskedPaths.push(`${path}[${i}]`);
-      } else {
-        node[i] = maskByValue(item, `${path}[${i}]`, maskedPaths, secretValues);
-      }
-    }
-    return node;
+function spliceRanges(content: string, ranges: Array<[number, number]>): string {
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  const kept: Array<[number, number]> = [];
+  for (const r of sorted) {
+    const containedInKept = kept.some((k) => r[0] >= k[0] && r[1] <= k[1]);
+    if (!containedInKept) kept.push(r);
   }
 
-  if (node !== null && typeof node === 'object') {
-    for (const key of Object.keys(node as Record<string, unknown>)) {
-      const childPath = path ? `${path}.${key}` : key;
-      const value = (node as Record<string, unknown>)[key];
-      if (typeof value === 'string' && secretValues.has(value)) {
-        (node as Record<string, unknown>)[key] = MASK_SENTINEL;
-        maskedPaths.push(childPath);
-      } else {
-        (node as Record<string, unknown>)[key] = maskByValue(value, childPath, maskedPaths, secretValues);
-      }
-    }
-    return node;
+  const rightToLeft = [...kept].sort((a, b) => b[0] - a[0]);
+  let result = content;
+  for (const [start, end] of rightToLeft) {
+    const trailingNewline = result.slice(start, end).match(/(\r\n|\n)$/)?.[0] ?? '';
+    result = result.slice(0, start) + MASK_SENTINEL + trailingNewline + result.slice(end);
   }
-
-  return node;
+  return result;
 }
 
 export function maskYamlSecrets(content: string): MaskResult {
-  let parsed: unknown;
-  try {
-    parsed = load(content);
-  } catch (err) {
-    if (err instanceof YAMLException && err.reason === EMPTY_DOCUMENT_REASON) {
-      return { maskedContent: '', maskedPaths: [], parseError: false };
-    }
+  const doc = parseDocument(content);
+  if (doc.errors.length > 0) {
     return { maskedContent: '', maskedPaths: [], parseError: true };
   }
 
-  // Defense in depth: parsed can also come back undefined directly (rather
-  // than load() throwing) on some inputs/schema configurations — same "valid
-  // empty document" verdict applies. dump(undefined) is not exercised as a
-  // substitute for "" here since its behavior isn't part of this module's
-  // contract.
-  if (parsed === undefined) {
-    return { maskedContent: '', maskedPaths: [], parseError: false };
+  // A valid empty or comment-only document has no Scalar nodes to mask at
+  // all — nothing unsafe about returning it verbatim, and doing so keeps
+  // the user's comments instead of silently discarding them (the
+  // pre-rewrite js-yaml behavior, which had nothing left to dump).
+  if (doc.contents === null || doc.contents === undefined) {
+    return { maskedContent: content, maskedPaths: [], parseError: false };
   }
 
-  // dump() lives in this same try/catch (not just load()) so an unexpected
-  // dumper failure degrades to parseError instead of surfacing as a 500 —
-  // fail-closed consistency with the parse-failure path above.
   try {
-    const maskedPaths: string[] = [];
-    const secretValues = new Set<string>();
+    const ctx: WalkCtx = {
+      doc,
+      maskedNodes: new Set<object>(),
+      ranges: [],
+      paths: [],
+      secretValues: new Set<string>(),
+    };
 
-    maskByKey(parsed, '', maskedPaths, secretValues);
+    walkKeys(doc.contents, '', ctx);
+    maskProviderUrls(doc.contents, ctx);
 
-    // Structural pass: proxy-providers/rule-providers subscription URLs.
-    // Deliberately scoped to the actual TOP-LEVEL value only (never a
-    // same-named map nested elsewhere) — see maskProviderMapUrls.
-    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const root = parsed as Record<string, unknown>;
-      for (const providersKey of PROVIDERS_KEYS) {
-        maskProviderMapUrls(root[providersKey], providersKey, maskedPaths, secretValues);
-      }
+    if (ctx.secretValues.size > 0) {
+      maskByValueEquality(doc.contents, ctx);
     }
 
-    if (secretValues.size > 0) {
-      maskByValue(parsed, '', maskedPaths, secretValues);
+    collectMaskedAliasPaths(doc.contents, ctx);
+
+    const maskedContent = spliceRanges(content, ctx.ranges);
+
+    // Fail-closed backstop: confirm the spliced text is still valid YAML.
+    // Mirrors the pre-rewrite module's try/catch-around-dump philosophy —
+    // any splice-arithmetic bug class degrades to parseError instead of
+    // shipping content that might not even parse (or, worse, parses into
+    // something unintended).
+    //
+    // `doc.errors` alone is NOT sufficient here — verified empirically: a
+    // dangling alias (its anchor's own node got wholesale-masked away as
+    // part of an ENCLOSING map/seq being replaced, e.g. an anchor nested
+    // inside a sensitive-keyed value that a DIFFERENT sensitive key also
+    // aliases wholesale — a pathological, adversarial-authoring edge case,
+    // not a realistic mihomo config shape) parses with ZERO `.errors` and
+    // only throws once something actually RESOLVES the alias, e.g.
+    // `.toJS()`. Calling it here (result discarded — only its throw/no-throw
+    // matters) closes that gap; the throw is caught by this function's own
+    // outer try/catch below, degrading to the same parseError: true.
+    const verifyDoc = parseDocument(maskedContent);
+    if (verifyDoc.errors.length > 0) {
+      return { maskedContent: '', maskedPaths: [], parseError: true };
     }
+    verifyDoc.toJS();
 
-    // lineWidth: -1 disables line folding — a folded long value would
-    // corrupt M2b's baseHash-matched round-trip substitution.
-    const maskedContent = dump(parsed, { lineWidth: -1 });
-
-    return { maskedContent, maskedPaths, parseError: false };
+    // De-duplicated: a sensitive key whose OWN value is an Alias (e.g.
+    // `secret: *x` where `secret` is itself sensitive) has its path pushed
+    // once by pass 1 (maskSensitiveSite's alias branch) AND once more by
+    // pass 3's independent, unconditional walk over every Alias node in the
+    // tree (which has no way to know pass 1 already decided this exact
+    // alias site) — harmless (both pushes agree), but a plain Set dedup
+    // keeps maskedPaths free of exact-duplicate entries regardless of which
+    // pass(es) contributed a given path.
+    return { maskedContent, maskedPaths: Array.from(new Set(ctx.paths)), parseError: false };
   } catch {
     return { maskedContent: '', maskedPaths: [], parseError: true };
   }

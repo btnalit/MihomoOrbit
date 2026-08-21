@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { load } from 'js-yaml';
 import { MASK_SENTINEL, maskYamlSecrets } from './yaml-mask.js';
 
 describe('maskYamlSecrets', () => {
@@ -127,13 +128,18 @@ describe('maskYamlSecrets', () => {
     expect(r.maskedPaths).toEqual(expect.arrayContaining(['password', 'description']));
   });
 
-  it('does not fold long non-sensitive values across lines (lineWidth: -1)', () => {
-    // js-yaml's dumper folds plain scalars into a `>-` block at 80 columns
-    // by default, breaking at word boundaries — a folded value here would
-    // corrupt M2b's baseHash-matched round-trip substitution. The value
-    // must contain spaces: a single unbroken run of characters has no fold
-    // point and passes even with folding enabled, silently defeating this
-    // regression check. This test fails if `lineWidth: -1` is ever dropped.
+  it('does not fold long non-sensitive values across lines', () => {
+    // Pre-C1-rewrite, this pinned js-yaml's dumper `lineWidth: -1` option —
+    // its dumper otherwise folds plain scalars into a `>-` block at 80
+    // columns, breaking at word boundaries, which would have corrupted
+    // M2b's baseHash-matched round-trip substitution. Under the C1 CST
+    // rewrite there is no dump step at all — non-masked text is the
+    // ORIGINAL source, untouched — so folding is structurally impossible
+    // here now. Kept as a regression guard regardless: a long, space-
+    // containing value must survive completely unmodified. The value must
+    // contain spaces: a single unbroken run of characters has no fold
+    // point and would pass even with folding enabled, silently defeating
+    // this check.
     const longValue = Array.from({ length: 40 }, (_, i) => `word${i}`).join(' ');
     const r = maskYamlSecrets(`proxies:\n  - name: a\n    path: ${JSON.stringify(longValue)}\n`);
     expect(r.parseError).toBe(false);
@@ -309,9 +315,9 @@ describe('maskYamlSecrets', () => {
     expect(r).toEqual({ maskedContent: '', maskedPaths: [], parseError: false });
   });
 
-  it('a comment-only document is a valid empty result, not a parse error (M1)', () => {
+  it('a comment-only document is a valid empty result, not a parse error, and preserves the comment (M2b C1 rewrite: no dump, no data to lose)', () => {
     const r = maskYamlSecrets('# comment only\n');
-    expect(r).toEqual({ maskedContent: '', maskedPaths: [], parseError: false });
+    expect(r).toEqual({ maskedContent: '# comment only\n', maskedPaths: [], parseError: false });
   });
 
   it('a masked aliased mapping (shared object reference) must not leak through the alias', () => {
@@ -330,5 +336,138 @@ describe('maskYamlSecrets', () => {
     ].join('\n'));
     expect(r.parseError).toBe(false);
     expect(r.maskedContent).not.toMatch(/shared-object-secret/);
+  });
+
+  // C1 (M2b final review, CRITICAL, root fix): maskedContent is now the
+  // ORIGINAL text with only sentinel-range splices, not a js-yaml dump —
+  // comments and anchors must survive verbatim, with secrets replaced
+  // in-place at their exact source location.
+  it('C1: preserves comments and anchors verbatim, replacing secrets in place (root-fix repro)', () => {
+    const input = [
+      '# top-level comment — device of record',
+      'port: 7890 # inline comment on port',
+      'proxies:',
+      '  - name: a # comment on proxy a',
+      '    password: &pw real-secret-value # trailing comment on password',
+      '  - name: b',
+      '    notes: *pw',
+      '# bottom comment',
+      '',
+    ].join('\n');
+
+    const r = maskYamlSecrets(input);
+    expect(r.parseError).toBe(false);
+    // Comments survive byte-for-byte, exactly as authored.
+    expect(r.maskedContent).toContain('# top-level comment — device of record');
+    expect(r.maskedContent).toContain('# inline comment on port');
+    expect(r.maskedContent).toContain('# comment on proxy a');
+    expect(r.maskedContent).toContain('# trailing comment on password');
+    expect(r.maskedContent).toContain('# bottom comment');
+    // The anchor sigil survives (only the VALUE range is spliced).
+    expect(r.maskedContent).toContain('password: &pw');
+    expect(r.maskedContent).toContain('notes: *pw');
+    // The secret itself is gone everywhere, including from the alias's
+    // resolved value once the masked text is re-parsed.
+    expect(r.maskedContent).not.toMatch(/real-secret-value/);
+    expect(r.maskedPaths).toEqual(expect.arrayContaining(['proxies[0].password', 'proxies[1].notes']));
+    const parsedMasked = load(r.maskedContent) as { proxies: Array<{ password?: string; notes?: string }> };
+    expect(parsedMasked.proxies[0].password).toBe(MASK_SENTINEL);
+    expect(parsedMasked.proxies[1].notes).toBe(MASK_SENTINEL);
+  });
+
+  it('C1: an alias site referencing a masked anchor is left textually untouched but resolves to the sentinel, and its path is recorded', () => {
+    const input = ['password: &pw longsecretvalue123', 'notes: *pw'].join('\n') + '\n';
+    const r = maskYamlSecrets(input);
+    expect(r.parseError).toBe(false);
+    // The alias site's own text (`*pw`) is never spliced — only the
+    // anchor's Scalar node is a substitution target.
+    expect(r.maskedContent).toContain('notes: *pw');
+    expect(r.maskedContent).not.toMatch(/longsecretvalue123/);
+    expect(r.maskedPaths).toEqual(expect.arrayContaining(['password', 'notes']));
+    const parsed = load(r.maskedContent) as { password: string; notes: string };
+    expect(parsed.password).toBe(MASK_SENTINEL);
+    expect(parsed.notes).toBe(MASK_SENTINEL);
+  });
+
+  it('C1: a sensitive key whose value is itself an alias masks the ANCHOR site (wherever it is), not just the alias site', () => {
+    // `foo` is not a sensitive key, but `password` (sensitive) aliases it —
+    // the anchor's real text location (under `foo`) must still be masked,
+    // or the plaintext would leak in the clear right next to a masked
+    // `password: *x`.
+    const input = ['foo: &x plaintext-leak-value', 'password: *x'].join('\n') + '\n';
+    const r = maskYamlSecrets(input);
+    expect(r.parseError).toBe(false);
+    expect(r.maskedContent).not.toMatch(/plaintext-leak-value/);
+    expect(r.maskedContent).toContain('password: *x');
+    expect(r.maskedPaths).toContain('password');
+  });
+
+  it('C1: containment de-dup (advisor-flagged repro) — an anchor orphaned by an ENCLOSING wholesale mask fails closed rather than shipping a dangling alias', () => {
+    // `secret` (sensitive) masks the WHOLE map wholesale (its value is a
+    // map, not a scalar) — that map's range covers `inner`'s full content
+    // BYTE SPAN, which includes the `&x` anchor marker as ordinary text
+    // (even though the nested Scalar node's own `.range` excludes it).
+    // `token` is ALSO sensitive and its value is an Alias resolving to that
+    // same nested scalar — structurally CONTAINED inside `secret`'s
+    // wholesale-masked range. Two things are pinned here:
+    // (1) containment de-dup — without dropping the contained (inner)
+    //     range before splicing, the right-to-left splice corrupts (the
+    //     inner range's offsets go stale once the outer range spanning it
+    //     is replaced);
+    // (2) once the outer map is replaced, the `&x` anchor it contained is
+    //     GONE — `token: *x` is now a dangling alias with no matching
+    //     anchor anywhere in the document. This is a pathological,
+    //     adversarial-authoring shape (an anchor nested inside one
+    //     sensitive value, aliased from a DIFFERENT, unrelated sensitive
+    //     key elsewhere), not a realistic mihomo config — the correct,
+    //     safe outcome is FAIL CLOSED (parseError: true, no content
+    //     shown), never a corrupted-but-parseable document.
+    const input = ['secret:', '  inner: &x topvalue123', 'token: *x'].join('\n') + '\n';
+    const r = maskYamlSecrets(input);
+    expect(r).toEqual({ maskedContent: '', maskedPaths: [], parseError: true });
+  });
+
+  it('C1: a wholesale-masked map is NOT the last key — the following sibling key stays on its own line (trailing-newline repro)', () => {
+    // `secret`'s value-map's CST range extends through its own trailing
+    // `\n` (verified empirically against the installed `yaml` package) —
+    // that newline is simultaneously "the end of this node" and "the only
+    // separator before `after-key`". Blindly replacing the whole range with
+    // a bare sentinel (no newline of its own) glues `after-key:` onto the
+    // sentinel's line, corrupting the document structurally, not just
+    // cosmetically.
+    const input = ['secret:', '  inner: topsecretvalue123', 'after-key: still-here'].join('\n') + '\n';
+    const r = maskYamlSecrets(input);
+    expect(r.parseError).toBe(false);
+    expect(r.maskedContent).not.toMatch(/topsecretvalue123/);
+    const lines = r.maskedContent.split('\n');
+    expect(lines).toContain('after-key: still-here');
+    const parsed = load(r.maskedContent) as { secret: string; 'after-key': string };
+    expect(parsed.secret).toBe(MASK_SENTINEL);
+    expect(parsed['after-key']).toBe('still-here');
+  });
+
+  it('C1: does not collect a range nested inside another collected range, reverse direction (outer decided after inner)', () => {
+    // Mirror of the first containment test with document order reversed:
+    // `password` (sensitive) is masked first, as a plain SCALAR nested
+    // inside the (at that point unmasked-as-a-whole) `inner` map. Then
+    // `secret` (sensitive, appearing later) is an Alias resolving to that
+    // SAME `inner` map — now requesting the WHOLE map (which already
+    // contains the just-masked `password` scalar) be masked wholesale too.
+    // Unlike the previous test, the anchor (`&b`) sits on the MAP itself
+    // (`inner: &b`) rather than on a scalar nested inside it — and a
+    // node's own anchor marker is excluded from its own range (verified
+    // empirically). So wholesale-masking `inner` via `secret`'s alias
+    // replaces only the map's CONTENT (`password: nestedsecretvalue`),
+    // leaving `&b` intact — no dangling alias, unlike the previous test.
+    const input = ['inner: &b', '  password: nestedsecretvalue', 'secret: *b'].join('\n') + '\n';
+    const r = maskYamlSecrets(input);
+    expect(r.parseError).toBe(false);
+    expect(r.maskedContent).not.toMatch(/nestedsecretvalue/);
+    const parsed = load(r.maskedContent) as { inner: string; secret: string };
+    // `inner` collapsed into the wholesale sentinel (its map content was
+    // entirely replaced), and `secret: *b` resolves via the alias to that
+    // exact same (now-scalar) node — both must read back as the sentinel.
+    expect(parsed.inner).toBe(MASK_SENTINEL);
+    expect(parsed.secret).toBe(MASK_SENTINEL);
   });
 });

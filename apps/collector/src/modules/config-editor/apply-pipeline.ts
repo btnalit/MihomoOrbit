@@ -498,12 +498,24 @@ export function prepareApply(input: ApplyInput, baseVersionContent: string, late
   }
 
   // --- Verify extraction (from the FINAL resubstituted content) ---
+  // I2 fix (M2b final-review): `mode`/`log-level` are lowercased here so a
+  // case-difference-only edit (e.g. `mode: Rule` vs. mihomo's own
+  // lower-case `"rule"` in GET /configs) never causes the agent's
+  // post-apply health-gate verify comparison to spuriously mismatch and
+  // roll back an otherwise-successful apply. Mirrored on the agent side
+  // (configapply/apply.go's looseEqual, via strings.EqualFold) so BOTH ends
+  // of the comparison are case-insensitive for these enum-like string
+  // fields — lowercasing only here would still fail if mihomo's actual
+  // reported value happened to differ in case from this lowercased one.
+  // Scoped to these two keys only: `port`/`socks-port`/`mixed-port` are
+  // numeric and `allow-lan` is boolean, neither ever needs case handling.
+  const VERIFY_KEYS_CASE_INSENSITIVE = new Set<(typeof VERIFY_KEYS)[number]>(['mode', 'log-level']);
   const verify: Record<string, unknown> = {};
   for (const key of VERIFY_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(finalRecord, key)) continue;
     const value = finalRecord[key];
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      verify[key] = value;
+      verify[key] = typeof value === 'string' && VERIFY_KEYS_CASE_INSENSITIVE.has(key) ? value.toLowerCase() : value;
     }
   }
 

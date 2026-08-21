@@ -377,6 +377,7 @@
       "unsupportedGateway": "This gateway type doesn't support config editing",
       "noConfigReported": "No config has been reported for this backend yet",
       "versionNotFound": "That version could not be found",
+      "contentTooLarge": "This config is too large to apply",
       "applyFailed": "Failed to apply config",
       "rollbackFailed": "Failed to roll back config",
       "revealFailed": "Failed to reveal value"

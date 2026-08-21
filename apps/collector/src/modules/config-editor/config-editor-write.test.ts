@@ -166,7 +166,7 @@ describe('config editor controller: write endpoints (M2b)', () => {
       // module docstring): after this apply, the latest config_versions row
       // is the 'editor' one this test just created, and that row's hash
       // MUST be a valid baseHash for the next apply.
-      db.configCommands.resolve(firstCommandId, 'applied', '', new Date().toISOString());
+      db.configCommands.resolve(firstCommandId, id, 'applied', '', new Date().toISOString());
 
       const newBase = db.configVersions.getLatest(id)!;
       const again = await authed('POST', `/api/config-editor/${id}/apply`, {
@@ -174,6 +174,32 @@ describe('config editor controller: write endpoints (M2b)', () => {
         baseHash: newBase.hash,
       });
       expect(again.statusCode).toBe(202);
+    });
+
+    // Minor fix (M2b final review, Task 6 ruling): the plan's pipeline
+    // narrative and the write-side API's actual listing order disagreed on
+    // whether the in-flight check or content validation runs first —
+    // adjudicated in favor of the IMPLEMENTATION (in-flight first). Pins
+    // that ordering as a regression test: malformed YAML submitted WHILE a
+    // command is in-flight must still surface CONFIG_COMMAND_IN_FLIGHT, not
+    // YAML_INVALID — content is never even parsed until the in-flight gate
+    // passes.
+    it('in-flight check runs BEFORE content validation: malformed YAML while a command is in-flight -> 409 IN_FLIGHT, not 422 YAML_INVALID', async () => {
+      const id = mkAgentBackendWithBinding('a2b', 'agent-a2b');
+      ingestConfig(id, BASE_CONFIG);
+      const baseHash = sha256(BASE_CONFIG);
+      const first = await authed('POST', `/api/config-editor/${id}/apply`, {
+        content: BASE_CONFIG.replace('port: 7890', 'port: 7899'),
+        baseHash,
+      });
+      expect(first.statusCode).toBe(202);
+
+      const malformedWhileInFlight = await authed('POST', `/api/config-editor/${id}/apply`, {
+        content: 'not: [valid',
+        baseHash,
+      });
+      expect(malformedWhileInFlight.statusCode).toBe(409);
+      expect(malformedWhileInFlight.json()).toMatchObject({ code: 'CONFIG_COMMAND_IN_FLIGHT' });
     });
 
     it('YAML_INVALID for malformed submitted YAML', async () => {
@@ -262,6 +288,26 @@ describe('config editor controller: write endpoints (M2b)', () => {
       });
       expect(res.statusCode).toBe(401);
     });
+
+    it('422 CONTENT_TOO_LARGE when the resubstituted finalContent exceeds the collector-side size cap (I1)', async () => {
+      const id = mkAgentBackendWithBinding('a10', 'agent-a10');
+      ingestConfig(id, BASE_CONFIG);
+      // Padding comfortably past CONFIG_FILE_MAX_BYTES (256 KiB) via a
+      // single oversized non-sensitive field — content this large must
+      // never even reach a stored config_versions row or an enqueued
+      // command.
+      const oversizedPadding = 'a'.repeat(300 * 1024);
+      const submitted = BASE_CONFIG + `padding-field: ${oversizedPadding}\n`;
+      const res = await authed('POST', `/api/config-editor/${id}/apply`, {
+        content: submitted,
+        baseHash: sha256(BASE_CONFIG),
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json()).toMatchObject({ code: 'CONTENT_TOO_LARGE' });
+      // Nothing was stored and no command was enqueued.
+      expect(db.configVersions.listMeta(id)).toHaveLength(1);
+      expect(db.configCommands.getLatest(id)).toBeUndefined();
+    });
   });
 
   describe('POST /:backendId/rollback/:versionId', () => {
@@ -274,7 +320,7 @@ describe('config editor controller: write endpoints (M2b)', () => {
         baseHash: sha256(BASE_CONFIG),
       });
       expect(apply.statusCode).toBe(202);
-      db.configCommands.resolve(apply.json().commandId, 'applied', '', new Date().toISOString());
+      db.configCommands.resolve(apply.json().commandId, id, 'applied', '', new Date().toISOString());
 
       const res = await authed('POST', `/api/config-editor/${id}/rollback/${v1Id}`);
       expect(res.statusCode).toBe(202);
@@ -291,6 +337,18 @@ describe('config editor controller: write endpoints (M2b)', () => {
       ingestConfig(id, BASE_CONFIG);
       const res = await authed('POST', `/api/config-editor/${id}/rollback/999999`);
       expect(res.statusCode).toBe(404);
+    });
+
+    it('422 CONTENT_TOO_LARGE when the rollback target content exceeds the collector-side size cap (I1)', async () => {
+      const id = mkAgentBackendWithBinding('r3', 'agent-r3');
+      const oversizedTarget = BASE_CONFIG + `padding-field: ${'a'.repeat(300 * 1024)}\n`;
+      const oversizedVersionId = ingestConfig(id, oversizedTarget, '/etc/mihomo/config.yaml');
+      ingestConfig(id, BASE_CONFIG);
+
+      const res = await authed('POST', `/api/config-editor/${id}/rollback/${oversizedVersionId}`);
+      expect(res.statusCode).toBe(422);
+      expect(res.json()).toMatchObject({ code: 'CONTENT_TOO_LARGE' });
+      expect(db.configCommands.getLatest(id)).toBeUndefined();
     });
   });
 

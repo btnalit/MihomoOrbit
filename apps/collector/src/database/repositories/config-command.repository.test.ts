@@ -88,8 +88,8 @@ describe('ConfigCommandRepository state machine', () => {
       const commandId = `cmd_${result}`;
       repo.create({ commandId, backendId, versionId: 1, baseHash: 'h1', payload: '{}' });
 
-      const first = repo.resolve(commandId, result, 'reason-1', '2026-01-01T00:10:00.000Z');
-      expect(first).toBe(true);
+      const first = repo.resolve(commandId, backendId, result, 'reason-1', '2026-01-01T00:10:00.000Z');
+      expect(first).toMatchObject({ command_id: commandId, state: result, reason: 'reason-1', resolved_at: '2026-01-01T00:10:00.000Z' });
 
       const row = repo.getLatest(backendId);
       expect(row?.state).toBe(result);
@@ -97,8 +97,8 @@ describe('ConfigCommandRepository state machine', () => {
       expect(row?.resolved_at).toBe('2026-01-01T00:10:00.000Z');
 
       // Repeat receipt with a different outcome must not change anything.
-      const second = repo.resolve(commandId, 'failed', 'reason-2', '2026-01-01T00:20:00.000Z');
-      expect(second).toBe(false);
+      const second = repo.resolve(commandId, backendId, 'failed', 'reason-2', '2026-01-01T00:20:00.000Z');
+      expect(second).toBeNull();
 
       const rowAfter = repo.getLatest(backendId);
       expect(rowAfter?.state).toBe(result);
@@ -110,8 +110,21 @@ describe('ConfigCommandRepository state machine', () => {
     },
   );
 
-  it('resolve() on an unknown commandId returns false', () => {
-    expect(repo.resolve('does-not-exist', 'applied', '', '2026-01-01T00:00:00.000Z')).toBe(false);
+  it('resolve() on an unknown commandId returns null', () => {
+    expect(repo.resolve('does-not-exist', backendId, 'applied', '', '2026-01-01T00:00:00.000Z')).toBeNull();
+  });
+
+  it('resolve() scoped to the WRONG backendId returns null and leaves the command untouched (M2b final-review minor fix)', () => {
+    const backendB = insertBackend(db, 'other-backend-resolve-scope');
+    repo.create({ commandId: 'cmd_scope', backendId, versionId: 1, baseHash: 'h1', payload: '{}' });
+
+    // A receipt scoped to a DIFFERENT backend must never resolve another
+    // backend's command, even with the correct commandId.
+    expect(repo.resolve('cmd_scope', backendB, 'applied', '', '2026-01-01T00:00:00.000Z')).toBeNull();
+    expect(repo.getLatest(backendId)?.state).toBe('pending');
+
+    // The correctly-scoped receipt still works.
+    expect(repo.resolve('cmd_scope', backendId, 'applied', '', '2026-01-01T00:00:00.000Z')).toMatchObject({ state: 'applied' });
   });
 
   it('TTL-expired command is excluded from getInFlight but a late resolve() still lands', () => {
@@ -123,8 +136,8 @@ describe('ConfigCommandRepository state machine', () => {
 
     // Late receipt: state is still 'pending' in storage (expired is a
     // read-time UI concept only), so the resolve must succeed.
-    const resolved = repo.resolve('cmd_ttl', 'applied', 'late-receipt', new Date(nowMs).toISOString());
-    expect(resolved).toBe(true);
+    const resolved = repo.resolve('cmd_ttl', backendId, 'applied', 'late-receipt', new Date(nowMs).toISOString());
+    expect(resolved).not.toBeNull();
     expect(repo.getLatest(backendId)?.state).toBe('applied');
   });
 
@@ -156,7 +169,7 @@ describe('ConfigCommandRepository state machine', () => {
     expect(repo.getInFlight(backendId, Date.now())?.command_id).toBe('cmd_a');
     expect(repo.getInFlight(backendB, Date.now())?.command_id).toBe('cmd_b');
 
-    repo.resolve('cmd_a', 'applied', '', new Date().toISOString());
+    repo.resolve('cmd_a', backendId, 'applied', '', new Date().toISOString());
 
     // Resolving backend A's command must not affect backend B's in-flight command.
     expect(repo.getInFlight(backendId, Date.now())).toBeUndefined();
@@ -209,7 +222,7 @@ describe('ConfigCommandRepository state machine', () => {
     it('a terminal command is never expired regardless of age', () => {
       repo.create({ commandId: 'cmd_exp_term', backendId, versionId: 1, baseHash: 'h1', payload: '{}' });
       backdateCreatedAt(db, 'cmd_exp_term', '2020-01-01 00:00:00');
-      repo.resolve('cmd_exp_term', 'applied', '', new Date().toISOString());
+      repo.resolve('cmd_exp_term', backendId, 'applied', '', new Date().toISOString());
       const row = repo.getLatest(backendId)!;
       expect(repo.isExpired(row, Date.now())).toBe(false);
     });

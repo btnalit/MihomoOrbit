@@ -377,6 +377,7 @@
       "unsupportedGateway": "该网关类型不支持配置编辑",
       "noConfigReported": "尚未收到该后端上报的配置",
       "versionNotFound": "未找到该历史版本",
+      "contentTooLarge": "配置内容过大，无法应用",
       "applyFailed": "应用配置失败",
       "rollbackFailed": "回滚配置失败",
       "revealFailed": "显示明文失败"
