@@ -6,17 +6,22 @@ import { toast } from "sonner";
 import {
   apiErrorCode,
   fetchManagementGroups,
+  fetchProviders,
   fetchRuntimeConfig,
   killConnection,
   patchRuntimeConfig,
+  refreshProvider,
   selectGroupProxy,
   testGroupDelay,
   type ManagementGroupsResponse,
+  type ManagementProvidersResponse,
   type MihomoRuntimeConfig,
+  type ProviderKind,
 } from "@/lib/api";
 
 const MANAGEMENT_GROUPS_KEY = "managementGroups";
 const RUNTIME_CONFIG_KEY = "managementRuntimeConfig";
+const MANAGEMENT_PROVIDERS_KEY = "managementProviders";
 
 export function managementGroupsQueryKey(backendId: number | undefined) {
   return [MANAGEMENT_GROUPS_KEY, backendId] as const;
@@ -24,6 +29,10 @@ export function managementGroupsQueryKey(backendId: number | undefined) {
 
 export function runtimeConfigQueryKey(backendId: number | undefined) {
   return [RUNTIME_CONFIG_KEY, backendId] as const;
+}
+
+export function managementProvidersQueryKey(backendId: number | undefined) {
+  return [MANAGEMENT_PROVIDERS_KEY, backendId] as const;
 }
 
 /** Proxy groups + member proxies. Polled at a 5s floor — live updates for
@@ -121,6 +130,37 @@ export function usePatchRuntimeConfig(backendId: number | undefined) {
     },
     onError: (error: Error) => {
       toast.error(error?.message || t("patchConfigFailed"));
+    },
+  });
+}
+
+/** Rule/proxy providers list (M1.5). Same 5s-floor polling convention as
+ *  `useManagementGroups` — this page has no dedicated topic, REST only. */
+export function useProviders(backendId: number | undefined) {
+  return useQuery<ManagementProvidersResponse>({
+    queryKey: managementProvidersQueryKey(backendId),
+    queryFn: () => fetchProviders(backendId as number),
+    enabled: backendId !== undefined,
+    staleTime: 5_000,
+  });
+}
+
+export function useRefreshProvider(backendId: number | undefined) {
+  const t = useTranslations("management.errors");
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ kind, name }: { kind: ProviderKind; name: string }) =>
+      refreshProvider(backendId as number, kind, name),
+    retry: false,
+    onSuccess: () => {
+      // See useSelectProxy's onSuccess above: keeps `isPending` true through
+      // the actual refetch, not just the invalidation call — the row's
+      // spinner should stay lit until the refreshed `updatedAt` has landed.
+      return queryClient.invalidateQueries({ queryKey: managementProvidersQueryKey(backendId) });
+    },
+    onError: (error: Error) => {
+      toast.error(error?.message || t("refreshProviderFailed"));
     },
   });
 }

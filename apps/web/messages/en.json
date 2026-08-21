@@ -18,6 +18,7 @@
     "connections": "Connections",
     "logs": "Logs",
     "runtime": "Runtime Settings",
+    "providers": "Providers",
     "config-editor": "Config Editor"
   },
   "header": {
@@ -461,7 +462,8 @@
       "selectProxyFailed": "Failed to switch proxy",
       "delayTestFailed": "Delay test failed",
       "killConnectionFailed": "Failed to close connection",
-      "patchConfigFailed": "Failed to update runtime config"
+      "patchConfigFailed": "Failed to update runtime config",
+      "refreshProviderFailed": "Failed to refresh provider"
     },
     "groups": {
       "title": "Proxy Groups",
@@ -477,7 +479,9 @@
       "offlineBanner": "Can't reach this backend right now — live data is unavailable.",
       "retry": "Retry",
       "loadError": "Failed to load proxy groups",
-      "empty": "No proxy groups"
+      "empty": "No proxy groups",
+      "memberLocked": "This group picks its member automatically — manual switching isn't supported",
+      "showHidden": "Show hidden groups"
     },
     "connections": {
       "title": "Live Connections",
@@ -555,6 +559,18 @@
       "offlineBanner": "Can't reach this backend right now — live data is unavailable.",
       "retry": "Retry",
       "loadError": "Failed to load runtime config"
+    },
+    "providers": {
+      "title": "Providers",
+      "ruleProviders": "Rule Providers",
+      "proxyProviders": "Proxy Providers",
+      "ruleDetail": "{behavior} · {count} rules",
+      "proxyDetail": "{count} nodes",
+      "refresh": "Refresh",
+      "empty": "No providers",
+      "offlineBanner": "Can't reach this backend right now — live data is unavailable.",
+      "retry": "Retry",
+      "loadError": "Failed to load providers"
     }
   },
   "map": {

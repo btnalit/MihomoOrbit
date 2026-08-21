@@ -722,6 +722,11 @@ export interface MihomoProxy {
   smux?: boolean;
   id?: string;
   extra?: Record<string, unknown>;
+  /** M1.5 groups-page polish item ②: config-declared `hidden: true` groups
+   *  are filtered out of the grid by default. */
+  hidden?: boolean;
+  /** M1.5 groups-page polish item ③: group icon URL, rendered at 16px when present. */
+  icon?: string;
   [key: string]: unknown;
 }
 
@@ -811,6 +816,44 @@ export function patchRuntimeConfig(backendId: number, patch: Partial<MihomoRunti
     `${API_BASE}/management/${backendId}/configs`,
     "PATCH",
     patch,
+  );
+}
+
+// ── Providers (M1.5) ──────────────────────────────────────────────────
+// Aggregate view over Mihomo's `GET /providers/rules` + `GET
+// /providers/proxies`, collector-merged and Compatible-filtered — see
+// management.service.ts's fetchProviders.
+
+export type ProviderKind = "rule" | "proxy";
+
+export interface RuleProviderInfo {
+  name: string;
+  behavior: string;
+  ruleCount: number;
+  updatedAt: string;
+  vehicleType: string;
+}
+
+export interface ProxyProviderInfo {
+  name: string;
+  proxyCount: number;
+  updatedAt: string;
+  vehicleType: string;
+}
+
+export interface ManagementProvidersResponse {
+  ruleProviders: RuleProviderInfo[];
+  proxyProviders: ProxyProviderInfo[];
+}
+
+export function fetchProviders(backendId: number) {
+  return fetchJson<ManagementProvidersResponse>(`${API_BASE}/management/${backendId}/providers`);
+}
+
+export function refreshProvider(backendId: number, kind: ProviderKind, name: string) {
+  return fetchJson<{ success: true }>(
+    `${API_BASE}/management/${backendId}/providers/${kind}/${encodeURIComponent(name)}/refresh`,
+    "POST",
   );
 }
 

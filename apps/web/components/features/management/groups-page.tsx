@@ -10,6 +10,13 @@
  * containing every proxy) and, like every other card, starts collapsed —
  * satisfying the brief's "render it last OR collapsed by default" with one
  * mechanism instead of a GLOBAL-specific special case.
+ *
+ * M1.5 polish item ②: `hidden: true` groups (config-declared, e.g. helper
+ * selectors a user doesn't want cluttering the dashboard) are filtered out
+ * by default; `showHidden` toggles them back in. Page-local `useState`
+ * only — no persistence (no localStorage per the plan's red lines), so it
+ * resets on every reload/backend switch same as the rest of this page's
+ * local state.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -18,6 +25,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Network, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { apiErrorCode, isUnreachableError, type ManagementGroupsResponse } from "@/lib/api";
 import {
@@ -66,6 +74,8 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
   const groupDelayTest = useGroupDelayTest(backendId);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Polish item ②: filter ON by default (hidden groups start hidden).
+  const [showHidden, setShowHidden] = useState(false);
   const [testingGroups, setTestingGroups] = useState<Set<string>>(new Set());
   const [overrideDelays, setOverrideDelays] = useState<Map<string, DelayValue>>(new Map());
   const [topicOffline, setTopicOffline] = useState(false);
@@ -361,12 +371,26 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
     return 0;
   });
 
+  // Polish item ②: hidden-group filter, applied after the contract-order
+  // sort above so it never disturbs GLOBAL's placement — just removes
+  // entries from the already-ordered list. Toggle is always rendered
+  // (not conditioned on whether any group is currently hidden) — its
+  // absence would itself look like a missing control on backends the user
+  // hasn't yet configured any hidden groups on.
+  const visibleGroups = showHidden ? sortedGroups : sortedGroups.filter((g) => !g.hidden);
+
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold flex items-center gap-2">
-        <Network className="w-5 h-5" />
-        {t("title")}
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold flex items-center gap-2">
+          <Network className="w-5 h-5" />
+          {t("title")}
+        </h2>
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Switch checked={showHidden} onCheckedChange={setShowHidden} aria-label={t("showHidden")} />
+          {t("showHidden")}
+        </label>
+      </div>
 
       {showOfflineBanner && (
         <OfflineBanner
@@ -376,7 +400,7 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
         />
       )}
 
-      {sortedGroups.length === 0 ? (
+      {visibleGroups.length === 0 ? (
         <Card>
           <CardContent className="p-12 text-center text-muted-foreground">
             {t("empty")}
@@ -384,7 +408,7 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
         </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {sortedGroups.map((group) => (
+          {visibleGroups.map((group) => (
             <GroupCard
               key={group.name}
               group={group}

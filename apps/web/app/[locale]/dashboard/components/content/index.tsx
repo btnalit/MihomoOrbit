@@ -15,7 +15,7 @@ import { InteractiveRuleStats } from "@/components/features/rules";
 import { HealthContent } from "@/components/features/health";
 import { WorldTrafficMap, CountryTrafficList } from "@/components/features/countries";
 import { DomainsTable, IPsTable } from "@/components/features/stats/table";
-import { ConnectionsPage, GroupsPage, LogsPage, ManagementGate, RuntimePage } from "@/components/features/management";
+import { ConnectionsPage, GroupsPage, LogsPage, ManagementGate, ProvidersPage, RuntimePage } from "@/components/features/management";
 import { ConfigEditGate, ConfigEditorPage } from "@/components/features/config-editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -436,6 +436,16 @@ export function Content({
                 in-flight per-control PATCH state must not survive a switch
                 to a different backend. */}
             <RuntimePage key={activeBackendId} backendId={activeBackendId} />
+          </ManagementGate>
+        );
+      case "providers":
+        return (
+          <ManagementGate backend={activeBackend} onBackendChange={onBackendChange}>
+            {/* Same remount-on-backend-switch rationale as groups/connections/
+                logs/runtime above: ProvidersPage's per-row refresh-pending
+                state is per-backend and must not survive a switch to a
+                different backend. */}
+            <ProvidersPage key={activeBackendId} backendId={activeBackendId} />
           </ManagementGate>
         );
       case "config-editor":

@@ -35,6 +35,46 @@ export type StartGroupDelayTestResult =
   | { accepted: true; group: string; total: number }
   | { accepted: false; code: 'DELAY_TEST_RUNNING' };
 
+export type ProviderKind = 'rule' | 'proxy';
+
+export interface RuleProviderInfo {
+  name: string;
+  behavior: string;
+  ruleCount: number;
+  updatedAt: string;
+  vehicleType: string;
+}
+
+export interface ProxyProviderInfo {
+  name: string;
+  proxyCount: number;
+  updatedAt: string;
+  vehicleType: string;
+}
+
+export interface ProvidersResult {
+  ruleProviders: RuleProviderInfo[];
+  proxyProviders: ProxyProviderInfo[];
+}
+
+// Raw upstream shapes (Mihomo `GET /providers/{rules,proxies}`) — only the
+// fields this service reads are named; everything else on the upstream
+// object (format, type, testUrl, subscriptionInfo, ...) is ignored.
+interface RawRuleProvider {
+  name: string;
+  behavior: string;
+  ruleCount: number;
+  updatedAt: string;
+  vehicleType: string;
+}
+
+interface RawProxyProvider {
+  name: string;
+  proxies?: unknown[];
+  updatedAt: string;
+  vehicleType: string;
+}
+
 const DEFAULT_DELAY_TEST_URL = 'https://www.gstatic.com/generate_204';
 const DEFAULT_DELAY_TEST_TIMEOUT_MS = 5000;
 // Belt-and-suspenders clamp mirroring management.controller.ts's
@@ -53,6 +93,11 @@ const PER_BACKEND_DELAY_CONCURRENCY = 5;
 // (matches upstreamFetch's own default parameter) — named here so the
 // expectBody:false call sites below don't repeat the bare literal.
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 5000;
+// A provider refresh PUT can trigger a synchronous re-download of the
+// ruleset/subscription from its vehicle URL upstream — well beyond what a
+// plain proxy/config PUT needs. The default 5000ms would predictably 504 a
+// real provider refresh (M1.5 acceptance: "刷新一个 provider 上游 updatedAt 变化").
+const PROVIDER_REFRESH_TIMEOUT_MS = 20_000;
 
 function clampDelayTimeout(timeout: number | undefined): number {
   if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
@@ -219,6 +264,54 @@ export class ManagementService {
         body: JSON.stringify(patch),
       },
       DEFAULT_UPSTREAM_TIMEOUT_MS,
+      { expectBody: false },
+    );
+  }
+
+  /** Merges Mihomo's `GET /providers/rules` and `GET /providers/proxies`
+   *  into one aggregate view for the providers management page (M1.5).
+   *  Sequential, not `Promise.all` — if one call rejected while the other's
+   *  response was still in flight, the survivor's body would never be read
+   *  or cancelled (see `cancelResponseBody`'s rationale above). `vehicleType
+   *  === 'Compatible'` entries (inline group noise, not real
+   *  file/URL-backed providers) are filtered out of both lists. */
+  async fetchProviders(backendId: number): Promise<ProvidersResult> {
+    const r = this.requireResolved(backendId);
+
+    const rulesRes = await this.upstreamFetch(r, '/providers/rules');
+    const rulesData = (await rulesRes.json()) as { providers?: Record<string, RawRuleProvider> };
+    const ruleProviders: RuleProviderInfo[] = Object.values(rulesData.providers ?? {})
+      .filter((p) => p.vehicleType !== 'Compatible')
+      .map((p) => ({
+        name: p.name,
+        behavior: p.behavior,
+        ruleCount: p.ruleCount,
+        updatedAt: p.updatedAt,
+        vehicleType: p.vehicleType,
+      }));
+
+    const proxiesRes = await this.upstreamFetch(r, '/providers/proxies');
+    const proxiesData = (await proxiesRes.json()) as { providers?: Record<string, RawProxyProvider> };
+    const proxyProviders: ProxyProviderInfo[] = Object.values(proxiesData.providers ?? {})
+      .filter((p) => p.vehicleType !== 'Compatible')
+      .map((p) => ({
+        name: p.name,
+        proxyCount: Array.isArray(p.proxies) ? p.proxies.length : 0,
+        updatedAt: p.updatedAt,
+        vehicleType: p.vehicleType,
+      }));
+
+    return { ruleProviders, proxyProviders };
+  }
+
+  async refreshProvider(backendId: number, kind: ProviderKind, name: string): Promise<void> {
+    const r = this.requireResolved(backendId);
+    const segment = kind === 'rule' ? 'rules' : 'proxies';
+    await this.upstreamFetch(
+      r,
+      `/providers/${segment}/${encodeURIComponent(name)}`,
+      { method: 'PUT' },
+      PROVIDER_REFRESH_TIMEOUT_MS,
       { expectBody: false },
     );
   }

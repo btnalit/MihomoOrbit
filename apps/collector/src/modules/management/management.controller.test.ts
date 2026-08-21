@@ -40,9 +40,12 @@ async function enableAuthForTest(app: FastifyInstance, token: string): Promise<s
 }
 
 // Minimal fake Mihomo: only the routes these tests actually exercise
-// (GET /proxies, GET /proxies/:name/delay). Can be told to hang (never
+// (GET /proxies, GET /proxies/:name/delay, GET /providers/{rules,proxies},
+// PUT /providers/{rules,proxies}/:name). Can be told to hang (never
 // respond) to exercise the AbortSignal.timeout -> 504 path, or to reject
 // every request with 401 to exercise the UPSTREAM_UNAUTHORIZED -> 502 path.
+// `/providers/{rules,proxies}/missing-provider` 404s to exercise the
+// reachable-upstream-4xx -> 502 mapping for a bad refresh target name.
 function createFakeMihomo(state: { hang: boolean; unauthorized?: boolean }): http.Server {
   return http.createServer((req, res) => {
     if (state.hang) {
@@ -73,6 +76,40 @@ function createFakeMihomo(state: { hang: boolean; unauthorized?: boolean }): htt
     if (req.method === 'GET' && /^\/proxies\/[^/]+\/delay/.test(url)) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ delay: 42 }));
+      return;
+    }
+
+    if (req.method === 'GET' && url === '/providers/rules') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        providers: {
+          Reject: { name: 'Reject', vehicleType: 'Compatible', behavior: 'domain', ruleCount: 1, updatedAt: '2026-01-01T00:00:00Z' },
+          MyRules: { name: 'MyRules', vehicleType: 'HTTP', behavior: 'classical', ruleCount: 33, updatedAt: '2026-08-20T10:00:00Z' },
+        },
+      }));
+      return;
+    }
+
+    if (req.method === 'GET' && url === '/providers/proxies') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        providers: {
+          default: { name: 'default', vehicleType: 'Compatible', proxies: [{ name: 'a' }], updatedAt: '2026-01-01T00:00:00Z' },
+          MyProxies: { name: 'MyProxies', vehicleType: 'HTTP', proxies: [{ name: 'p1' }, { name: 'p2' }], updatedAt: '2026-08-20T09:00:00Z' },
+        },
+      }));
+      return;
+    }
+
+    if (req.method === 'PUT' && /^\/providers\/(rules|proxies)\/missing-provider$/.test(url)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ message: 'not found' }));
+      return;
+    }
+
+    if (req.method === 'PUT' && /^\/providers\/(rules|proxies)\/[^/]+$/.test(url)) {
+      res.writeHead(204);
+      res.end();
       return;
     }
 
@@ -112,6 +149,16 @@ describe('management controller: auth protection + error mapping', () => {
   it('a backend with no api_url is refused with 409 NO_MANAGEMENT_CAPABILITY', async () => {
     const id = db.createBackend({ name: 'agent-only', url: 'agent://a', token: 't', agentToken: 't' });
     const res = await authed('GET', `/api/management/${id}/groups`);
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'NO_MANAGEMENT_CAPABILITY', backendId: id });
+  });
+
+  // M1.5: same capability gate applies to the new providers routes — resolve()
+  // is shared with every other management route, but the plan explicitly
+  // calls this out as an acceptance point for the providers endpoints.
+  it('GET providers on a backend with no api_url is refused with 409 NO_MANAGEMENT_CAPABILITY', async () => {
+    const id = db.createBackend({ name: 'agent-only-2', url: 'agent://a', token: 't', agentToken: 't' });
+    const res = await authed('GET', `/api/management/${id}/providers`);
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ code: 'NO_MANAGEMENT_CAPABILITY', backendId: id });
   });
@@ -172,6 +219,43 @@ describe('management controller: auth protection + error mapping', () => {
       const res = await authed('GET', `/api/management/${backendId}/delay/N1?timeout=600000`);
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ delay: 42 });
+    });
+
+    // M1.5: providers management page.
+    it('GET providers returns ruleProviders/proxyProviders with vehicleType Compatible filtered out', async () => {
+      const res = await authed('GET', `/api/management/${backendId}/providers`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        ruleProviders: [
+          { name: 'MyRules', behavior: 'classical', ruleCount: 33, updatedAt: '2026-08-20T10:00:00Z', vehicleType: 'HTTP' },
+        ],
+        proxyProviders: [
+          { name: 'MyProxies', proxyCount: 2, updatedAt: '2026-08-20T09:00:00Z', vehicleType: 'HTTP' },
+        ],
+      });
+    });
+
+    it('POST providers/rule/:name/refresh succeeds against a known provider', async () => {
+      const res = await authed('POST', `/api/management/${backendId}/providers/rule/MyRules/refresh`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ success: true });
+    });
+
+    it('POST providers/proxy/:name/refresh succeeds against a known provider', async () => {
+      const res = await authed('POST', `/api/management/${backendId}/providers/proxy/MyProxies/refresh`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ success: true });
+    });
+
+    it('POST providers refresh with an unknown kind is rejected with 400', async () => {
+      const res = await authed('POST', `/api/management/${backendId}/providers/bogus/MyRules/refresh`);
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('POST providers refresh for a name the upstream 404s on maps to 502 { reachable: true, upstreamStatus: 404 }', async () => {
+      const res = await authed('POST', `/api/management/${backendId}/providers/rule/missing-provider/refresh`);
+      expect(res.statusCode).toBe(502);
+      expect(res.json()).toMatchObject({ backendId, reachable: true, upstreamStatus: 404 });
     });
   });
 

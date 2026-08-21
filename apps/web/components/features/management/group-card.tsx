@@ -5,9 +5,12 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ExpandReveal } from "@/components/ui/expand-reveal";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { MihomoProxy } from "@/lib/api";
 import { DelayBadge, type DelayValue } from "./delay-badge";
+
+const SELECTABLE_GROUP_TYPE = "Selector";
 
 interface GroupCardProps {
   group: MihomoProxy;
@@ -55,6 +58,12 @@ export function GroupCard({
 
   const members = group.all ?? [];
   const nowDelay = group.now ? resolveDelay(group.now, proxies, overrideDelays) : undefined;
+  // Polish item ①: URLTest/Fallback/LoadBalance groups pick their own
+  // member — manual selection is rejected upstream, so member buttons are
+  // locked here instead of round-tripping a failed PUT. The group-level
+  // delay-test button is unaffected and stays enabled for every group type
+  // (see groups-page.tsx's handleTestGroup — no type check there).
+  const locked = group.type !== SELECTABLE_GROUP_TYPE;
 
   return (
     <Card data-testid="group-card" data-group-name={group.name}>
@@ -62,6 +71,21 @@ export function GroupCard({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
+              {/* Polish item ③: 16px group icon, hidden on load failure so a
+                  dead/blocked icon URL never leaves a broken-image glyph in
+                  the card header. No referrer leaked to whatever host serves
+                  the icon. */}
+              {group.icon && (
+                <img
+                  src={group.icon}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  className="w-4 h-4 rounded-sm shrink-0"
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+              )}
               <h3 className="font-semibold truncate" title={group.name}>
                 {group.name}
               </h3>
@@ -125,29 +149,48 @@ export function GroupCard({
 
         {expanded && (
           <ExpandReveal>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 pt-1">
-              {members.map((name) => {
-                const isSelected = name === group.now;
-                const delay = resolveDelay(name, proxies, overrideDelays);
-                return (
-                  <button
-                    key={name}
-                    type="button"
-                    onClick={() => !isSelected && onSelectProxy(name)}
-                    disabled={isSelected}
-                    className={cn(
-                      "flex items-center justify-between gap-1.5 rounded-lg border px-2 py-1.5 text-xs text-left transition-colors",
-                      isSelected
-                        ? "border-primary bg-primary/5 text-foreground"
-                        : "border-border hover:bg-accent hover:text-accent-foreground",
-                    )}
-                  >
-                    <span className="truncate">{name}</span>
-                    <DelayBadge value={delay} pending={testing} className="shrink-0" />
-                  </button>
-                );
-              })}
-            </div>
+            <TooltipProvider delayDuration={200}>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 pt-1">
+                {members.map((name) => {
+                  const isSelected = name === group.now;
+                  const delay = resolveDelay(name, proxies, overrideDelays);
+                  // Native `disabled` suppresses hover/pointer events in
+                  // Chromium, which would silently break the Radix tooltip
+                  // below — `aria-disabled` + a guarded onClick keeps the
+                  // button hoverable/focusable while still refusing the
+                  // click, for both the locked (non-Selector group) and
+                  // already-selected cases.
+                  const blocked = isSelected || locked;
+                  const button = (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!blocked) onSelectProxy(name);
+                      }}
+                      aria-disabled={blocked}
+                      className={cn(
+                        "flex items-center justify-between gap-1.5 rounded-lg border px-2 py-1.5 text-xs text-left transition-colors",
+                        isSelected
+                          ? "border-primary bg-primary/5 text-foreground"
+                          : locked
+                            ? "border-border text-muted-foreground opacity-60 cursor-not-allowed"
+                            : "border-border hover:bg-accent hover:text-accent-foreground",
+                      )}
+                    >
+                      <span className="truncate">{name}</span>
+                      <DelayBadge value={delay} pending={testing} className="shrink-0" />
+                    </button>
+                  );
+
+                  return (
+                    <Tooltip key={name}>
+                      <TooltipTrigger asChild>{button}</TooltipTrigger>
+                      {locked && <TooltipContent side="top">{t("memberLocked")}</TooltipContent>}
+                    </Tooltip>
+                  );
+                })}
+              </div>
+            </TooltipProvider>
           </ExpandReveal>
         )}
       </CardContent>

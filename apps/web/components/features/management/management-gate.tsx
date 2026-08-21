@@ -19,8 +19,8 @@ interface ManagementGateProps {
 }
 
 /**
- * Capability gate for the four M1 management pages (groups/connections/
- * logs/runtime). `backend.capabilities.management` is false whenever the
+ * Capability gate for the five M1/M1.5 management pages (groups/connections/
+ * logs/runtime/providers). `backend.capabilities.management` is false whenever the
  * backend has no `api_url` configured (M1c) — in that case this renders a
  * full-page degraded state instead of `children`, per the spec's M1b
  * first-run script. Two variants: a backend that already reports via an

@@ -23,6 +23,7 @@ import {
   ScrollText,
   SlidersHorizontal,
   FileCog,
+  Database,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -62,6 +63,7 @@ const NAV_ITEMS = [
   { id: "connections", icon: ArrowLeftRight },
   { id: "logs", icon: ScrollText },
   { id: "runtime", icon: SlidersHorizontal },
+  { id: "providers", icon: Database },
   { id: "config-editor", icon: FileCog },
 ];
 

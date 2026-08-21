@@ -33,6 +33,11 @@ interface ConnectionParams extends BackendParams {
   connId: string;
 }
 
+interface ProviderRefreshParams extends BackendParams {
+  kind: string;
+  name: string;
+}
+
 interface SelectProxyBody {
   proxy: string;
 }
@@ -207,6 +212,39 @@ const managementController: FastifyPluginAsync = async (fastify: FastifyInstance
 
     try {
       await service.patchConfigs(backendId, request.body);
+      return { success: true };
+    } catch (err) {
+      const { status, body } = mapUpstreamError(err, backendId);
+      return reply.status(status).send(body);
+    }
+  });
+
+  // M1.5: providers management page (plan 2026-08-22-m1_5-providers-and-groups-polish.md).
+  fastify.get<{ Params: BackendParams }>('/:backendId/providers', async (request, reply) => {
+    const backendId = Number(request.params.backendId);
+    const r = service.resolve(backendId);
+    if (!r.ok) return reply.status(r.status).send(r.body);
+
+    try {
+      return await service.fetchProviders(backendId);
+    } catch (err) {
+      const { status, body } = mapUpstreamError(err, backendId);
+      return reply.status(status).send(body);
+    }
+  });
+
+  fastify.post<{ Params: ProviderRefreshParams }>('/:backendId/providers/:kind/:name/refresh', async (request, reply) => {
+    const backendId = Number(request.params.backendId);
+    const r = service.resolve(backendId);
+    if (!r.ok) return reply.status(r.status).send(r.body);
+
+    const { kind } = request.params;
+    if (kind !== 'rule' && kind !== 'proxy') {
+      return reply.status(400).send({ error: 'Invalid provider kind — expected "rule" or "proxy"' });
+    }
+
+    try {
+      await service.refreshProvider(backendId, kind, request.params.name);
       return { success: true };
     } catch (err) {
       const { status, body } = mapUpstreamError(err, backendId);

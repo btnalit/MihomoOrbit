@@ -18,6 +18,7 @@
     "connections": "连接",
     "logs": "日志",
     "runtime": "运行时设置",
+    "providers": "Provider",
     "config-editor": "配置编辑"
   },
   "header": {
@@ -461,7 +462,8 @@
       "selectProxyFailed": "切换代理失败",
       "delayTestFailed": "测速失败",
       "killConnectionFailed": "断开连接失败",
-      "patchConfigFailed": "更新运行时配置失败"
+      "patchConfigFailed": "更新运行时配置失败",
+      "refreshProviderFailed": "刷新 provider 失败"
     },
     "groups": {
       "title": "代理组",
@@ -477,7 +479,9 @@
       "offlineBanner": "无法连接到该后端,实时数据暂不可用",
       "retry": "重试",
       "loadError": "加载代理组失败",
-      "empty": "暂无代理组"
+      "empty": "暂无代理组",
+      "memberLocked": "该分组按策略自动选择节点,不支持手动切换",
+      "showHidden": "显示隐藏组"
     },
     "connections": {
       "title": "实时连接",
@@ -555,6 +559,18 @@
       "offlineBanner": "无法连接到该后端,实时数据暂不可用",
       "retry": "重试",
       "loadError": "加载运行时配置失败"
+    },
+    "providers": {
+      "title": "Provider 管理",
+      "ruleProviders": "规则 Provider",
+      "proxyProviders": "代理 Provider",
+      "ruleDetail": "{behavior} · {count} 条规则",
+      "proxyDetail": "{count} 个节点",
+      "refresh": "刷新",
+      "empty": "暂无 provider",
+      "offlineBanner": "无法连接到该后端,实时数据暂不可用",
+      "retry": "重试",
+      "loadError": "加载 provider 列表失败"
     }
   },
   "map": {

@@ -37,8 +37,9 @@ function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
 }
 
 // Fake Mihomo: GET /proxies, PUT /proxies/:name, GET /proxies/:name/delay,
-// DELETE /connections/:id, GET|PATCH /configs. Records every request it
-// receives and can be told to hang (never respond) to exercise the
+// DELETE /connections/:id, GET|PATCH /configs, GET /providers/{rules,proxies},
+// PUT /providers/{rules,proxies}/:name. Records every request it receives
+// and can be told to hang (never respond) to exercise the
 // AbortSignal.timeout -> reachable:false path.
 function createFakeMihomo(state: { requests: RecordedRequest[]; hang: boolean }): http.Server {
   return http.createServer((req, res) => {
@@ -93,6 +94,46 @@ function createFakeMihomo(state: { requests: RecordedRequest[]; hang: boolean })
       }
 
       if (method === 'PATCH' && url === '/configs') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      if (method === 'GET' && url === '/providers/rules') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          providers: {
+            Reject: {
+              name: 'Reject', type: 'Rule Set', vehicleType: 'Compatible',
+              behavior: 'domain', format: 'yaml', ruleCount: 10, updatedAt: '2026-01-01T00:00:00Z',
+            },
+            MyRules: {
+              name: 'MyRules', type: 'Rule Set', vehicleType: 'HTTP',
+              behavior: 'classical', format: 'yaml', ruleCount: 33, updatedAt: '2026-08-20T10:00:00Z',
+            },
+          },
+        }));
+        return;
+      }
+
+      if (method === 'GET' && url === '/providers/proxies') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          providers: {
+            default: {
+              name: 'default', type: 'Proxy Set', vehicleType: 'Compatible',
+              proxies: [{ name: 'a' }, { name: 'b' }], testUrl: 'http://example.test', updatedAt: '2026-08-19T00:00:00Z',
+            },
+            MyProxies: {
+              name: 'MyProxies', type: 'Proxy Set', vehicleType: 'HTTP',
+              proxies: [{ name: 'p1' }, { name: 'p2' }, { name: 'p3' }], testUrl: 'http://example.test', updatedAt: '2026-08-20T09:00:00Z',
+            },
+          },
+        }));
+        return;
+      }
+
+      if (method === 'PUT' && /^\/providers\/(rules|proxies)\/[^/]+$/.test(url)) {
         res.writeHead(204);
         res.end();
         return;
@@ -208,6 +249,29 @@ describe('ManagementService', () => {
     await svc.patchConfigs(backendId, { mode: 'rule' });
     expect(upstreamState.requests).toContainEqual(
       expect.objectContaining({ method: 'PATCH', url: '/configs', body: { mode: 'rule' } }),
+    );
+  });
+
+  // M1.5: providers management page (plan 2026-08-22-m1_5-providers-and-groups-polish.md).
+  it('fetchProviders merges rule+proxy providers and filters vehicleType Compatible on both', async () => {
+    const { ruleProviders, proxyProviders } = await svc.fetchProviders(backendId);
+    expect(ruleProviders).toEqual([
+      { name: 'MyRules', behavior: 'classical', ruleCount: 33, updatedAt: '2026-08-20T10:00:00Z', vehicleType: 'HTTP' },
+    ]);
+    expect(proxyProviders).toEqual([
+      { name: 'MyProxies', proxyCount: 3, updatedAt: '2026-08-20T09:00:00Z', vehicleType: 'HTTP' },
+    ]);
+  });
+
+  it('refreshProvider PUTs the url-encoded provider name under the kind-specific upstream path', async () => {
+    await svc.refreshProvider(backendId, 'rule', '特殊/规则');
+    expect(upstreamState.requests).toContainEqual(
+      expect.objectContaining({ method: 'PUT', url: '/providers/rules/%E7%89%B9%E6%AE%8A%2F%E8%A7%84%E5%88%99' }),
+    );
+
+    await svc.refreshProvider(backendId, 'proxy', 'MyProxies');
+    expect(upstreamState.requests).toContainEqual(
+      expect.objectContaining({ method: 'PUT', url: '/providers/proxies/MyProxies' }),
     );
   });
 });
