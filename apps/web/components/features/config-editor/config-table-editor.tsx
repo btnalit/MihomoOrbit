@@ -94,6 +94,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 import { FieldRenderer, MASKED_SENTINEL } from "./field-renderer";
 import type { UseConfigFormResult } from "./use-config-form";
 import type {
@@ -385,6 +387,159 @@ function ProxyMemberPicker({
   );
 }
 
+/** Free-text input with a filtered suggestion dropdown — for fields whose
+ *  value NAMES another entity (a proxy or proxy-group) but is never
+ *  constrained to match one. `dialer-proxy`'s mihomo semantics ("value = the
+ *  name of an existing outbound/policy-group") mean the true set of valid
+ *  values is whatever this draft's proxies/proxy-groups currently contain,
+ *  but a provider-sourced name (never listed in this draft at all — see
+ *  `ProxyMemberPicker`'s own header comment for the same fidelity point)
+ *  is equally valid input. Unlike `ProxyMemberPicker`'s closed chip set,
+ *  `options` here only drives the suggestion list — ANY typed text commits
+ *  as-is, same "empty text = unset" free-text semantics `FieldControl`'s
+ *  plain string branch already applies to this field type.
+ *
+ *  Anchored (not triggered): a Radix `PopoverTrigger` toggles open/closed on
+ *  every click, which would close the just-opened dropdown the instant the
+ *  user clicks INTO the already-focused input — `PopoverAnchor` positions
+ *  Content without wiring that toggle, so open/close stays fully driven by
+ *  this component's own `open` state (focus/typing opens it; a selection,
+ *  outside click, or Escape closes it). `onOpenAutoFocus` is suppressed so
+ *  opening the dropdown never steals focus away from the input mid-type. */
+function NameSuggestInput({
+  t,
+  value,
+  options,
+  ariaLabel,
+  onChange,
+}: {
+  t: Translator;
+  value: unknown;
+  options: string[];
+  ariaLabel?: string;
+  onChange: (value: string | undefined) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  const text = typeof value === "string" ? value : "";
+  const query = text.trim().toLowerCase();
+  const candidates = query ? options.filter((name) => name.toLowerCase().includes(query)) : options;
+
+  // Mirrors FieldControl's plain string branch exactly (field-renderer.tsx)
+  // so a free-typed value round-trips through the same unset-on-empty rule
+  // every other string field already follows.
+  const commit = (next: string) => onChange(next === "" ? undefined : next);
+
+  const openIfHasOptions = () => {
+    if (options.length > 0) setOpen(true);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>
+        <Input
+          type="text"
+          value={text}
+          aria-label={ariaLabel}
+          onFocus={openIfHasOptions}
+          onChange={(e) => {
+            commit(e.target.value);
+            setHighlighted(0);
+            openIfHasOptions();
+          }}
+          onKeyDown={(e) => {
+            if (!open) return;
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setHighlighted((h) => Math.min(h + 1, candidates.length - 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setHighlighted((h) => Math.max(h - 1, 0));
+            } else if (e.key === "Enter") {
+              const target = candidates[highlighted];
+              if (target !== undefined) {
+                e.preventDefault();
+                commit(target);
+                setOpen(false);
+              }
+            } else if (e.key === "Escape") {
+              // Stop here — an unstopped Escape would bubble past this
+              // dropdown to the enclosing `ObjectRowEditDialog`'s own Radix
+              // Dialog and close THAT instead, silently dropping the draft.
+              e.preventDefault();
+              e.stopPropagation();
+              setOpen(false);
+            }
+          }}
+        />
+      </PopoverAnchor>
+      <PopoverContent
+        align="start"
+        sideOffset={4}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        className="w-[var(--radix-popover-trigger-width)] max-h-52 overflow-y-auto p-1"
+      >
+        {candidates.length === 0 ? (
+          <p className="text-xs text-muted-foreground px-2 py-1.5">{t("table.nameSuggest.noMatches")}</p>
+        ) : (
+          candidates.map((name, index) => (
+            <button
+              key={name}
+              type="button"
+              // Keeps focus on the Input across the click (a plain onClick
+              // alone would blur it first, closing the dropdown before this
+              // handler even runs).
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                commit(name);
+                setOpen(false);
+              }}
+              className={cn(
+                "w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent",
+                index === highlighted && "bg-accent",
+              )}>
+              {name}
+            </button>
+          ))
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** Row shell for `dialer-proxy` fields — matches the label/control layout
+ *  every sibling `FieldRenderer` row uses (`table.rows.map` in
+ *  `ObjectRowEditDialog` below renders this instead of `FieldRenderer` for
+ *  these fields, same bypass `ProxyMemberPicker` already gets for the
+ *  `proxies` field — `FieldRenderer` doesn't receive the form/document, so
+ *  dynamic name options can't be resolved inside it). */
+function DialerProxyField({
+  t,
+  field,
+  value,
+  options,
+  onChange,
+}: {
+  t: Translator;
+  field: FieldDescriptor;
+  value: unknown;
+  options: string[];
+  onChange: (value: string | undefined) => void;
+}) {
+  return (
+    <div className="py-3 first:pt-0 last:pb-0">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <span className="text-sm font-medium">{field.label}</span>
+        </div>
+        <div className="w-full sm:w-72 shrink-0">
+          <NameSuggestInput t={t} value={value} options={options} ariaLabel={field.label} onChange={onChange} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Shared add/edit dialog for the two object-shaped table categories
  *  (proxies/proxy-groups). `draftRow` is seeded as a full clone of the row
  *  being edited (not rebuilt from the field set) so any key the field set
@@ -408,6 +563,8 @@ function ObjectRowEditDialog({
   rowIndex,
   memberPickerFieldKey,
   memberPickerAvailable,
+  extraMemberOptions,
+  dialerProxyOptions,
   backendId,
   revealDisabled,
   onSave,
@@ -422,6 +579,18 @@ function ObjectRowEditDialog({
   rowIndex: number | null;
   memberPickerFieldKey?: string;
   memberPickerAvailable: string[];
+  /** Proxy-group names to append to `memberPickerAvailable` (nested group
+   *  membership is legal in mihomo) — the row currently being edited is
+   *  excluded live, by `draftRow.name`, below. Only meaningful alongside
+   *  `memberPickerFieldKey`; omitted entirely by `ProxiesTable` (proxies
+   *  have no member picker). */
+  extraMemberOptions?: string[];
+  /** Suggestion source for every `dialer-proxy` field in this field set —
+   *  draft proxies' + proxy-groups' names combined. The row being edited is
+   *  excluded live, by `draftRow.name`, below (a proxy can't dialer-proxy
+   *  itself). Omitted by `ProxyGroupsTable` (no group type declares a
+   *  `dialer-proxy` field). */
+  dialerProxyOptions?: string[];
   backendId: number | undefined;
   /** M2b Task 11 — true when this category's whole array is dirty (any
    *  add/remove/move/replace since the last save), which drifts every
@@ -439,6 +608,11 @@ function ObjectRowEditDialog({
 
   const activeFieldSet = fieldSets.find((fs) => fs.type === draftRow.type) ?? fieldSets[0];
   const rowPath = `${categoryId}[${rowIndex ?? "new"}]`;
+  // Live (tracks in-progress renames, not just the row as it was when the
+  // dialog opened) — used to strip this row's own name out of any
+  // name-suggestion source below, so a row never suggests referencing
+  // itself.
+  const selfName = typeof draftRow.name === "string" ? draftRow.name : undefined;
 
   const handleTypeChange = (newType: string) => {
     const fieldSet = fieldSets.find((fs) => fs.type === newType);
@@ -508,7 +682,21 @@ function ObjectRowEditDialog({
                 t={t}
                 field={field}
                 value={draftRow[field.key]}
-                available={memberPickerAvailable}
+                available={Array.from(
+                  new Set([
+                    ...memberPickerAvailable,
+                    ...(extraMemberOptions ?? []).filter((name) => name !== selfName),
+                  ]),
+                )}
+                onChange={(v) => setFieldDraft(field.key, v)}
+              />
+            ) : field.type === "dialer-proxy" ? (
+              <DialerProxyField
+                key={field.key}
+                t={t}
+                field={field}
+                value={draftRow[field.key]}
+                options={(dialerProxyOptions ?? []).filter((name) => name !== selfName)}
                 onChange={(v) => setFieldDraft(field.key, v)}
               />
             ) : (
@@ -559,6 +747,11 @@ function ProxiesTable({
   const [editing, setEditing] = useState<EditingState>(null);
   const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
   const categoryLabel = t(`categories.${category.id}`);
+  // `dialer-proxy`'s mihomo semantics: value = the name of an existing
+  // outbound proxy OR policy group — proxies before groups, per the plan.
+  const dialerProxyOptions = Array.from(
+    new Set([...collectNames(form.document, "proxies"), ...collectNames(form.document, "proxy-groups")]),
+  );
 
   return (
     <Card>
@@ -630,6 +823,7 @@ function ProxiesTable({
           initialRow={editing.index !== null ? rows[editing.index] : null}
           rowIndex={editing.index}
           memberPickerAvailable={[]}
+          dialerProxyOptions={dialerProxyOptions}
           backendId={backendId}
           revealDisabled={dirty}
           onSave={(row) => {
@@ -673,6 +867,11 @@ function ProxyGroupsTable({
   const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
   const categoryLabel = t(`categories.${category.id}`);
   const proxyNames = collectNames(form.document, "proxies");
+  // Nested group membership is legal in mihomo — a group's member list can
+  // itself name another proxy-group. Self-exclusion (the group currently
+  // being edited can't list itself) happens live, by `draftRow.name`, inside
+  // `ObjectRowEditDialog` — this raw list is passed through unfiltered.
+  const proxyGroupNames = collectNames(form.document, "proxy-groups");
 
   return (
     <Card>
@@ -760,6 +959,7 @@ function ProxyGroupsTable({
           rowIndex={editing.index}
           memberPickerFieldKey="proxies"
           memberPickerAvailable={proxyNames}
+          extraMemberOptions={proxyGroupNames}
           backendId={backendId}
           revealDisabled={dirty}
           onSave={(row) => {
@@ -954,7 +1154,19 @@ function RulesTable({ category, form }: { category: TableCategory; form: UseConf
   const [editing, setEditing] = useState<EditingState>(null);
   const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
   const categoryLabel = t(`categories.${category.id}`);
-  const policyOptions = ["DIRECT", "REJECT", ...collectNames(form.document, "proxy-groups")];
+  // Built-in mihomo policies first, then groups, then individual proxies
+  // (a rule can route straight to one node, not just a group) — deduped in
+  // case a hand-written config somehow shares a name across the two.
+  const policyOptions = Array.from(
+    new Set([
+      "DIRECT",
+      "REJECT",
+      "REJECT-DROP",
+      "PASS",
+      ...collectNames(form.document, "proxy-groups"),
+      ...collectNames(form.document, "proxies"),
+    ]),
+  );
 
   return (
     <Card>

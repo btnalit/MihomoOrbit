@@ -349,6 +349,9 @@
         "noMatches": "No matching proxies",
         "remove": "Remove {name}"
       },
+      "nameSuggest": {
+        "noMatches": "No matching suggestions — you can still type a custom value"
+      },
       "rules": {
         "typeLabel": "Rule type",
         "payloadLabel": "Match value",

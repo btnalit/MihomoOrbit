@@ -349,6 +349,9 @@
         "noMatches": "没有匹配的代理",
         "remove": "移除 {name}"
       },
+      "nameSuggest": {
+        "noMatches": "没有匹配的建议，可直接输入自定义值"
+      },
       "rules": {
         "typeLabel": "规则类型",
         "payloadLabel": "匹配值",
