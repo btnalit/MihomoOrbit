@@ -158,11 +158,16 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
       if (paused) return;
 
       const data = message.data as ConnectionsSnapshotData | undefined;
-      if (!data || !Array.isArray(data.connections)) return;
+      if (!data) return;
+      // mihomo serializes zero active connections as `connections: null`
+      // (Go nil slice), not `[]` — such frames are still valid snapshots
+      // (totals included). Dropping them keeps `connections` at its initial
+      // `null` forever, so an idle backend never leaves the skeleton.
+      const frameConnections = Array.isArray(data.connections) ? data.connections : [];
 
       const now = Date.now();
       const prev = prevFrameRef.current;
-      const rows: ConnectionRow[] = data.connections.map((conn) => {
+      const rows: ConnectionRow[] = frameConnections.map((conn) => {
         const prevEntry = prev?.byId.get(conn.id);
         let downRate = 0;
         let upRate = 0;
@@ -177,7 +182,7 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
       });
 
       prevFrameRef.current = {
-        byId: new Map(data.connections.map((c) => [c.id, { upload: c.upload, download: c.download }])),
+        byId: new Map(frameConnections.map((c) => [c.id, { upload: c.upload, download: c.download }])),
         timestamp: now,
       };
 
