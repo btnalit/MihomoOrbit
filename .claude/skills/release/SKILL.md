@@ -34,10 +34,19 @@ pnpm --filter @mihomo-orbit/web exec next build
 git push origin main
 git tag -a vX.Y.Z -m "<one-line summary>"
 git push origin vX.Y.Z
-gh release create vX.Y.Z --title "vX.Y.Z" --notes "<highlights + upgrade notes>"
 ```
 
-6. **Verify CI**: `gh run list --limit 3` → the tag-branch "Build and Push Docker Image" run must end `completed/success`. Multi-arch builds can exceed 20 minutes; poll rather than assume.
+The GitHub Release is created **automatically** by the `release` job in
+`docker-build.yml` after the image push succeeds (since v0.3.0): the body is
+the tag's `## [X.Y.Z]` section extracted from `CHANGELOG.md` (falls back to
+GitHub-generated notes if the section is missing), with `docker-compose.yml`
+and `.env.example` attached (GitHub forbids dot-prefixed asset names, so the
+latter appears as `default.env.example`). Do NOT also run
+`gh release create` — it would collide with the automated one. The same
+workflow fails the build if the tag doesn't match the root `package.json`
+version, so bump BEFORE tagging.
+
+6. **Verify CI**: `gh run list --limit 3` → the tag-branch "Build and Push Docker Image" run must end `completed/success`, and `gh release view vX.Y.Z` must show the changelog body + 2 assets. Multi-arch builds can exceed 20 minutes; poll rather than assume.
 
 ## Agent release
 
