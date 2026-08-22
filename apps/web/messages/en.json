@@ -531,7 +531,7 @@
     },
     "runtime": {
       "title": "Runtime Settings",
-      "notPersisted": "These changes only affect the running core and are lost on restart. For persistent changes, wait for the config editor feature (M2).",
+      "notPersisted": "These changes only affect the running core and are lost on restart. For persistent changes, use the Config Editor page.",
       "mode": {
         "label": "Mode",
         "rule": "Rule",
