@@ -134,9 +134,11 @@ jobs:
         run: |
           ver="${GITHUB_REF_NAME#v}"
           # 取 CHANGELOG.md 中 "## [X.Y.Z]" 到下一个 "## [" 之间的内容。
+          # 用 index/substr 做纯字符串匹配:动态正则里的 \[ 会被 awk 二次
+          # 转义降级成字符类(本地实测直接提取为空),字符串匹配没有这坑。
           awk -v ver="$ver" '
-            $0 ~ "^## \\[" ver "\\]" { on=1; next }
-            on && /^## \[/ { exit }
+            index($0, "## [" ver "]") == 1 { on=1; next }
+            on && substr($0, 1, 4) == "## [" { exit }
             on { print }
           ' CHANGELOG.md > release-notes.md
           if [ -s release-notes.md ]; then
