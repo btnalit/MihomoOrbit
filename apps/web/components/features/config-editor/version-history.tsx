@@ -77,7 +77,7 @@ export function VersionHistory({ backendId, currentVersionId, hasAnyDirty }: Ver
   };
 
   return (
-    <div className="rounded-xl border bg-card">
+    <div className="rounded-xl border bg-card shadow-xs">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

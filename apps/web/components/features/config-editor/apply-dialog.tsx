@@ -263,7 +263,7 @@ export function ApplyDialog({
           <>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                 {tConflict("title")}
               </DialogTitle>
               <DialogDescription>{tConflict("description")}</DialogDescription>

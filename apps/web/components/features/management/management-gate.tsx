@@ -86,7 +86,7 @@ export function ManagementGate({ backend, children, onBackendChange }: Managemen
 function ManagementGateSkeleton() {
   return (
     <div className="flex items-center justify-center min-h-[60vh] p-4">
-      <div className="w-full max-w-md rounded-xl border bg-card p-8 flex flex-col items-center gap-4">
+      <div className="w-full max-w-md rounded-xl border bg-card shadow-xs p-8 flex flex-col items-center gap-4">
         <div className="w-14 h-14 rounded-2xl bg-muted/50 animate-pulse" />
         <div className="space-y-2 w-full flex flex-col items-center">
           <div className="h-4 w-40 rounded bg-muted/60 animate-pulse" />

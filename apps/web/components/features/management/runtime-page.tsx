@@ -251,7 +251,7 @@ export function RuntimePage({ backendId }: RuntimePageProps) {
 
   // NotPersistedBanner is resident on every branch above — see file header.
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <NotPersistedBanner />
       {body}
     </div>
@@ -356,10 +356,10 @@ function OfflineBanner({
 
 function RuntimePageSkeleton() {
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="h-6 w-40 rounded bg-muted/60 animate-pulse" />
       <div className="h-14 w-full rounded-xl bg-muted/30 animate-pulse" />
-      <div className="rounded-xl border bg-card p-5 space-y-5">
+      <div className="rounded-xl border bg-card shadow-xs p-5 space-y-5">
         {[0, 1, 2].map((i) => (
           <div key={i} className="flex items-center justify-between gap-3">
             <div className="h-4 w-24 rounded bg-muted/50 animate-pulse" />
@@ -367,7 +367,7 @@ function RuntimePageSkeleton() {
           </div>
         ))}
       </div>
-      <div className="rounded-xl border bg-card p-5">
+      <div className="rounded-xl border bg-card shadow-xs p-5">
         <div className="h-4 w-20 rounded bg-muted/50 animate-pulse mb-3" />
         <div className="h-4 w-full rounded bg-muted/30 animate-pulse" />
       </div>

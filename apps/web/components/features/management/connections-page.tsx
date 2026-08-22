@@ -317,7 +317,7 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
           header: t("columns.downRate"),
           sortFn: sortFn_basic,
           cell: (info) => (
-            <span className="tabular-nums text-xs text-blue-500 whitespace-nowrap">
+            <span className="tabular-nums text-xs text-blue-500 dark:text-blue-400 whitespace-nowrap">
               {formatBytes(info.getValue())}/s
             </span>
           ),
@@ -327,7 +327,7 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
           header: t("columns.upRate"),
           sortFn: sortFn_basic,
           cell: (info) => (
-            <span className="tabular-nums text-xs text-purple-500 whitespace-nowrap">
+            <span className="tabular-nums text-xs text-purple-500 dark:text-purple-400 whitespace-nowrap">
               {formatBytes(info.getValue())}/s
             </span>
           ),
@@ -436,7 +436,7 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <h2 className="text-lg font-semibold flex items-center gap-2">
         <Link2 className="w-5 h-5" />
         {t("title")}
@@ -447,18 +447,18 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
           down) in what the banner says — see file header comment. */}
       {(topicOffline || wsOffline) && <OfflineBanner reconnecting={!topicOffline} />}
 
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border bg-card p-3">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border bg-card shadow-xs p-3">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
           <Stat label={t("stats.count")} value={String(connections?.length ?? 0)} />
           <Stat
             label={t("stats.downRate")}
             value={`${formatBytes(totalDownRate)}/s`}
-            valueClassName="text-blue-500"
+            valueClassName="text-blue-500 dark:text-blue-400"
           />
           <Stat
             label={t("stats.upRate")}
             value={`${formatBytes(totalUpRate)}/s`}
-            valueClassName="text-purple-500"
+            valueClassName="text-purple-500 dark:text-purple-400"
           />
           <Stat label={t("stats.downloadTotal")} value={formatBytes(totals.downloadTotal)} />
           <Stat label={t("stats.uploadTotal")} value={formatBytes(totals.uploadTotal)} />
@@ -593,10 +593,10 @@ function OfflineBanner({
 
 function ConnectionsPageSkeleton() {
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="h-6 w-32 rounded bg-muted/60 animate-pulse" />
       <div className="h-16 w-full rounded-xl bg-muted/40 animate-pulse" />
-      <div className="rounded-xl border bg-card p-4 space-y-3">
+      <div className="rounded-xl border bg-card shadow-xs p-4 space-y-3">
         {[0, 1, 2, 3, 4].map((i) => (
           <div key={i} className="h-8 w-full rounded bg-muted/40 animate-pulse" />
         ))}

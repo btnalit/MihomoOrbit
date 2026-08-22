@@ -380,7 +380,7 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
   const visibleGroups = showHidden ? sortedGroups : sortedGroups.filter((g) => !g.hidden);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold flex items-center gap-2">
           <Network className="w-5 h-5" />
@@ -403,7 +403,8 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
       {visibleGroups.length === 0 ? (
         <Card>
           <CardContent className="p-12 text-center text-muted-foreground">
-            {t("empty")}
+            <Network className="w-10 h-10 mx-auto mb-3 opacity-40" />
+            <p className="font-medium">{t("empty")}</p>
           </CardContent>
         </Card>
       ) : (
@@ -477,7 +478,7 @@ function GroupsPageSkeleton() {
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {[0, 1, 2, 3, 4, 5].map((i) => (
-        <div key={i} className="rounded-xl border bg-card p-4 space-y-3">
+        <div key={i} className="rounded-xl border bg-card shadow-xs p-4 space-y-3">
           <div className="h-4 w-24 rounded bg-muted/60 animate-pulse" />
           <div className="h-3 w-32 rounded bg-muted/50 animate-pulse" />
           <div className="h-8 w-full rounded bg-muted/40 animate-pulse" />

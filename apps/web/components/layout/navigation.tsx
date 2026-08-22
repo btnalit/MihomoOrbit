@@ -118,9 +118,9 @@ export function Navigation({
   return (
     <>
       {/* Desktop Navigation - Sidebar */}
-      <aside className="hidden lg:flex flex-col w-64 h-screen sticky top-0 border-r border-border/40 bg-background/80 backdrop-blur-md">
+      <aside className="hidden lg:flex flex-col w-64 h-screen sticky top-0 border-r border-border/40 bg-background/80 backdrop-blur-md overflow-hidden">
         {/* Logo */}
-        <div className="flex items-start gap-3 p-6 border-b border-border/40">
+        <div className="flex items-start gap-3 p-6 border-b border-border/40 shrink-0">
           <div className="w-14 h-14 rounded-xl shrink-0 flex items-center justify-center overflow-hidden hover:opacity-80">
             <Image
               src="/logo.png"
@@ -183,7 +183,7 @@ export function Navigation({
 
         {/* Showcase Mode Indicator */}
         {isShowcase && (
-          <div className="px-4 pt-4 pb-2">
+          <div className="px-4 pt-4 pb-2 shrink-0">
             <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 transition-all hover:bg-amber-500/15">
               <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
               <span className="text-xs font-medium text-amber-600 dark:text-amber-400">
@@ -193,8 +193,11 @@ export function Navigation({
           </div>
         )}
 
-        {/* Nav Items */}
-        <nav className="flex-1 p-4 space-y-1">
+        {/* Nav Items — min-h-0 lets this flex child shrink below its content
+            height so overflow-y-auto actually engages instead of pushing the
+            aside's own height (and the footer actions below it) past the
+            viewport once the item count grows (13 items today). */}
+        <nav className="flex-1 min-h-0 overflow-y-auto p-4 space-y-1">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -217,7 +220,7 @@ export function Navigation({
 
         {/* PWA Install Prompt */}
         {canInstall && (
-          <div className="px-4 pb-3">
+          <div className="px-4 pb-3 shrink-0">
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -261,7 +264,7 @@ export function Navigation({
         )}
 
         {/* Bottom Actions */}
-        <div className="p-4 border-t border-border/40 space-y-1">
+        <div className="p-4 border-t border-border/40 space-y-1 shrink-0">
           <button
             onClick={() => setAboutOpen(true)}
             className={cn(

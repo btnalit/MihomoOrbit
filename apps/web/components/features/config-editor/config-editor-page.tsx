@@ -42,6 +42,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   AlertTriangle,
+  FileCog,
   FileWarning,
   Globe,
   Layers,
@@ -306,8 +307,16 @@ function ConfigEditorForm({
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap rounded-xl border bg-card px-4 py-3">
+    <div className="space-y-6">
+      {/* Page header — same icon+title convention as the five M1/M1.5
+          management pages (groups/connections/logs/runtime/providers), which
+          this tab previously lacked entirely. */}
+      <h2 className="text-lg font-semibold flex items-center gap-2">
+        <FileCog className="w-5 h-5" />
+        {t("title")}
+      </h2>
+
+      <div className="flex items-center justify-between gap-3 flex-wrap rounded-xl border bg-card shadow-xs px-4 py-3">
         <span className="text-sm text-muted-foreground">
           {form.hasAnyDirty ? t("apply.dirtyCount", { count: dirtyEntries.length }) : t("apply.noChanges")}
         </span>
@@ -422,13 +431,14 @@ function FlatCategoryForm({
 
 function ConfigEditorSkeleton() {
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      <div className="h-6 w-40 rounded bg-muted/60 animate-pulse" />
       <div className="flex gap-1.5">
         {[0, 1, 2, 3, 4].map((i) => (
           <div key={i} className="h-8 w-24 rounded-md bg-muted/50 animate-pulse" />
         ))}
       </div>
-      <div className="rounded-xl border bg-card p-5 space-y-4">
+      <div className="rounded-xl border bg-card shadow-xs p-5 space-y-4">
         {[0, 1, 2, 3, 4, 5].map((i) => (
           <div key={i} className="flex items-center justify-between gap-3">
             <div className="space-y-1.5">

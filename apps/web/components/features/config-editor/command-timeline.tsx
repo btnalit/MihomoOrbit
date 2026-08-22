@@ -226,7 +226,7 @@ export function CommandTimeline({ backendId, onRefetchAndReplay, onDiscard }: Co
       tabIndex={-1}
       role="region"
       aria-label={t("title")}
-      className="rounded-xl border bg-card outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="rounded-xl border bg-card shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <button
         type="button"

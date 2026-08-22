@@ -281,6 +281,7 @@
     "comingSoon": "实时连接监控功能开发中..."
   },
   "configEditor": {
+    "title": "配置编辑器",
     "categories": {
       "basic": "基础配置",
       "network": "网络配置",

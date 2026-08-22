@@ -1,6 +1,15 @@
 /// <reference lib="webworker" />
 
-const CACHE_NAME = "mihomo-orbit-v1";
+// Bump this string on every shell-affecting deploy (M1.6 user report: a
+// device that installed the SW before this version never re-evaluated
+// itself because the constant never changed, so `activate`'s own
+// old-cache-eviction loop below never had anything to actually evict).
+// `skipWaiting`/`clients.claim` (below) already make the browser hand
+// control to a new script promptly once it fetches one — this bump is
+// what makes the fetch happen sooner (a changed script body ends the
+// browser's up-to-24h byte-for-byte reuse of its last-seen sw.js) and
+// guarantees this activation actually has a stale cache to remove.
+const CACHE_NAME = "mihomo-orbit-v2";
 
 // Assets to pre-cache on install
 const PRECACHE_ASSETS = ["/", "/manifest.webmanifest"];

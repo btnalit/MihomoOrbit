@@ -111,7 +111,7 @@ export function ProvidersPage({ backendId }: ProvidersPageProps) {
   const proxyProviders = providersQuery.data?.proxyProviders ?? [];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <h2 className="text-lg font-semibold flex items-center gap-2">
         <Database className="w-5 h-5" />
         {t("title")}
@@ -314,12 +314,12 @@ function OfflineBanner({
 
 function ProvidersPageSkeleton() {
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="h-6 w-32 rounded bg-muted/60 animate-pulse" />
       {[0, 1].map((section) => (
         <div key={section} className="space-y-2">
           <div className="h-4 w-24 rounded bg-muted/50 animate-pulse" />
-          <div className="rounded-xl border bg-card p-4 space-y-3">
+          <div className="rounded-xl border bg-card shadow-xs p-4 space-y-3">
             {[0, 1, 2].map((i) => (
               <div key={i} className="h-8 w-full rounded bg-muted/40 animate-pulse" />
             ))}
