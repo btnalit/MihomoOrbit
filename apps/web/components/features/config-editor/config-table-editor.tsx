@@ -463,9 +463,15 @@ function NameSuggestInput({
                 setOpen(false);
               }
             } else if (e.key === "Escape") {
-              // Stop here — an unstopped Escape would bubble past this
-              // dropdown to the enclosing `ObjectRowEditDialog`'s own Radix
-              // Dialog and close THAT instead, silently dropping the draft.
+              // Close the dropdown. The enclosing Radix Dialog does NOT
+              // close on this same keypress, but not because of the calls
+              // below: Radix's escape handling runs on a capture-phase
+              // document listener, before React's bubble-phase handler ever
+              // fires, so stopPropagation here can't reach it. What actually
+              // protects the Dialog is Radix's DismissableLayer stack — only
+              // the topmost layer (the open Popover) consumes the Escape.
+              // preventDefault/stopPropagation are kept for non-Radix
+              // listeners and to keep the input's own behavior inert.
               e.preventDefault();
               e.stopPropagation();
               setOpen(false);

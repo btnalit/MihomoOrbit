@@ -228,7 +228,17 @@ export function LogsPage({ backendId }: LogsPageProps) {
       setTopicOffline(false);
       if (!result.changed) return; // duplicate replay — nothing to do
       next = result.rows;
-      if (result.reset) setBufferOverflowed(false);
+      if (result.reset) {
+        setBufferOverflowed(false);
+        // Collector restart: the list was just replaced wholesale, so any
+        // page the user was on no longer refers to anything. Without this,
+        // the derived clamp shows page 1 while raw `page`/`pageRef` keep the
+        // old number — the view then silently jumps back once enough new
+        // lines accumulate, and the SOFT_CAP "on latest page" gate below
+        // stays disengaged.
+        pageRef.current = 1;
+        setPage(1);
+      }
     }
 
     const onLatestPage = pageRef.current === 1;

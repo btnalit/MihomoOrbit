@@ -254,7 +254,11 @@ export function GroupCard({
                         }}
                         aria-disabled={blocked}
                         className={cn(
-                          "flex flex-col gap-1 rounded-lg border px-2 py-1.5 text-left transition-colors",
+                          // min-w-0: same truncation gotcha as the header
+                          // title above — as a grid item this button must be
+                          // allowed to shrink below its content min-size or
+                          // long node names blow the auto-fill column width.
+                          "flex min-w-0 flex-col gap-1 rounded-lg border px-2 py-1.5 text-left transition-colors",
                           isSelected
                             ? "border-primary bg-primary/5 text-foreground"
                             : locked
@@ -264,7 +268,7 @@ export function GroupCard({
                       >
                         <span className="truncate text-sm">{name}</span>
                         <span className="flex items-center justify-between gap-1.5">
-                          <span className="truncate text-[11px] text-muted-foreground">
+                          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
                             {meta}
                           </span>
                           <DelayBadge value={delay} pending={testing} className="shrink-0" />
