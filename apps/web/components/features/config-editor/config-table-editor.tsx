@@ -53,7 +53,7 @@
  * arbitrary string array elements).
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, X } from "lucide-react";
@@ -421,6 +421,7 @@ function NameSuggestInput({
 }) {
   const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
   const text = typeof value === "string" ? value : "";
   const query = text.trim().toLowerCase();
   const candidates = query ? options.filter((name) => name.toLowerCase().includes(query)) : options;
@@ -438,10 +439,15 @@ function NameSuggestInput({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverAnchor asChild>
         <Input
+          ref={inputRef}
           type="text"
           value={text}
           aria-label={ariaLabel}
           onFocus={openIfHasOptions}
+          // Re-open on click too: focusing opens the dropdown, but clicking
+          // an ALREADY-focused input fires no focus event, so without this a
+          // user who dismissed the list can't get it back without typing.
+          onClick={openIfHasOptions}
           onChange={(e) => {
             commit(e.target.value);
             setHighlighted(0);
@@ -483,6 +489,19 @@ function NameSuggestInput({
         align="start"
         sideOffset={4}
         onOpenAutoFocus={(e) => e.preventDefault()}
+        // The anchor input is OUTSIDE this content, so Radix's dismissable
+        // layer treats the click/focus that opened the dropdown as an
+        // "outside interaction" and closes it within the same click gesture
+        // (real-device symptom: the list flashes for ~80ms and vanishes;
+        // only typing kept it open, because that path has no gesture tail).
+        // Swallow dismissals whose original target is the input itself —
+        // genuinely-outside clicks still close as before.
+        onInteractOutside={(e) => {
+          const target = (e.detail.originalEvent?.target ?? e.target) as Node | null;
+          if (target && inputRef.current?.contains(target)) {
+            e.preventDefault();
+          }
+        }}
         className="w-[var(--radix-popover-trigger-width)] max-h-52 overflow-y-auto p-1"
       >
         {candidates.length === 0 ? (
