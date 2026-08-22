@@ -173,9 +173,18 @@
       scrollbar-gutter: stable;
     }
 
-    /* Override Radix scroll-lock compensation — scrollbar space is already reserved */
-    html[data-scroll-locked] {
-      overflow-y: scroll !important;
+    /* Override Radix scroll-lock compensation — scrollbar space is already
+       reserved by the stable gutter above. react-remove-scroll marks BODY
+       (not html): its injected sheet sets `overflow: hidden` + `margin-right`
+       on body[data-scroll-locked], which (a) shifts the layout sideways and
+       (b) turns body into a scroll container, re-anchoring the sticky
+       sidebar from the viewport to body — on any scrolled page the sidebar
+       visibly jumps whenever a Radix popup (Select/Dropdown/Dialog) opens.
+       `html body` outranks the injected `body[data-scroll-locked]` rule
+       (both !important, ours is more specific). Wheel/touch scrolling stays
+       blocked by remove-scroll's event handlers, so the lock still works. */
+    html body[data-scroll-locked] {
+      overflow: visible !important;
       margin-right: 0 !important;
     }
 
