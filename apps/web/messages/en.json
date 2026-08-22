@@ -511,7 +511,10 @@
       "empty": "No connections",
       "noResults": "No matching connections",
       "offlineBanner": "Can't reach this backend right now — live data is unavailable.",
-      "reconnectingBanner": "Lost the live connection — reconnecting…"
+      "reconnectingBanner": "Lost the live connection — reconnecting…",
+      "pagination": {
+        "page": "page"
+      }
     },
     "logs": {
       "title": "Live Logs",
@@ -522,12 +525,14 @@
         "error": "Error"
       },
       "gapMarker": "Dropped {count} entries (backlog)",
-      "backToLatest": "Back to latest",
       "empty": "No logs yet",
       "emptyFiltered": "No logs match the current filter",
       "offlineBanner": "Can't reach this backend right now — live data is unavailable.",
       "reconnectingBanner": "Lost the live connection — reconnecting…",
-      "bufferOverflow": "Too many lines arrived while paused — some older entries were dropped."
+      "bufferOverflow": "Too many lines arrived while paused — some older entries were dropped.",
+      "pagination": {
+        "page": "page"
+      }
     },
     "runtime": {
       "title": "Runtime Settings",

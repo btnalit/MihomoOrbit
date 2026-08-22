@@ -68,6 +68,8 @@ import {
 import { cn, formatBytes, formatDuration } from "@/lib/utils";
 import { useKillConnection } from "@/hooks/api/use-management";
 import { useTopicSubscription, type TopicMessage } from "@/lib/management-ws";
+import { PaginationBar } from "./pagination-bar";
+import type { PageSize } from "@/lib/stats-utils";
 
 /** Mihomo connection object (passthrough) — only the fields this page reads
  *  are named, everything else survives via the index signature since the
@@ -139,6 +141,8 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
   const [topicOffline, setTopicOffline] = useState(false);
   const [search, setSearch] = useState("");
   const [killingIds, setKillingIds] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(10);
 
   const prevFrameRef = useRef<PrevFrame | null>(null);
 
@@ -404,6 +408,21 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
     });
   }, [connections, search]);
 
+  // Search is the only thing that should snap the page back to 1 — changing
+  // it changes what "page 1" even means. Page-size changes do the same (see
+  // `handlePageSizeChange`). Neither happens on the ~1s data frames
+  // themselves — see the render-time clamp below for how those are handled
+  // instead.
+  const handleSearchChange = useCallback((value: string) => {
+    setSearch(value);
+    setPage(1);
+  }, []);
+
+  const handlePageSizeChange = useCallback((size: PageSize) => {
+    setPageSize(size);
+    setPage(1);
+  }, []);
+
   const table = useTable({
     data: filteredConnections,
     columns,
@@ -420,6 +439,30 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
       sorting: [{ id: "downRate", desc: true }],
     },
   });
+
+  // Paginate the already-sorted row model (manual slicing, not TanStack's
+  // pagination feature — this table only registers `rowSortingFeature` +
+  // `createSortedRowModel`, and slicing the sorted rows before mapping is
+  // simpler than adding a whole feature for one static-size page).
+  //
+  // `effectivePage` is derived at render time rather than written back into
+  // `page` state: connections churn ~1/s and `totalPages` can shrink
+  // transiently as connections close, but nothing here should force a
+  // `setPage` on every incoming frame (that would fight the explicit resets
+  // in `handleSearchChange`/`handlePageSizeChange` above and cause needless
+  // re-renders). Recomputing the clamp on every render keeps the displayed
+  // page and the pagination bar's button states always in range for
+  // whatever `totalPages` currently is, and — since `onPageChange` below
+  // writes the *raw* page number the user clicked — `page` naturally
+  // recovers once `totalPages` grows back.
+  const sortedRows = table.getRowModel().rows;
+  const totalItems = sortedRows.length;
+  const totalPages = totalItems > 0 ? Math.max(1, Math.ceil(totalItems / pageSize)) : 0;
+  const effectivePage = totalPages > 0 ? Math.min(page, totalPages) : 1;
+  const pageRows = sortedRows.slice(
+    (effectivePage - 1) * pageSize,
+    effectivePage * pageSize,
+  );
 
   const totalDownRate = useMemo(
     () => (connections ?? []).reduce((sum, c) => sum + c.downRate, 0),
@@ -472,7 +515,7 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
           <Input
             placeholder={t("searchPlaceholder")}
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="h-9 w-full sm:w-[220px] bg-secondary/50 border-0"
           />
           <Button
@@ -494,48 +537,59 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
               {search ? t("noResults") : t("empty")}
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                {table.getHeaderGroups().map((headerGroup) => (
-                  <TableRow key={headerGroup.id}>
-                    {headerGroup.headers.map((header) => {
-                      const canSort = header.column.getCanSort();
-                      const sorted = header.column.getIsSorted();
-                      return (
-                        <TableHead
-                          key={header.id}
-                          onClick={header.column.getToggleSortingHandler()}
-                          className={cn(canSort && "cursor-pointer select-none")}
-                        >
-                          <span className="inline-flex items-center">
-                            <table.FlexRender header={header} />
-                            {canSort &&
-                              (sorted === "asc" ? (
-                                <ArrowUp className="ml-1 h-3 w-3 text-primary" />
-                              ) : sorted === "desc" ? (
-                                <ArrowDown className="ml-1 h-3 w-3 text-primary" />
-                              ) : (
-                                <ArrowUpDown className="ml-1 h-3 w-3 text-muted-foreground" />
-                              ))}
-                          </span>
-                        </TableHead>
-                      );
-                    })}
-                  </TableRow>
-                ))}
-              </TableHeader>
-              <TableBody>
-                {table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id}>
-                    {row.getAllCells().map((cell) => (
-                      <TableCell key={cell.id}>
-                        <table.FlexRender cell={cell} />
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <>
+              <Table>
+                <TableHeader>
+                  {table.getHeaderGroups().map((headerGroup) => (
+                    <TableRow key={headerGroup.id}>
+                      {headerGroup.headers.map((header) => {
+                        const canSort = header.column.getCanSort();
+                        const sorted = header.column.getIsSorted();
+                        return (
+                          <TableHead
+                            key={header.id}
+                            onClick={header.column.getToggleSortingHandler()}
+                            className={cn(canSort && "cursor-pointer select-none")}
+                          >
+                            <span className="inline-flex items-center">
+                              <table.FlexRender header={header} />
+                              {canSort &&
+                                (sorted === "asc" ? (
+                                  <ArrowUp className="ml-1 h-3 w-3 text-primary" />
+                                ) : sorted === "desc" ? (
+                                  <ArrowDown className="ml-1 h-3 w-3 text-primary" />
+                                ) : (
+                                  <ArrowUpDown className="ml-1 h-3 w-3 text-muted-foreground" />
+                                ))}
+                            </span>
+                          </TableHead>
+                        );
+                      })}
+                    </TableRow>
+                  ))}
+                </TableHeader>
+                <TableBody>
+                  {pageRows.map((row) => (
+                    <TableRow key={row.id}>
+                      {row.getAllCells().map((cell) => (
+                        <TableCell key={cell.id}>
+                          <table.FlexRender cell={cell} />
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <PaginationBar
+                page={effectivePage}
+                pageSize={pageSize}
+                totalItems={totalItems}
+                totalPages={totalPages}
+                onPageChange={setPage}
+                onPageSizeChange={handlePageSizeChange}
+                pageWord={t("pagination.page")}
+              />
+            </>
           )}
         </CardContent>
       </Card>

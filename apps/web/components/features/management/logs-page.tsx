@@ -16,16 +16,17 @@
  * that's treated as a brand new stream and clears the list.
  *
  * Two caps, not one: `SOFT_CAP` (1000) is the normal browser-side bound —
- * applied whenever the view is stuck to the bottom (`autoStick`), a second
- * bound over the server's 500-entry ring. While paused (`!autoStick`),
- * evicting under the soft cap would shift the paused user's scroll
- * position toward newer entries on every incoming line — browsers don't
- * compensate `scrollTop` for content removed above the viewport, so the
- * "frozen" view would silently drift. Only `HARD_CAP` (2000) evicts while
- * paused, a safety valve rather than a steady-state bound; resuming
- * (scrolling back to the bottom, or the "back to latest" button) trims the
- * buffered burst back down to `SOFT_CAP` immediately. Hitting `HARD_CAP`
- * while paused surfaces an inline notice that clears on resume.
+ * applied whenever the user is on page 1 (viewing latest — the pagination
+ * equivalent of the old scroll-based "stuck to bottom"), a second bound
+ * over the server's 500-entry ring. While viewing an older page (page !==
+ * 1), evicting under the soft cap would shift which entries land on every
+ * page below the newest — the reversed list's tail (oldest entries) is
+ * exactly what a later page renders, so trimming it out from under a
+ * paged-back user would silently change what's on their screen. Only
+ * `HARD_CAP` (2000) evicts on an older page, a safety valve rather than a
+ * steady-state bound; returning to page 1 trims the buffered burst back
+ * down to `SOFT_CAP` immediately. Hitting `HARD_CAP` on an older page
+ * surfaces an inline notice that clears back on page 1.
  *
  * The level filter is local/client-only — it never unsubscribes or asks
  * the server to stop sending a level. All levels (including debug, hidden
@@ -34,31 +35,32 @@
  * Unknown levels (anything outside debug/info/warning/error) always
  * render, regardless of filter chip state.
  *
- * Auto-scroll ("stick to bottom") is measurement-based, not event-driven:
- * `handleScroll` only *measures* distance-from-bottom to decide whether to
- * stay stuck; the effect that programmatically sets `scrollTop` on new
- * rows never toggles state itself. Setting `scrollTop` does fire a native
- * `scroll` event, which re-enters `handleScroll`, but that re-measurement
- * lands back at ~0 distance and confirms `autoStick` should stay true —
- * it settles rather than oscillating, so there's no feedback loop.
+ * Newest-first display + pagination: internal storage stays oldest-first
+ * (the append/dedup/cap logic above is seq-contract-critical and
+ * unchanged) — reversal to newest-first happens only in a memoized
+ * render-time derivation, then the reversed+level-filtered list is
+ * paginated the same way connections-page paginates its sorted rows. Page
+ * 1 always shows the newest entries, so new frames arriving while on page
+ * 1 naturally appear at the top with no scroll bookkeeping needed.
  *
- * `rowsRef`/`autoStickRef` mirror the corresponding state so
+ * `rowsRef`/`pageRef` mirror the corresponding state so
  * `handleTopicMessage` (a stable, zero-dependency callback — worth keeping
  * stable since it fires on every single log line, unlike the throttled
- * `connections` snapshot) can read the latest accumulated rows and
- * stickiness without depending on render-scoped state; `EntryRow`/`GapRow`
- * are memoized so an appended line only renders itself, not the other
- * ~1000 rows already on screen.
+ * `connections` snapshot) can read the latest accumulated rows and the
+ * user's current page without depending on render-scoped state;
+ * `EntryRow`/`GapRow` are memoized so an appended line only renders itself,
+ * not the other ~1000 rows already on screen.
  */
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { AlertTriangle, ArrowDown, Terminal } from "lucide-react";
+import { AlertTriangle, Terminal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useTopicSubscription, type TopicMessage } from "@/lib/management-ws";
+import { PaginationBar } from "./pagination-bar";
+import type { PageSize } from "@/lib/stats-utils";
 
 interface LogTopicData {
   seq: number;
@@ -195,15 +197,15 @@ export function LogsPage({ backendId }: LogsPageProps) {
     () => new Set(ALL_LEVELS.filter((l) => l !== "debug")),
   );
   const [topicOffline, setTopicOffline] = useState(false);
-  const [autoStick, setAutoStick] = useState(true);
   const [bufferOverflowed, setBufferOverflowed] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(10);
 
-  const scrollRef = useRef<HTMLDivElement | null>(null);
   const gapIdRef = useRef(0);
-  // Mirrors `rows`/`autoStick` for the zero-dependency message handler
-  // below — see file header comment.
+  // Mirrors `rows`/`page` for the zero-dependency message handler below —
+  // see file header comment.
   const rowsRef = useRef<LogRow[]>([]);
-  const autoStickRef = useRef(true);
+  const pageRef = useRef(1);
 
   const handleTopicMessage = useCallback((message: TopicMessage) => {
     if (message.type === "topic-error") {
@@ -229,12 +231,12 @@ export function LogsPage({ backendId }: LogsPageProps) {
       if (result.reset) setBufferOverflowed(false);
     }
 
-    const sticking = autoStickRef.current;
-    const cap = sticking ? SOFT_CAP : HARD_CAP;
-    // While paused, only the hard cap evicts — see file header: evicting
-    // under the soft cap here would shift the paused user's scroll
-    // position with nothing to compensate it.
-    if (!sticking && next.length > HARD_CAP) {
+    const onLatestPage = pageRef.current === 1;
+    const cap = onLatestPage ? SOFT_CAP : HARD_CAP;
+    // On an older page, only the hard cap evicts — see file header: evicting
+    // under the soft cap here would shift which entries land on later pages
+    // out from under a paged-back user.
+    if (!onLatestPage && next.length > HARD_CAP) {
       setBufferOverflowed(true);
     }
     const trimmed = trimToCap(next, cap);
@@ -250,33 +252,14 @@ export function LogsPage({ backendId }: LogsPageProps) {
   });
   const wsOffline = wsStatus !== "connected";
 
-  const toggleLevel = useCallback((level: KnownLevel) => {
-    setVisibleLevels((prev) => {
-      const next = new Set(prev);
-      if (next.has(level)) {
-        next.delete(level);
-      } else {
-        next.add(level);
-      }
-      return next;
-    });
-  }, []);
-
-  const visibleRows = useMemo(() => {
-    return (rows ?? []).filter((row) => {
-      if (row.kind === "gap") return true;
-      if (isKnownLevel(row.level)) return visibleLevels.has(row.level);
-      // Unknown levels are never dropped by the filter.
-      return true;
-    });
-  }, [rows, visibleLevels]);
-
-  // Resume stickiness (scrolled back to bottom, or "back to latest"
-  // clicked): trims the paused burst (buffered up to HARD_CAP while
-  // paused) back down to the steady-state cap immediately.
-  const resumeSticking = useCallback(() => {
-    autoStickRef.current = true;
-    setAutoStick(true);
+  // Returning to page 1 (the "on latest" state, replacing the old
+  // scroll-based autoStick) immediately trims any burst buffered up to
+  // HARD_CAP while the user was on a later page back down to the
+  // steady-state SOFT_CAP, and clears the overflow notice — mirrors the old
+  // resumeSticking's synchronous trim, called directly from the handlers
+  // below (an event handler, not a reactive effect) wherever navigation
+  // lands back on page 1.
+  const trimToLatestIfNeeded = useCallback(() => {
     setBufferOverflowed(false);
     const trimmed = trimToCap(rowsRef.current, SOFT_CAP);
     if (trimmed !== rowsRef.current) {
@@ -285,33 +268,77 @@ export function LogsPage({ backendId }: LogsPageProps) {
     }
   }, []);
 
-  // Measurement-based stickiness — see file header comment for why this
-  // can't feedback-loop with the scroll-to-bottom effect below.
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const atBottom = distanceFromBottom <= 48;
-    if (atBottom) {
-      if (!autoStickRef.current) resumeSticking();
-    } else if (autoStickRef.current) {
-      autoStickRef.current = false;
-      setAutoStick(false);
-    }
-  }, [resumeSticking]);
+  // Level filter, page size, and page navigation all keep `pageRef` in sync
+  // alongside the state setter (not via a separate effect) so the
+  // zero-dependency `handleTopicMessage` above never reads a stale page
+  // number between a click and the next render.
+  const toggleLevel = useCallback(
+    (level: KnownLevel) => {
+      setVisibleLevels((prev) => {
+        const next = new Set(prev);
+        if (next.has(level)) {
+          next.delete(level);
+        } else {
+          next.add(level);
+        }
+        return next;
+      });
+      // Filtering changes what "page 1" contains, same as connections-page's
+      // search — reset to page 1 rather than leaving the user on a page
+      // whose contents just shifted under them.
+      pageRef.current = 1;
+      setPage(1);
+      trimToLatestIfNeeded();
+    },
+    [trimToLatestIfNeeded],
+  );
 
-  useEffect(() => {
-    if (!autoStick) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [visibleRows, autoStick]);
+  const handlePageChange = useCallback(
+    (next: number) => {
+      pageRef.current = next;
+      setPage(next);
+      if (next === 1) trimToLatestIfNeeded();
+    },
+    [trimToLatestIfNeeded],
+  );
 
-  const handleBackToLatest = useCallback(() => {
-    resumeSticking();
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [resumeSticking]);
+  const handlePageSizeChange = useCallback(
+    (size: PageSize) => {
+      setPageSize(size);
+      pageRef.current = 1;
+      setPage(1);
+      trimToLatestIfNeeded();
+    },
+    [trimToLatestIfNeeded],
+  );
+
+  // Newest-first is a render-time derivation over the oldest-first storage
+  // array (`rows`) — see file header comment. Reversing first and filtering
+  // second keeps a gap row's position relative to its two neighboring
+  // entries intact (it's just another element of the same array).
+  const reversedRows = useMemo(() => (rows ? [...rows].reverse() : []), [rows]);
+
+  const visibleRows = useMemo(() => {
+    return reversedRows.filter((row) => {
+      if (row.kind === "gap") return true;
+      if (isKnownLevel(row.level)) return visibleLevels.has(row.level);
+      // Unknown levels are never dropped by the filter.
+      return true;
+    });
+  }, [reversedRows, visibleLevels]);
+
+  // Paginate the reversed+filtered list — same manual-slice idiom as
+  // connections-page. `effectivePage` is derived at render time rather than
+  // written back into `page` state, so a shrinking `totalPages` (HARD_CAP
+  // eviction while on an older page) never fights the explicit resets in
+  // `toggleLevel`/`handlePageSizeChange` above.
+  const totalItems = visibleRows.length;
+  const totalPages = totalItems > 0 ? Math.max(1, Math.ceil(totalItems / pageSize)) : 0;
+  const effectivePage = totalPages > 0 ? Math.min(page, totalPages) : 1;
+  const pageRows = visibleRows.slice(
+    (effectivePage - 1) * pageSize,
+    effectivePage * pageSize,
+  );
 
   const hasData = rows !== null;
   // Quiet backend (freshly created ring, nothing published yet): once the
@@ -362,25 +389,24 @@ export function LogsPage({ backendId }: LogsPageProps) {
           bare `wsOffline` (our socket to the collector is momentarily
           down) in what the banner says — same treatment as connections-page. */}
       {(topicOffline || wsOffline) && <OfflineBanner reconnecting={!topicOffline} />}
-      {!autoStick && bufferOverflowed && <BufferOverflowNotice />}
+      {/* `effectivePage` (not raw `page`) — if a clamp already put the view
+          back on page 1, the notice shouldn't linger for a stale page
+          number the user didn't explicitly navigate away from. */}
+      {effectivePage !== 1 && bufferOverflowed && <BufferOverflowNotice />}
 
-      <Card className="relative">
+      <Card>
         <CardContent className="p-0">
-          <div
-            ref={scrollRef}
-            onScroll={handleScroll}
-            className="h-[65vh] min-h-[320px] overflow-y-auto"
-          >
-            {visibleRows.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                {/* Distinguish "nothing has arrived yet" from "the level
-                    filter hid everything we have" — `rows` (unfiltered) vs
-                    `visibleRows` (filtered) diverging means the latter. */}
-                {rows && rows.length > 0 ? t("emptyFiltered") : t("empty")}
-              </div>
-            ) : (
+          {visibleRows.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              {/* Distinguish "nothing has arrived yet" from "the level
+                  filter hid everything we have" — `rows` (unfiltered) vs
+                  `visibleRows` (filtered) diverging means the latter. */}
+              {rows && rows.length > 0 ? t("emptyFiltered") : t("empty")}
+            </div>
+          ) : (
+            <>
               <div className="divide-y divide-border/50">
-                {visibleRows.map((row) =>
+                {pageRows.map((row) =>
                   row.kind === "gap" ? (
                     <GapRow key={`gap-${row.id}`} dropped={row.dropped} />
                   ) : (
@@ -388,19 +414,16 @@ export function LogsPage({ backendId }: LogsPageProps) {
                   ),
                 )}
               </div>
-            )}
-          </div>
-
-          {!autoStick && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleBackToLatest}
-              className="absolute bottom-4 right-4 gap-1.5 shadow-md"
-            >
-              <ArrowDown className="h-3.5 w-3.5" />
-              {t("backToLatest")}
-            </Button>
+              <PaginationBar
+                page={effectivePage}
+                pageSize={pageSize}
+                totalItems={totalItems}
+                totalPages={totalPages}
+                onPageChange={handlePageChange}
+                onPageSizeChange={handlePageSizeChange}
+                pageWord={t("pagination.page")}
+              />
+            </>
           )}
         </CardContent>
       </Card>
