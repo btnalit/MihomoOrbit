@@ -711,14 +711,14 @@ export class BackendService {
   private getAgentHeartbeatTimeoutMs(): number {
     return Math.max(
       15_000,
-      Number.parseInt(process.env.AGENT_HEARTBEAT_TIMEOUT_MS || '30000', 10) || 30_000,
+      Number.parseInt(process.env.AGENT_HEARTBEAT_TIMEOUT_MS || '75000', 10) || 75_000,
     );
   }
 
   private getAgentManualTestTimeoutMs(): number {
     return Math.max(
       3_000,
-      Number.parseInt(process.env.AGENT_MANUAL_TEST_TIMEOUT_MS || '8000', 10) || 8_000,
+      Number.parseInt(process.env.AGENT_MANUAL_TEST_TIMEOUT_MS || '75000', 10) || 75_000,
     );
   }
 
