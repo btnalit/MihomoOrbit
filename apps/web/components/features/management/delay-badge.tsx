@@ -9,6 +9,13 @@
  * <500ms yellow, else red, timeout/error gray. `0` is additionally treated
  * as "no data" (gray) — Mihomo's own convention for "never tested / dead",
  * matching zashboard's `NOT_CONNECTED` constant (helper/index.ts).
+ *
+ * `DELAY_LOW_MS`/`DELAY_MEDIUM_MS` and `delayTier()` are exported (M1.7 T2)
+ * so the groups-page collapsed summary bar buckets members by the exact
+ * same thresholds this badge colors by — they must never disagree about a
+ * given proxy's tier. `DELAY_TIER_BAR_CLASSES` mirrors `TIER_CLASSES`' hues
+ * as solid fills for that bar (no text to keep legible over, so no need for
+ * the translucent background this badge uses).
  */
 
 import { Loader2 } from "lucide-react";
@@ -18,6 +25,20 @@ import { cn } from "@/lib/utils";
 
 export type DelayValue = number | "timeout";
 
+export const DELAY_LOW_MS = 150;
+export const DELAY_MEDIUM_MS = 500;
+
+export type DelayTier = "low" | "medium" | "high" | "unknown";
+
+/** Buckets a resolved delay (or `undefined` = no data yet) into the same
+ *  tier this badge colors by. */
+export function delayTier(value: DelayValue | undefined): DelayTier {
+  if (value === undefined || value === "timeout" || value === 0) return "unknown";
+  if (value < DELAY_LOW_MS) return "low";
+  if (value < DELAY_MEDIUM_MS) return "medium";
+  return "high";
+}
+
 const TIER_CLASSES = {
   low: "border-transparent bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
   medium: "border-transparent bg-amber-500/10 text-amber-600 dark:text-amber-400",
@@ -25,11 +46,18 @@ const TIER_CLASSES = {
   unknown: "border-transparent bg-muted text-muted-foreground",
 } as const;
 
+/** Solid-fill counterpart of `TIER_CLASSES`, for the collapsed-card summary
+ *  bar (M1.7 T2) — same emerald/amber/rose hues with dark variants, gray
+ *  for the not-connected bucket. */
+export const DELAY_TIER_BAR_CLASSES: Record<DelayTier, string> = {
+  low: "bg-emerald-500 dark:bg-emerald-400",
+  medium: "bg-amber-500 dark:bg-amber-400",
+  high: "bg-rose-500 dark:bg-rose-400",
+  unknown: "bg-muted-foreground/30",
+};
+
 function tierClassFor(value: DelayValue): string {
-  if (value === "timeout" || value === 0) return TIER_CLASSES.unknown;
-  if (value < 150) return TIER_CLASSES.low;
-  if (value < 500) return TIER_CLASSES.medium;
-  return TIER_CLASSES.high;
+  return TIER_CLASSES[delayTier(value)];
 }
 
 interface DelayBadgeProps {

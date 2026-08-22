@@ -482,7 +482,12 @@
       "loadError": "Failed to load proxy groups",
       "empty": "No proxy groups",
       "memberLocked": "This group picks its member automatically — manual switching isn't supported",
-      "showHidden": "Show hidden groups"
+      "showHidden": "Show hidden groups",
+      "searchMembers": "Search nodes",
+      "closeSearch": "Close search",
+      "searchPlaceholder": "Search node names…",
+      "noSearchResults": "No matching nodes",
+      "delaySummaryLabel": "Latency distribution: {good} good, {medium} medium, {slow} slow, {unknown} unknown"
     },
     "connections": {
       "title": "Live Connections",

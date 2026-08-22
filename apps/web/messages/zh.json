@@ -482,7 +482,12 @@
       "loadError": "加载代理组失败",
       "empty": "暂无代理组",
       "memberLocked": "该分组按策略自动选择节点,不支持手动切换",
-      "showHidden": "显示隐藏组"
+      "showHidden": "显示隐藏组",
+      "searchMembers": "搜索节点",
+      "closeSearch": "关闭搜索",
+      "searchPlaceholder": "搜索节点名称…",
+      "noSearchResults": "没有匹配的节点",
+      "delaySummaryLabel": "延迟分布:良好 {good}、中等 {medium}、较慢 {slow}、未知 {unknown}"
     },
     "connections": {
       "title": "实时连接",
