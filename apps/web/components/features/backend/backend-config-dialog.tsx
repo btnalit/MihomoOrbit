@@ -1589,8 +1589,8 @@ export function BackendConfigDialog({
                                       className={cn(
                                         "w-4 h-4",
                                         testingId === backend.id && "animate-spin",
-                                        backend.health?.status === 'healthy' && !testingId && "text-green-500",
-                                        backend.health?.status === 'unhealthy' && !testingId && "text-red-500",
+                                        backend.health?.status === 'healthy' && !testingId && "text-green-500 dark:text-green-400",
+                                        backend.health?.status === 'unhealthy' && !testingId && "text-red-500 dark:text-red-400",
                                       )}
                                     />
                                   </Button>
@@ -1601,8 +1601,8 @@ export function BackendConfigDialog({
                                     {backend.health ? (
                                       <span className={cn(
                                         "text-[10px]",
-                                        backend.health.status === 'healthy' ? "text-green-500" : 
-                                        backend.health.status === 'unhealthy' ? "text-red-500" : "text-gray-400"
+                                        backend.health.status === 'healthy' ? "text-green-500 dark:text-green-400" :
+                                        backend.health.status === 'unhealthy' ? "text-red-500 dark:text-red-400" : "text-gray-400"
                                       )}>
                                         {backend.health.message || 
                                           (backend.health.status === 'healthy' ? 'Healthy' : 
@@ -2076,7 +2076,7 @@ export function BackendConfigDialog({
             cancelEdit();
           }
         }}>
-        <DialogContent className="sm:max-w-xl" onPointerDownOutside={(e) => e.preventDefault()}>
+        <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto" onPointerDownOutside={(e) => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>{commonT("edit")}</DialogTitle>
             <DialogDescription>{t("description")}</DialogDescription>
@@ -2239,9 +2239,9 @@ export function BackendConfigDialog({
                           className={cn(
                             "text-[11px]",
                             editingBackend.health.status === "healthy"
-                              ? "text-green-500"
+                              ? "text-green-500 dark:text-green-400"
                               : editingBackend.health.status === "unhealthy"
-                                ? "text-red-500"
+                                ? "text-red-500 dark:text-red-400"
                                 : "text-muted-foreground",
                           )}>
                           {editingBackend.health.message}
@@ -2296,7 +2296,7 @@ export function BackendConfigDialog({
             setFormData(getInitialFormState());
           }
         }}>
-        <DialogContent className="sm:max-w-xl" onPointerDownOutside={(e) => e.preventDefault()}>
+        <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto" onPointerDownOutside={(e) => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>{t("addNew")}</DialogTitle>
             <DialogDescription>{t("description")}</DialogDescription>

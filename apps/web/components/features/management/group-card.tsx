@@ -227,7 +227,7 @@ export function GroupCard({
                     more columns and narrow ones fewer without a breakpoint
                     table — and an internal scroll region so a 40+ member
                     group (e.g. GLOBAL) can't blow up page height. */}
-                <div className="max-h-96 overflow-y-auto grid grid-cols-[repeat(auto-fill,minmax(min(140px,100%),1fr))] gap-1.5">
+                <div className="max-h-96 overflow-y-auto overscroll-contain grid grid-cols-[repeat(auto-fill,minmax(min(140px,100%),1fr))] gap-1.5">
                   {filteredMembers.map((name) => {
                     const isSelected = name === group.now;
                     const delay = resolveDelay(name, proxies, overrideDelays);

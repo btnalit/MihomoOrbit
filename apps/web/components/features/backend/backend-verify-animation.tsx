@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { motion, AnimatePresence } from "framer-motion";
 import { Check, X, Shield, Server, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,7 @@ export function BackendVerifyAnimation({
 
   if (!show) return null;
 
+  const t = useTranslations("backend.verify");
   const isPending = displayPhase === "pending";
   const isSuccess = displayPhase === "success";
   const isError = displayPhase === "error";
@@ -191,9 +193,9 @@ export function BackendVerifyAnimation({
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2 }}
             >
-              {isPending && "Verifying..."}
-              {isSuccess && "Verification Successful"}
-              {isError && "Verification Failed"}
+              {isPending && t("pending")}
+              {isSuccess && t("success")}
+              {isError && t("failed")}
             </motion.h3>
             
             {backendName && (

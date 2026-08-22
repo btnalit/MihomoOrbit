@@ -823,6 +823,11 @@
     "retentionUpdated": "Storage settings saved",
     "retentionUpdateFailed": "Failed to save settings",
     "invalidToken": "Invalid token format",
+    "verify": {
+      "pending": "Verifying...",
+      "success": "Verification Successful",
+      "failed": "Verification Failed"
+    },
     "showcaseModeAddDisabled": "Adding backends is disabled in showcase mode",
     "showcaseModeSecurityDisabled": "Security settings are locked in showcase mode",
     "showcaseModeDbDisabled": "Database operations are disabled in showcase mode",
@@ -847,6 +852,7 @@
       "enabled": "Access control enabled",
       "enabledSuccess": "Access control enabled, please remember your token",
       "enableFailed": "Failed to enable access control",
+      "invalidToken": "Token must be at least 16 characters",
       "warningTitle": "Important Notice",
       "warningDescription": "Please keep your access token safe. If you lose it, you won't be able to access the dashboard.",
       "confirmEnableTitle": "Confirm Enable Access Control",

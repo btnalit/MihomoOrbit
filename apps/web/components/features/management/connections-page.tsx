@@ -146,6 +146,17 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
 
   const prevFrameRef = useRef<PrevFrame | null>(null);
 
+  // Frames land ~1/s and re-sort the table. If one lands between a user's
+  // pointerdown and the click it becomes (e.g. on a row's kill button), the
+  // row's DOM node moves and the click silently misses — mousedown/mouseup
+  // no longer share a target, so no click fires at all. Hold frame
+  // application while a pointer is down inside the table body, and apply
+  // the last held frame shortly AFTER release so the click has dispatched
+  // by the time rows may reorder.
+  const pointerHoldRef = useRef(false);
+  const heldFrameRef = useRef<TopicMessage | null>(null);
+  const holdReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const handleTopicMessage = useCallback(
     (message: TopicMessage) => {
       if (message.type === "topic-error") {
@@ -160,6 +171,13 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
 
       // Ignore the frame entirely while paused — see file header comment.
       if (paused) return;
+
+      // Pointer held inside the table body: park the frame (latest wins)
+      // instead of applying it — see the hold refs' comment above.
+      if (pointerHoldRef.current) {
+        heldFrameRef.current = message;
+        return;
+      }
 
       const data = message.data as ConnectionsSnapshotData | undefined;
       if (!data) return;
@@ -423,6 +441,34 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
     setPage(1);
   }, []);
 
+  const beginPointerHold = useCallback(() => {
+    if (holdReleaseTimerRef.current) {
+      clearTimeout(holdReleaseTimerRef.current);
+      holdReleaseTimerRef.current = null;
+    }
+    pointerHoldRef.current = true;
+  }, []);
+
+  const scheduleHoldRelease = useCallback(() => {
+    if (holdReleaseTimerRef.current) clearTimeout(holdReleaseTimerRef.current);
+    // 150ms: past the click that follows pointerup, far under the ~1s frame
+    // cadence, invisible next to it.
+    holdReleaseTimerRef.current = setTimeout(() => {
+      holdReleaseTimerRef.current = null;
+      pointerHoldRef.current = false;
+      const held = heldFrameRef.current;
+      heldFrameRef.current = null;
+      if (held) handleTopicMessage(held);
+    }, 150);
+  }, [handleTopicMessage]);
+
+  useEffect(
+    () => () => {
+      if (holdReleaseTimerRef.current) clearTimeout(holdReleaseTimerRef.current);
+    },
+    [],
+  );
+
   const table = useTable({
     data: filteredConnections,
     columns,
@@ -568,7 +614,12 @@ export function ConnectionsPage({ backendId }: ConnectionsPageProps) {
                     </TableRow>
                   ))}
                 </TableHeader>
-                <TableBody>
+                <TableBody
+                  onPointerDownCapture={beginPointerHold}
+                  onPointerUp={scheduleHoldRelease}
+                  onPointerCancel={scheduleHoldRelease}
+                  onPointerLeave={scheduleHoldRelease}
+                >
                   {pageRows.map((row) => (
                     <TableRow key={row.id}>
                       {row.getAllCells().map((cell) => (

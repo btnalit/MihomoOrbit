@@ -141,6 +141,26 @@ export function GroupsPage({ backendId }: GroupsPageProps) {
     }
   }, [groupsQuery.isSuccess, groupsQuery.dataUpdatedAt]);
 
+  // Prune delay overrides for proxies that no longer exist after a config /
+  // subscription refresh — otherwise the map only ever grows for the page's
+  // lifetime, and a proxy NAME reused later for a different node would show
+  // the old node's stale delay until re-tested.
+  useEffect(() => {
+    const known = groupsQuery.data?.proxies;
+    if (!known) return;
+    setOverrideDelays((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const name of next.keys()) {
+        if (!(name in known)) {
+          next.delete(name);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [groupsQuery.dataUpdatedAt, groupsQuery.data]);
+
   const handleTopicMessage = useCallback((message: TopicMessage) => {
     if (message.type === "topic-error") {
       setTopicOffline(true);

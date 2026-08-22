@@ -366,7 +366,7 @@ function ProxyMemberPicker({
         placeholder={t("table.memberPicker.searchPlaceholder")}
         className="mb-2"
       />
-      <div className="max-h-40 overflow-y-auto rounded-md border divide-y divide-border/60">
+      <div className="max-h-40 overflow-y-auto overscroll-contain rounded-md border divide-y divide-border/60">
         {available.length === 0 ? (
           <p className="text-xs text-muted-foreground p-3">{t("table.memberPicker.empty")}</p>
         ) : candidates.length === 0 ? (
@@ -502,7 +502,7 @@ function NameSuggestInput({
             e.preventDefault();
           }
         }}
-        className="w-[var(--radix-popover-trigger-width)] max-h-52 overflow-y-auto p-1"
+        className="w-[var(--radix-popover-trigger-width)] max-h-52 overflow-y-auto overscroll-contain p-1"
       >
         {candidates.length === 0 ? (
           <p className="text-xs text-muted-foreground px-2 py-1.5">{t("table.nameSuggest.noMatches")}</p>

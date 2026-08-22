@@ -823,6 +823,11 @@
     "retentionUpdated": "存储设置已保存",
     "retentionUpdateFailed": "设置保存失败",
     "invalidToken": "令牌格式无效",
+    "verify": {
+      "pending": "正在验证…",
+      "success": "验证成功",
+      "failed": "验证失败"
+    },
     "showcaseModeAddDisabled": "演示模式下禁止添加后端",
     "showcaseModeSecurityDisabled": "演示模式下禁止修改安全设置",
     "showcaseModeDbDisabled": "演示模式下禁止数据库操作",
@@ -847,6 +852,7 @@
       "enabled": "访问控制已启用",
       "enabledSuccess": "访问控制已启用，请牢记您的令牌",
       "enableFailed": "启用访问控制失败",
+      "invalidToken": "令牌至少需要 16 个字符",
       "warningTitle": "重要提示",
       "warningDescription": "请妥善保管您的访问令牌。如果丢失令牌，您将无法访问面板。",
       "confirmEnableTitle": "确认启用访问控制",
