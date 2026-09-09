@@ -32,10 +32,10 @@ jobs:
         working-directory: apps/agent
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: apps/agent/go.mod
           # agent 零外部依赖(go.mod 无 require,仓库里也没有 go.sum),
@@ -83,10 +83,10 @@ jobs:
             arch: arm64
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: apps/agent/go.mod
           # agent 零外部依赖(go.mod 无 require,仓库里也没有 go.sum),
