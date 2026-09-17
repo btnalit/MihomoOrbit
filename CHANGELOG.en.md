@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Chinese changelog ([CHANGELOG.md](./CHANGELOG.md)) is the primary record and
 also carries the upstream neko-master history predating the fork.
 
+## [Unreleased]
+
+### Added
+
+- **Core operations (M4)**: a "Core Ops" card on the runtime settings page — restart core (confirmation names the backend; the collector polls `/version` to report recovery), reload config, flush DNS cache, flush Fake-IP. Part of the management capability; no agent required.
+- Invariant: one core-lifecycle mutator at a time — restart/reload return `409 CORE_BUSY` while an agent config write-back is in flight, so the write-back's health gate can't misread an external restart as failure.
+
 ## [0.3.0] - 2026-08-22
 
 From a monitoring panel to a full management panel: real-time management and

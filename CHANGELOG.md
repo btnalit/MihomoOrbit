@@ -5,6 +5,13 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [Unreleased]
+
+### 新增
+
+- **内核运维(M4)**:运行时设置页新增"内核运维"卡片 —— 重启核心(需确认,弹窗写明后端名;collector 轮询 `/version` 判定恢复)、重载配置、清空 DNS 缓存、清空 Fake-IP。属实时管理能力,不依赖 agent。
+- 不变量:内核生命周期同一时刻只有一个变更者 —— agent 配置写回进行中时,重启/重载返回 `409 CORE_BUSY`,避免健康门误判回滚。
+
 ## [0.3.0] - 2026-08-22
 
 从监控面板到完整管理面板:实时管理 + 配置编辑两大能力落地,并完成三轮前端质量整改。
