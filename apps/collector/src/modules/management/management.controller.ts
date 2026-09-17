@@ -291,7 +291,11 @@ const managementController: FastifyPluginAsync = async (fastify: FastifyInstance
       // new table, this log line is the record). Emitted only once the
       // request has cleared both gates and is actually about to reach
       // upstream, not on a 404/409/busy short-circuit above.
-      request.log.info({ backendId, action: 'core.restart' }, 'management: core restart requested');
+      // console, not request.log: the Fastify logger is off in production
+      // (app.ts `logger: false`), so request.log.* is a no-op there — the
+      // audit line would silently never land. `[Module] ...` on console is
+      // the collector's operational-log idiom (see BackendService).
+      console.log(`[Management] core.restart requested for backend ${backendId}`);
       return await service.restartCore(backendId);
     } catch (err) {
       const { status, body } = mapUpstreamError(err, backendId);
@@ -310,7 +314,7 @@ const managementController: FastifyPluginAsync = async (fastify: FastifyInstance
     }
 
     try {
-      request.log.info({ backendId, action: 'core.reload' }, 'management: core reload requested');
+      console.log(`[Management] core.reload requested for backend ${backendId}`); // see restart's comment
       await service.reloadConfig(backendId);
       return { success: true };
     } catch (err) {
