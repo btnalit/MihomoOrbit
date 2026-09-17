@@ -572,7 +572,31 @@
       },
       "offlineBanner": "Can't reach this backend right now — live data is unavailable.",
       "retry": "Retry",
-      "loadError": "Failed to load runtime config"
+      "loadError": "Failed to load runtime config",
+      "coreOps": {
+        "title": "Core Ops",
+        "description": "Restart the core, reload config, or flush runtime caches — takes effect immediately, nothing persisted",
+        "restart": "Restart Core",
+        "reload": "Reload Config",
+        "flushDns": "Flush DNS Cache",
+        "flushFakeip": "Flush Fake-IP Cache",
+        "restartConfirmTitle": "Restart Core",
+        "restartConfirmBody": "This will drop every connection on \"{backendName}\" and discard any unpersisted runtime changes. Continue?",
+        "restartConfirmAction": "Restart",
+        "restartSuccess": "Core restarted and back online",
+        "restartNotRecovered": "Restart sent — the core hasn't come back within 15s, please check it",
+        "reloadSuccess": "Config reloaded",
+        "flushDnsSuccess": "DNS cache flushed",
+        "flushFakeipSuccess": "Fake-IP cache flushed",
+        "restartFailed": "Failed to restart core",
+        "reloadFailed": "Failed to reload config",
+        "flushDnsFailed": "Failed to flush DNS cache",
+        "flushFakeipFailed": "Failed to flush Fake-IP cache",
+        "errors": {
+          "coreBusy": "A config write-back is in progress, try again shortly",
+          "unsupported": "The current core doesn't support this operation"
+        }
+      }
     },
     "providers": {
       "title": "Providers",

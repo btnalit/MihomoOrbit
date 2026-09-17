@@ -40,10 +40,30 @@
  * contradicting the brief's hard requirement (规格 §4 不持久标注).
  */
 
+import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { AlertTriangle, Info, RefreshCw, Settings2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  Info,
+  Loader2,
+  RefreshCw,
+  RotateCcw,
+  Settings2,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Select,
   SelectContent,
@@ -53,8 +73,15 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { apiErrorCode, isUnreachableError } from "@/lib/api";
-import { useRuntimeConfig, usePatchRuntimeConfig } from "@/hooks/api/use-management";
+import { api, apiErrorCode, isUnreachableError, type Backend } from "@/lib/api";
+import {
+  useRuntimeConfig,
+  usePatchRuntimeConfig,
+  useCoreRestart,
+  useCoreReload,
+  useFlushDnsCache,
+  useFlushFakeipCache,
+} from "@/hooks/api/use-management";
 
 const MODES = ["rule", "global", "direct"] as const;
 type Mode = (typeof MODES)[number];
@@ -87,6 +114,23 @@ export function RuntimePage({ backendId }: RuntimePageProps) {
   const modePatch = usePatchRuntimeConfig(backendId);
   const logLevelPatch = usePatchRuntimeConfig(backendId);
   const allowLanPatch = usePatchRuntimeConfig(backendId);
+
+  // Backend name for the restart confirmation dialog below (M4). This page
+  // only receives `backendId` — `content/index.tsx` doesn't forward the
+  // `Backend` object past `ManagementGate` to any of the five management
+  // pages, and none of them has needed the display name before now — so
+  // rather than threading a new prop through Content/ManagementGate for
+  // one dialog, this reads the exact same `["backends"]` query key
+  // use-dashboard.ts's own backends query uses. Same QueryClient, same
+  // cache entry: React Query treats identical keys as one shared query, so
+  // this rides the dashboard shell's already-running 5s poll instead of
+  // opening a second one.
+  const backendsQuery = useQuery<Backend[]>({
+    queryKey: ["backends"],
+    queryFn: () => api.getBackends(),
+    enabled: backendId !== undefined,
+  });
+  const backendName = backendsQuery.data?.find((b) => b.id === backendId)?.name;
 
   const handleRetry = () => {
     configQuery.refetch();
@@ -232,6 +276,12 @@ export function RuntimePage({ backendId }: RuntimePageProps) {
           </CardContent>
         </Card>
 
+        <CoreOpsCard
+          backendId={backendId}
+          backendName={backendName}
+          disabled={showOfflineBanner}
+        />
+
         <Card>
           <CardContent className="p-5">
             <h3 className="text-sm font-medium text-muted-foreground mb-3">
@@ -286,6 +336,149 @@ function Stat({ label, value }: { label: string; value: string }) {
       <span className="text-muted-foreground text-xs">{label}</span>
       <span className="font-medium tabular-nums">{value}</span>
     </div>
+  );
+}
+
+/** M4 "内核运维" card — four capability actions (plan
+ *  2026-09-16-m4-core-ops.md §2/§3 T2): restart core, reload config, flush
+ *  DNS cache, flush fake-ip cache. Unlike the mode/log-level/allow-lan
+ *  controls in the settings Card above, none of these has a "current
+ *  value" to read back — they're fire-and-forget capabilities, not
+ *  settings, so success is a toast, not a re-rendered control. Kept as its
+ *  own Card (not merged into the settings Card) since it reads and behaves
+ *  differently enough — no value, no undo, one of the four destructive —
+ *  that folding it into the settings form would blur that distinction.
+ *
+ *  Each button's own mutation `isPending` gates only that button (single-
+ *  flight per action, plan §3 T2), same pattern as the three
+ *  `usePatchRuntimeConfig` instances above; `disabled` (the page's
+ *  `showOfflineBanner`) additionally gates all four while the backend is
+ *  known unreachable or its credentials were rejected — issuing any of
+ *  these against a backend already known to be unreachable can only ever
+ *  fail. */
+function CoreOpsCard({
+  backendId,
+  backendName,
+  disabled,
+}: {
+  backendId: number | undefined;
+  backendName: string | undefined;
+  disabled: boolean;
+}) {
+  const t = useTranslations("management.runtime.coreOps");
+  const commonT = useTranslations("common");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const restart = useCoreRestart(backendId);
+  const reload = useCoreReload(backendId);
+  const flushDns = useFlushDnsCache(backendId);
+  const flushFakeip = useFlushFakeipCache(backendId);
+
+  return (
+    <Card>
+      <CardContent className="p-5 space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">{t("title")}</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">{t("description")}</p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            disabled={disabled || restart.isPending}
+            onClick={() => setConfirmOpen(true)}
+          >
+            {restart.isPending ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RotateCcw className="w-3.5 h-3.5" />
+            )}
+            {t("restart")}
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            disabled={disabled || reload.isPending}
+            onClick={() => reload.mutate()}
+          >
+            {reload.isPending ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5" />
+            )}
+            {t("reload")}
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            disabled={disabled || flushDns.isPending}
+            onClick={() => flushDns.mutate()}
+          >
+            {flushDns.isPending ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="w-3.5 h-3.5" />
+            )}
+            {t("flushDns")}
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            disabled={disabled || flushFakeip.isPending}
+            onClick={() => flushFakeip.mutate()}
+          >
+            {flushFakeip.isPending ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="w-3.5 h-3.5" />
+            )}
+            {t("flushFakeip")}
+          </Button>
+        </div>
+      </CardContent>
+
+      {/* Restart is the only one of the four that's destructive (drops
+       *  every connection, discards unpersisted runtime edits) — plan §3
+       *  T2 requires a confirmation naming the current backend. Controlled
+       *  `open`/`onOpenChange` (not `AlertDialogTrigger` wrapping the
+       *  button above) so the same click that opens this can later be
+       *  reused for other entry points without restructuring — same
+       *  pattern backend-config-dialog.tsx uses for its own AlertDialogs.
+       *  `AlertDialogAction` closes the dialog itself on click (Radix
+       *  default); `restart.mutate()` fires the same instant, so the
+       *  visible progress after confirming is the Restart button's own
+       *  spinner above, not anything inside this dialog. */}
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("restartConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("restartConfirmBody", { backendName: backendName ?? "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restart.isPending}>
+              {commonT("cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={restart.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => restart.mutate()}
+            >
+              {t("restartConfirmAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
   );
 }
 

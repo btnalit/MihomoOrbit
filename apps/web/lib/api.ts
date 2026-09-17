@@ -71,6 +71,18 @@ export function isUnreachableError(err: unknown): boolean {
   return err.status === 502 || err.status === 504;
 }
 
+/** `err.data.upstreamStatus` from a parsed management error body — the
+ *  original upstream (Mihomo/Clash) status code when collector's
+ *  `mapUpstreamError` turned a non-2xx upstream response into a 502 (e.g.
+ *  404 when the running core doesn't implement an endpoint, like `/restart`
+ *  on an older build). undefined for any non-`ApiError` or a body without
+ *  the field. */
+export function apiUpstreamStatus(err: unknown): number | undefined {
+  if (!(err instanceof ApiError)) return undefined;
+  const data = err.data as { upstreamStatus?: unknown } | undefined;
+  return typeof data?.upstreamStatus === "number" ? data.upstreamStatus : undefined;
+}
+
 
 
 async function fetchJson<T>(
@@ -853,6 +865,45 @@ export function fetchProviders(backendId: number) {
 export function refreshProvider(backendId: number, kind: ProviderKind, name: string) {
   return fetchJson<{ success: true }>(
     `${API_BASE}/management/${backendId}/providers/${kind}/${encodeURIComponent(name)}/refresh`,
+    "POST",
+  );
+}
+
+// --- Core ops (M4) -----------------------------------------------------
+// Capabilities, not settings (plan 2026-09-16-m4-core-ops.md §2): none of
+// these has a "current value" to read back — each is fire-and-forget, so
+// they're independent POST routes rather than another `PATCH /configs`
+// field. All four are bodyless POSTs; fetchJson only sets Content-Type
+// when a body is passed, so omitting the third argument here keeps them
+// that way (same shape as `killConnection`/`refreshProvider` above).
+
+/** `POST /core/restart` response. Collector polls the upstream `GET
+ *  /version` itself (every 500ms, up to a 15s cap) before answering, so by
+ *  the time this promise resolves the restart has either already recovered
+ *  or collector has given up waiting — `recovered` is collector's verdict,
+ *  not a guess this page has to make. See `useCoreRestart` for why the UI
+ *  trusts this field instead of a fixed client-side delay. */
+export interface CoreRestartResult {
+  success: true;
+  recovered: boolean;
+  recoveryMs?: number;
+}
+
+export function coreRestart(backendId: number) {
+  return fetchJson<CoreRestartResult>(`${API_BASE}/management/${backendId}/core/restart`, "POST");
+}
+
+export function coreReload(backendId: number) {
+  return fetchJson<{ success: true }>(`${API_BASE}/management/${backendId}/core/reload`, "POST");
+}
+
+export function flushDnsCache(backendId: number) {
+  return fetchJson<{ success: true }>(`${API_BASE}/management/${backendId}/cache/dns/flush`, "POST");
+}
+
+export function flushFakeipCache(backendId: number) {
+  return fetchJson<{ success: true }>(
+    `${API_BASE}/management/${backendId}/cache/fakeip/flush`,
     "POST",
   );
 }
