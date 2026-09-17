@@ -7,12 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Chinese changelog ([CHANGELOG.md](./CHANGELOG.md)) is the primary record and
 also carries the upstream neko-master history predating the fork.
 
-## [Unreleased]
+## [0.4.0] - 2026-09-17
 
 ### Added
 
 - **Core operations (M4)**: a "Core Ops" card on the runtime settings page — restart core (confirmation names the backend; the collector polls `/version` to report recovery), reload config, flush DNS cache, flush Fake-IP. Part of the management capability; no agent required.
-- Invariant: one core-lifecycle mutator at a time — restart/reload return `409 CORE_BUSY` while an agent config write-back is in flight, so the write-back's health gate can't misread an external restart as failure.
+- Invariant: one core-lifecycle mutator at a time — restart/reload return `409 CORE_BUSY` while an agent config write-back is in flight; conversely, config apply/rollback return `409 CORE_RESTARTING` during a manual restart's recovery window.
+
+### Fixed
+
+- Health page "Overall Uptime" headline is now the **current** state (healthy backends / monitored backends): it recovers as soon as a backend does, and one-of-two down reads exactly 50%. The range-wide uptime moves to the tile's caption ("x% over range") and is averaged with equal weight per backend (it was pooled by sample count, so a backend with more samples dominated).
+- Core-ops audit lines go through console (the Fastify logger is off in production, so `request.log` was a no-op).
+
+### Upgrade notes
+
+- No schema migration; no agent upgrade required (agent-v2.0.0 suffices). Run the agent as a systemd/openwrt service via `install.sh` — a foreground `nohup` process dies with its session or a host reboot.
 
 ## [0.3.0] - 2026-08-22
 

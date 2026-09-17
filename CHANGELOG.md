@@ -5,12 +5,21 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并且本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
-## [Unreleased]
+## [0.4.0] - 2026-09-17
 
 ### 新增
 
 - **内核运维(M4)**:运行时设置页新增"内核运维"卡片 —— 重启核心(需确认,弹窗写明后端名;collector 轮询 `/version` 判定恢复)、重载配置、清空 DNS 缓存、清空 Fake-IP。属实时管理能力,不依赖 agent。
-- 不变量:内核生命周期同一时刻只有一个变更者 —— agent 配置写回进行中时,重启/重载返回 `409 CORE_BUSY`,避免健康门误判回滚。
+- 不变量:内核生命周期同一时刻只有一个变更者 —— agent 配置写回进行中时,重启/重载返回 `409 CORE_BUSY`;反向亦然,手动重启轮询窗口内配置 apply/rollback 返回 `409 CORE_RESTARTING`。
+
+### 修复
+
+- 节点健康页"整体可用率"改为**当前态**(在线节点 / 监控节点):恢复即恢复、2 台挂 1 台恰为 50%;原窗口历史可用率降为卡片副标"时段内 x%",并改为各后端等权平均(此前按采样点混算,采样多的后端权重更大)。
+- 内核运维审计日志改走 console(Fastify logger 生产关闭,`request.log` 为空操作)。
+
+### 升级说明
+
+- 无 schema 迁移;agent 无需升级(agent-v2.0.0 即可)。运行 agent 请以 systemd/openwrt 服务方式安装(`install.sh`),前台 `nohup` 进程会随会话或主机重启消亡。
 
 ## [0.3.0] - 2026-08-22
 
