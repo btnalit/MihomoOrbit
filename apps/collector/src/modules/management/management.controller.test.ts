@@ -113,6 +113,31 @@ function createFakeMihomo(state: { hang: boolean; unauthorized?: boolean }): htt
       return;
     }
 
+    // M4 core-ops.
+    if (req.method === 'POST' && url === '/restart') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+
+    if (req.method === 'GET' && url === '/version') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ version: 'v1.19.30' }));
+      return;
+    }
+
+    if (req.method === 'PUT' && url === '/configs?reload=true') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    if (req.method === 'POST' && (url === '/cache/dns/flush' || url === '/cache/fakeip/flush')) {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
     res.writeHead(404);
     res.end();
   });
@@ -166,6 +191,20 @@ describe('management controller: auth protection + error mapping', () => {
   it('a nonexistent backendId returns 404', async () => {
     const res = await authed('GET', '/api/management/999999/groups');
     expect(res.statusCode).toBe(404);
+  });
+
+  // M4 core-ops (plan 2026-09-16-m4-core-ops.md): the same capability gate
+  // (resolve()) applies to all four new routes.
+  it.each([
+    ['POST', 'core/restart'],
+    ['POST', 'core/reload'],
+    ['POST', 'cache/dns/flush'],
+    ['POST', 'cache/fakeip/flush'],
+  ] as const)('%s %s on a backend with no api_url is refused with 409 NO_MANAGEMENT_CAPABILITY', async (method, path) => {
+    const id = db.createBackend({ name: `agent-only-${path.replace(/\//g, '-')}`, url: 'agent://a', token: 't', agentToken: 't' });
+    const res = await authed(method, `/api/management/${id}/${path}`);
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'NO_MANAGEMENT_CAPABILITY', backendId: id });
   });
 
   describe('against a live fake Mihomo upstream', () => {
@@ -254,6 +293,96 @@ describe('management controller: auth protection + error mapping', () => {
 
     it('POST providers refresh for a name the upstream 404s on maps to 502 { reachable: true, upstreamStatus: 404 }', async () => {
       const res = await authed('POST', `/api/management/${backendId}/providers/rule/missing-provider/refresh`);
+      expect(res.statusCode).toBe(502);
+      expect(res.json()).toMatchObject({ backendId, reachable: true, upstreamStatus: 404 });
+    });
+
+    // M4 core-ops: happy-path route wiring. The fake upstream answers
+    // GET /version 200 immediately, so restart recovers on its very first
+    // probe — this exercises the real (production-default) poll path
+    // end-to-end without waiting out the 15s budget.
+    it('POST core/restart succeeds and reports recovered:true against a live upstream', async () => {
+      const res = await authed('POST', `/api/management/${backendId}/core/restart`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ success: true, recovered: true });
+      expect(typeof res.json().recoveryMs).toBe('number');
+    });
+
+    it('POST core/reload succeeds', async () => {
+      const res = await authed('POST', `/api/management/${backendId}/core/reload`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ success: true });
+    });
+
+    it('POST cache/dns/flush succeeds', async () => {
+      const res = await authed('POST', `/api/management/${backendId}/cache/dns/flush`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ success: true });
+    });
+
+    it('POST cache/fakeip/flush succeeds', async () => {
+      const res = await authed('POST', `/api/management/${backendId}/cache/fakeip/flush`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ success: true });
+    });
+
+    // M4 core-ops: §2's CORE_BUSY invariant — restart/reload refuse to run
+    // while a config-editor command is still pending/dispatched for this
+    // backend (config-command.repository.test.ts's own create() idiom).
+    it('POST core/restart returns 409 CORE_BUSY when a config command is in flight', async () => {
+      db.configCommands.create({ commandId: 'cmd_busy_restart', backendId, versionId: 1, baseHash: 'h', payload: '{}' });
+      const res = await authed('POST', `/api/management/${backendId}/core/restart`);
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({ code: 'CORE_BUSY', backendId, commandId: 'cmd_busy_restart' });
+    });
+
+    it('POST core/reload returns 409 CORE_BUSY when a config command is in flight', async () => {
+      db.configCommands.create({ commandId: 'cmd_busy_reload', backendId, versionId: 1, baseHash: 'h', payload: '{}' });
+      const res = await authed('POST', `/api/management/${backendId}/core/reload`);
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({ code: 'CORE_BUSY', backendId, commandId: 'cmd_busy_reload' });
+    });
+
+    it('POST cache/dns/flush is NOT gated by an in-flight config command (flush has no CORE_BUSY check)', async () => {
+      db.configCommands.create({ commandId: 'cmd_busy_flush', backendId, versionId: 1, baseHash: 'h', payload: '{}' });
+      const res = await authed('POST', `/api/management/${backendId}/cache/dns/flush`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ success: true });
+    });
+  });
+
+  // M4 core-ops: an upstream that has no /restart, /configs?reload=true, or
+  // /cache/* handler at all — the plan's §1 acceptance point "upstream 404
+  // maps to 502 { upstreamStatus: 404 }" for the core-not-supporting case,
+  // distinct from the "unreachable at the network layer" describe block
+  // below (that one never gets an HTTP response at all).
+  describe('against an upstream missing the core-ops routes (404s them)', () => {
+    let upstream: http.Server;
+    let backendId: number;
+
+    beforeEach(async () => {
+      upstream = http.createServer((_req, res) => {
+        res.writeHead(404);
+        res.end();
+      });
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', () => resolve()));
+      const port = (upstream.address() as AddressInfo).port;
+      backendId = db.createBackend({
+        name: 'mgmt-core-ops-404-test',
+        url: `ws://127.0.0.1:${port}/connections`,
+        token: '',
+        apiUrl: `http://127.0.0.1:${port}`,
+        apiSecret: '',
+      });
+    });
+
+    afterEach(async () => {
+      upstream.closeAllConnections?.();
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    });
+
+    it('POST cache/dns/flush against a core lacking the route maps to 502 { reachable: true, upstreamStatus: 404 }', async () => {
+      const res = await authed('POST', `/api/management/${backendId}/cache/dns/flush`);
       expect(res.statusCode).toBe(502);
       expect(res.json()).toMatchObject({ backendId, reachable: true, upstreamStatus: 404 });
     });

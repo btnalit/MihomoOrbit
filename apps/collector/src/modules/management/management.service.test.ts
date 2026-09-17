@@ -38,10 +38,22 @@ function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
 
 // Fake Mihomo: GET /proxies, PUT /proxies/:name, GET /proxies/:name/delay,
 // DELETE /connections/:id, GET|PATCH /configs, GET /providers/{rules,proxies},
-// PUT /providers/{rules,proxies}/:name. Records every request it receives
-// and can be told to hang (never respond) to exercise the
-// AbortSignal.timeout -> reachable:false path.
-function createFakeMihomo(state: { requests: RecordedRequest[]; hang: boolean }): http.Server {
+// PUT /providers/{rules,proxies}/:name, POST /restart, GET /version,
+// PUT /configs?reload=true, POST /cache/{dns,fakeip}/flush. Records every
+// request it receives and can be told to hang (never respond) to exercise
+// the AbortSignal.timeout -> reachable:false path.
+//
+// `versionFailures` (M4 core-ops): number of GET /version probes to answer
+// with 503 before finally answering 200 — lets restartCore's recovery-poll
+// tests simulate "core not back up yet" without a real elapsed-time wait.
+// `versionAlwaysFails: true` never counts down, for the "never recovers"
+// case.
+function createFakeMihomo(state: {
+  requests: RecordedRequest[];
+  hang: boolean;
+  versionFailures?: number;
+  versionAlwaysFails?: boolean;
+}): http.Server {
   return http.createServer((req, res) => {
     const method = req.method ?? 'GET';
     const url = req.url ?? '';
@@ -139,6 +151,37 @@ function createFakeMihomo(state: { requests: RecordedRequest[]; hang: boolean })
         return;
       }
 
+      // M4 core-ops.
+      if (method === 'POST' && url === '/restart') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok' }));
+        return;
+      }
+
+      if (method === 'GET' && url === '/version') {
+        if (state.versionAlwaysFails || (state.versionFailures ?? 0) > 0) {
+          if (!state.versionAlwaysFails) state.versionFailures = (state.versionFailures ?? 0) - 1;
+          res.writeHead(503);
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ version: 'v1.19.30' }));
+        return;
+      }
+
+      if (method === 'PUT' && url === '/configs?reload=true') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      if (method === 'POST' && (url === '/cache/dns/flush' || url === '/cache/fakeip/flush')) {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
       res.writeHead(404);
       res.end();
     })();
@@ -152,7 +195,7 @@ describe('ManagementService', () => {
   let hub: TopicHub;
   let svc: ManagementService;
   let upstream: http.Server;
-  let upstreamState: { requests: RecordedRequest[]; hang: boolean };
+  let upstreamState: { requests: RecordedRequest[]; hang: boolean; versionFailures?: number; versionAlwaysFails?: boolean };
   let backendId: number;
 
   beforeEach(async () => {
@@ -272,6 +315,52 @@ describe('ManagementService', () => {
     await svc.refreshProvider(backendId, 'proxy', 'MyProxies');
     expect(upstreamState.requests).toContainEqual(
       expect.objectContaining({ method: 'PUT', url: '/providers/proxies/MyProxies' }),
+    );
+  });
+
+  // M4 core-ops (plan 2026-09-16-m4-core-ops.md, T1). Poll timing is passed
+  // explicitly and kept tiny so these run in milliseconds instead of the
+  // real 500ms/15s production budget.
+  const FAST_POLL = { pollIntervalMs: 5, pollTimeoutMs: 60, probeTimeoutMs: 20 };
+
+  it('restartCore POSTs /restart (reading its body) then polls /version, reporting recovered:true', async () => {
+    const result = await svc.restartCore(backendId, FAST_POLL);
+    expect(upstreamState.requests).toContainEqual(expect.objectContaining({ method: 'POST', url: '/restart' }));
+    expect(result).toMatchObject({ success: true, recovered: true });
+    expect(typeof (result as { recoveryMs: number }).recoveryMs).toBe('number');
+  });
+
+  it('restartCore recovers after transient /version failures during the restart window', async () => {
+    upstreamState.versionFailures = 2;
+    const result = await svc.restartCore(backendId, FAST_POLL);
+    expect(result).toMatchObject({ success: true, recovered: true });
+    // At least two failed probes had to happen before the third succeeded,
+    // so at least two poll intervals must have elapsed.
+    expect((result as { recoveryMs: number }).recoveryMs).toBeGreaterThanOrEqual(FAST_POLL.pollIntervalMs * 2);
+  });
+
+  it('restartCore reports recovered:false (no recoveryMs) when /version never comes back within the poll window', async () => {
+    upstreamState.versionAlwaysFails = true;
+    const result = await svc.restartCore(backendId, FAST_POLL);
+    expect(result).toEqual({ success: true, recovered: false });
+  });
+
+  it('reloadConfig PUTs /configs?reload=true with the fixed empty path/payload body', async () => {
+    await svc.reloadConfig(backendId);
+    expect(upstreamState.requests).toContainEqual(
+      expect.objectContaining({ method: 'PUT', url: '/configs?reload=true', body: { path: '', payload: '' } }),
+    );
+  });
+
+  it('flushDnsCache POSTs /cache/dns/flush', async () => {
+    await svc.flushDnsCache(backendId);
+    expect(upstreamState.requests).toContainEqual(expect.objectContaining({ method: 'POST', url: '/cache/dns/flush' }));
+  });
+
+  it('flushFakeipCache POSTs /cache/fakeip/flush', async () => {
+    await svc.flushFakeipCache(backendId);
+    expect(upstreamState.requests).toContainEqual(
+      expect.objectContaining({ method: 'POST', url: '/cache/fakeip/flush' }),
     );
   });
 });

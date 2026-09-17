@@ -57,6 +57,19 @@ export interface ProvidersResult {
   proxyProviders: ProxyProviderInfo[];
 }
 
+// Poll timing is injectable per call (not just via module-level constants)
+// so tests can shrink the restart-recovery window to milliseconds instead of
+// waiting out the real 15s production budget — see restartCore below.
+export interface RestartCoreOpts {
+  pollIntervalMs?: number;
+  pollTimeoutMs?: number;
+  probeTimeoutMs?: number;
+}
+
+export type RestartCoreResult =
+  | { success: true; recovered: true; recoveryMs: number }
+  | { success: true; recovered: false };
+
 // Raw upstream shapes (Mihomo `GET /providers/{rules,proxies}`) — only the
 // fields this service reads are named; everything else on the upstream
 // object (format, type, testUrl, subscriptionInfo, ...) is ignored.
@@ -98,6 +111,16 @@ const DEFAULT_UPSTREAM_TIMEOUT_MS = 5000;
 // plain proxy/config PUT needs. The default 5000ms would predictably 504 a
 // real provider refresh (M1.5 acceptance: "刷新一个 provider 上游 updatedAt 变化").
 const PROVIDER_REFRESH_TIMEOUT_MS = 20_000;
+
+// M4 core-ops (plan 2026-09-16-m4-core-ops.md §1): `POST /restart` re-execs
+// the Mihomo process; the sandbox measurement was ~3s to `/version`
+// recovery, so 15s total budget leaves headroom without letting a genuinely
+// dead core hang the caller indefinitely. Poll cadence and per-probe timeout
+// are independent of DEFAULT_UPSTREAM_TIMEOUT_MS — this is a recovery check,
+// not a normal proxied request.
+const CORE_RESTART_POLL_INTERVAL_MS = 500;
+const CORE_RESTART_POLL_TIMEOUT_MS = 15_000;
+const CORE_RESTART_PROBE_TIMEOUT_MS = 2_000;
 
 function clampDelayTimeout(timeout: number | undefined): number {
   if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
@@ -316,6 +339,81 @@ export class ManagementService {
     );
   }
 
+  /**
+   * Core restart (M4 core-ops, plan §2: capability action, not a config
+   * setting — it has no "current value", executing it is the whole effect).
+   * `POST /restart` re-execs the Mihomo process in place; it answers 200
+   * with a real JSON body (`{"status":"ok"}`) *while the old process is
+   * still alive*, before the re-exec tears it down — unlike
+   * killConnection/patchConfigs/flush*, this call must actually read that
+   * body (no `expectBody:false`) rather than merely cancel it, since the
+   * response is real and callers of `upstreamFetch` with the default
+   * expectBody are expected to consume it themselves (see getConfigs).
+   *
+   * The 200 says nothing about whether the *new* process has come back up —
+   * zashboard's own fixed 500ms post-restart reload delay (plan §1) is
+   * shorter than our measured ~3s recovery window, so "wait a bit and just
+   * refetch" isn't reliable here. Instead this polls `GET /version` (each
+   * probe on its own short timeout — connection-refused during the re-exec
+   * window is the *expected* shape of "not back up yet", not an error to
+   * propagate) until the first 2xx or the poll budget elapses.
+   */
+  async restartCore(backendId: number, opts: RestartCoreOpts = {}): Promise<RestartCoreResult> {
+    const r = this.requireResolved(backendId);
+    const startedAt = Date.now();
+    const res = await this.upstreamFetch(r, '/restart', { method: 'POST' });
+    await res.json(); // consume the {"status":"ok"} body — see doc comment above
+
+    return this.pollUntilRecovered(r, startedAt, {
+      pollIntervalMs: opts.pollIntervalMs ?? CORE_RESTART_POLL_INTERVAL_MS,
+      pollTimeoutMs: opts.pollTimeoutMs ?? CORE_RESTART_POLL_TIMEOUT_MS,
+      probeTimeoutMs: opts.probeTimeoutMs ?? CORE_RESTART_PROBE_TIMEOUT_MS,
+    });
+  }
+
+  /**
+   * Config reload (M4 core-ops): `PUT /configs?reload=true` re-reads the
+   * config file already on disk into the running process, without a
+   * restart. It is a capability action like restartCore, not a config
+   * mutation — it gets its own route rather than reusing patchConfigs's
+   * `PATCH /configs`, and the path/payload body is always empty because
+   * this re-reads whatever is on disk; it never pushes new content (that's
+   * the unrelated M2b editor apply/rollback flow, a different upstream
+   * contract).
+   */
+  async reloadConfig(backendId: number): Promise<void> {
+    const r = this.requireResolved(backendId);
+    await this.upstreamFetch(
+      r,
+      '/configs?reload=true',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: '', payload: '' }),
+      },
+      DEFAULT_UPSTREAM_TIMEOUT_MS,
+      { expectBody: false },
+    );
+  }
+
+  /** Cache flush (M4 core-ops): clears Mihomo's DNS resolution cache. Unlike
+   *  restartCore, the core never stops answering requests during this call,
+   *  so there is no recovery window to verify — success is just a 2xx. */
+  async flushDnsCache(backendId: number): Promise<void> {
+    const r = this.requireResolved(backendId);
+    await this.upstreamFetch(r, '/cache/dns/flush', { method: 'POST' }, DEFAULT_UPSTREAM_TIMEOUT_MS, {
+      expectBody: false,
+    });
+  }
+
+  /** Cache flush (M4 core-ops): clears Mihomo's Fake-IP pool assignments. */
+  async flushFakeipCache(backendId: number): Promise<void> {
+    const r = this.requireResolved(backendId);
+    await this.upstreamFetch(r, '/cache/fakeip/flush', { method: 'POST' }, DEFAULT_UPSTREAM_TIMEOUT_MS, {
+      expectBody: false,
+    });
+  }
+
   private requireResolved(backendId: number): ResolvedOk {
     const r = this.resolve(backendId);
     if (!r.ok) {
@@ -394,6 +492,38 @@ export class ManagementService {
         throw Object.assign(new Error('Upstream unreachable'), { reachable: false });
       }
       throw err;
+    }
+  }
+
+  /**
+   * Restart-recovery poll loop for restartCore. Probes `GET /version` on a
+   * short per-attempt timeout, waiting `pollIntervalMs` between attempts,
+   * until either a 2xx lands (recovered) or `pollTimeoutMs` has elapsed
+   * since `startedAt` (not recovered). Every probe failure — connection
+   * refused while the process re-execs, a probe timeout, or a non-2xx — is
+   * swallowed and treated identically ("not up yet"); only upstreamFetch
+   * throwing is possible here since expectBody:false never reads a body
+   * that could itself fail to parse.
+   */
+  private async pollUntilRecovered(
+    r: ResolvedOk,
+    startedAt: number,
+    opts: { pollIntervalMs: number; pollTimeoutMs: number; probeTimeoutMs: number },
+  ): Promise<RestartCoreResult> {
+    const deadline = startedAt + opts.pollTimeoutMs;
+    for (;;) {
+      try {
+        await this.upstreamFetch(r, '/version', {}, opts.probeTimeoutMs, { expectBody: false });
+        return { success: true, recovered: true, recoveryMs: Date.now() - startedAt };
+      } catch {
+        // Expected during the restart window — keep polling until the
+        // deadline, see doc comment above.
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        return { success: true, recovered: false };
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(opts.pollIntervalMs, remaining)));
     }
   }
 

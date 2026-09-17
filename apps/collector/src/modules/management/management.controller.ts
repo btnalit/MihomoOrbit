@@ -112,6 +112,24 @@ function mapUpstreamError(err: unknown, backendId: number): { status: number; bo
   return { status: 500, body: { error: e.message ?? 'Unknown error', backendId, reachable: false } };
 }
 
+/**
+ * M4 core-ops precondition (plan §2): the core's lifecycle may have at most
+ * one concurrent changer. The M2b editor's six-step config write-back
+ * (dispatch -> agent write -> reload -> triple health gate) polls
+ * `getInFlight` itself and would misread a manual restart/reload landing
+ * mid-flight as an external failure and roll the edit back. restartCore and
+ * reloadConfig therefore check the same in-flight config command here,
+ * before calling upstream at all, and refuse with 409 CORE_BUSY if one
+ * exists — mirroring config-editor.controller.ts's own
+ * CONFIG_COMMAND_IN_FLIGHT precondition check against the same repository.
+ * The two cache flushes don't touch config state and are not gated by this.
+ */
+function checkCoreNotBusy(fastify: FastifyInstance, backendId: number): { busy: false } | { busy: true; commandId: string } {
+  const inFlight = fastify.db.configCommands.getInFlight(backendId, Date.now());
+  if (!inFlight) return { busy: false };
+  return { busy: true, commandId: inFlight.command_id };
+}
+
 const managementController: FastifyPluginAsync = async (fastify: FastifyInstance): Promise<void> => {
   const service = fastify.managementService;
 
@@ -245,6 +263,83 @@ const managementController: FastifyPluginAsync = async (fastify: FastifyInstance
 
     try {
       await service.refreshProvider(backendId, kind, request.params.name);
+      return { success: true };
+    } catch (err) {
+      const { status, body } = mapUpstreamError(err, backendId);
+      return reply.status(status).send(body);
+    }
+  });
+
+  // M4 core-ops (plan 2026-09-16-m4-core-ops.md): runtime settings page
+  // additions — restart core / reload config / flush DNS cache / flush
+  // Fake-IP cache. All four sit behind the same resolve() capability gate as
+  // every other management route; restart and reload additionally check
+  // checkCoreNotBusy above (§2's single-writer invariant) before touching
+  // upstream at all.
+  fastify.post<{ Params: BackendParams }>('/:backendId/core/restart', async (request, reply) => {
+    const backendId = Number(request.params.backendId);
+    const r = service.resolve(backendId);
+    if (!r.ok) return reply.status(r.status).send(r.body);
+
+    const busy = checkCoreNotBusy(fastify, backendId);
+    if (busy.busy) {
+      return reply.status(409).send({ code: 'CORE_BUSY', backendId, commandId: busy.commandId });
+    }
+
+    try {
+      // Audit line (plan §2: "collector 对 restart/reload 记 info 日志" — no
+      // new table, this log line is the record). Emitted only once the
+      // request has cleared both gates and is actually about to reach
+      // upstream, not on a 404/409/busy short-circuit above.
+      request.log.info({ backendId, action: 'core.restart' }, 'management: core restart requested');
+      return await service.restartCore(backendId);
+    } catch (err) {
+      const { status, body } = mapUpstreamError(err, backendId);
+      return reply.status(status).send(body);
+    }
+  });
+
+  fastify.post<{ Params: BackendParams }>('/:backendId/core/reload', async (request, reply) => {
+    const backendId = Number(request.params.backendId);
+    const r = service.resolve(backendId);
+    if (!r.ok) return reply.status(r.status).send(r.body);
+
+    const busy = checkCoreNotBusy(fastify, backendId);
+    if (busy.busy) {
+      return reply.status(409).send({ code: 'CORE_BUSY', backendId, commandId: busy.commandId });
+    }
+
+    try {
+      request.log.info({ backendId, action: 'core.reload' }, 'management: core reload requested');
+      await service.reloadConfig(backendId);
+      return { success: true };
+    } catch (err) {
+      const { status, body } = mapUpstreamError(err, backendId);
+      return reply.status(status).send(body);
+    }
+  });
+
+  fastify.post<{ Params: BackendParams }>('/:backendId/cache/dns/flush', async (request, reply) => {
+    const backendId = Number(request.params.backendId);
+    const r = service.resolve(backendId);
+    if (!r.ok) return reply.status(r.status).send(r.body);
+
+    try {
+      await service.flushDnsCache(backendId);
+      return { success: true };
+    } catch (err) {
+      const { status, body } = mapUpstreamError(err, backendId);
+      return reply.status(status).send(body);
+    }
+  });
+
+  fastify.post<{ Params: BackendParams }>('/:backendId/cache/fakeip/flush', async (request, reply) => {
+    const backendId = Number(request.params.backendId);
+    const r = service.resolve(backendId);
+    if (!r.ok) return reply.status(r.status).send(r.body);
+
+    try {
+      await service.flushFakeipCache(backendId);
       return { success: true };
     } catch (err) {
       const { status, body } = mapUpstreamError(err, backendId);
