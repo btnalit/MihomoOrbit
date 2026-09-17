@@ -916,6 +916,7 @@
     "statusUnknown": "未知",
     "noData": "无数据",
     "overallUptime": "整体可用率",
+    "windowUptime": "时段内 {pct}%",
     "healthyBackends": "在线节点",
     "unhealthyBackends": "异常节点",
     "backendsMonitored": "节点总数",

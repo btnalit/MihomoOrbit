@@ -63,21 +63,37 @@ export function HealthContent({ timeRange }: HealthContentProps) {
 
   const summary = useMemo(() => {
     if (!data?.length) return null;
-    let healthy = 0, total = 0, latSum = 0, latCount = 0;
+    let latSum = 0, latCount = 0;
     let healthyBackends = 0, unhealthyBackends = 0;
+    // Per-backend uptime over the selected range, averaged with EQUAL
+    // weight per backend. The previous pooled-points ratio let a backend
+    // with more health-log samples dominate the figure — "two devices, one
+    // down" is a 50/50 statement about devices, not about sample counts.
+    let uptimeSum = 0, uptimeBackends = 0;
     for (const backend of data) {
       const last = backend.points[backend.points.length - 1];
       if (last?.status === "healthy") healthyBackends++;
       else unhealthyBackends++;
+      let healthy = 0;
       for (const p of backend.points) {
-        total++;
         if (p.status === "healthy") healthy++;
         const latency = p.latency_ms ?? p.server_latency_ms;
         if (latency !== null) { latSum += latency; latCount++; }
       }
+      if (backend.points.length > 0) {
+        uptimeSum += (healthy / backend.points.length) * 100;
+        uptimeBackends++;
+      }
     }
     return {
-      uptimePct:        total > 0 ? (healthy / total) * 100 : null,
+      // Headline "overall availability" is the CURRENT state — the share of
+      // monitored backends whose latest check is healthy — so a recovered
+      // backend counts again immediately. The range-wide figure below is
+      // history (an SLA-style number) and is shown as the tile's caption,
+      // not as the headline: the old code put history in the headline and
+      // a device recovered an hour ago still read as "50.6% available".
+      currentPct:       data.length > 0 ? (healthyBackends / data.length) * 100 : null,
+      windowPct:        uptimeBackends > 0 ? uptimeSum / uptimeBackends : null,
       healthyBackends,
       unhealthyBackends,
       total:            data.length,
@@ -117,9 +133,14 @@ export function HealthContent({ timeRange }: HealthContentProps) {
             </div>
             <p className="text-muted-foreground text-[11px] uppercase tracking-[0.14em] font-medium truncate">{t("overallUptime")}</p>
             <span className={cn("text-lg leading-none font-semibold mt-2.5 tabular-nums",
-              (summary.uptimePct ?? 0) >= 99 ? "text-emerald-500" : (summary.uptimePct ?? 0) >= 90 ? "text-amber-500" : "text-rose-500")}>
-              {summary.uptimePct?.toFixed(1) ?? "—"}%
+              (summary.currentPct ?? 0) >= 99 ? "text-emerald-500" : (summary.currentPct ?? 0) >= 90 ? "text-amber-500" : "text-rose-500")}>
+              {summary.currentPct?.toFixed(0) ?? "—"}%
             </span>
+            {summary.windowPct !== null && (
+              <span className="text-[11px] text-muted-foreground mt-1 tabular-nums truncate">
+                {t("windowUptime", { pct: summary.windowPct.toFixed(1) })}
+              </span>
+            )}
           </div>
 
           {/* Healthy Backends */}

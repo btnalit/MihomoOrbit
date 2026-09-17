@@ -916,6 +916,7 @@
     "statusUnknown": "Unknown",
     "noData": "No data",
     "overallUptime": "Overall Uptime",
+    "windowUptime": "{pct}% over range",
     "healthyBackends": "Healthy",
     "unhealthyBackends": "Unhealthy",
     "backendsMonitored": "Total Backends",
