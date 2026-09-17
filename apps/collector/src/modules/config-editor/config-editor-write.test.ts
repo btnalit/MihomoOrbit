@@ -7,6 +7,7 @@ import { createTestDatabase } from '../../__tests__/helpers.js';
 import { realtimeStore } from '../realtime/realtime.store.js';
 import type { StatsDatabase } from '../db/db.js';
 import { MASK_SENTINEL } from './yaml-mask.js';
+import { clearCoreRestarting, markCoreRestarting } from '../../shared/core-lifecycle.js';
 
 // M2b Task 6: write-side endpoints (apply/rollback/commands/latest/reveal).
 // Same real-auth-flow inject pattern as config-editor.controller.test.ts
@@ -111,6 +112,29 @@ describe('config editor controller: write endpoints (M2b)', () => {
   }
 
   describe('POST /:backendId/apply', () => {
+    // M4 reverse half of the single-mutator invariant: while a manual core
+    // restart is mid-poll (process-local marker, no table row), apply must
+    // refuse rather than dispatch a write-back into a core still coming up.
+    it('returns 409 CORE_RESTARTING while a manual restart is in progress, then accepts once cleared', async () => {
+      const id = mkAgentBackendWithBinding('a-restart', 'agent-a-restart');
+      ingestConfig(id, BASE_CONFIG);
+      const baseHash = sha256(BASE_CONFIG);
+      const submitted = BASE_CONFIG.replace('port: 7890', 'port: 7899');
+
+      markCoreRestarting(id);
+      try {
+        const blocked = await authed('POST', `/api/config-editor/${id}/apply`, { content: submitted, baseHash });
+        expect(blocked.statusCode).toBe(409);
+        expect(blocked.json()).toMatchObject({ code: 'CORE_RESTARTING', backendId: id });
+        expect(db.configCommands.getLatest(id)).toBeUndefined();
+      } finally {
+        clearCoreRestarting(id);
+      }
+
+      const ok = await authed('POST', `/api/config-editor/${id}/apply`, { content: submitted, baseHash });
+      expect(ok.statusCode).toBe(202);
+    });
+
     it('scenario 1: happy path returns 202 {commandId, versionId} and stores a source=editor version', async () => {
       const id = mkAgentBackendWithBinding('a1', 'agent-a1');
       ingestConfig(id, BASE_CONFIG);

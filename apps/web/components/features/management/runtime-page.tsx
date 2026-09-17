@@ -387,8 +387,17 @@ function CoreOpsCard({
             variant="outline"
             size="sm"
             className="gap-1.5"
-            disabled={disabled || restart.isPending}
-            onClick={() => setConfirmOpen(true)}
+            // Also gated on the backend NAME resolving: the confirm dialog
+            // exists to make the operator read which core they're about to
+            // drop every connection on, and a blank 「」 defeats that. The
+            // shared ["backends"] query is warm in practice (the shell needs
+            // it to pick activeBackendId), so this only bites on a cold
+            // cache for a moment — better a briefly-disabled button than a
+            // nameless destructive confirm.
+            disabled={disabled || restart.isPending || !backendName}
+            onClick={() => {
+              if (backendName) setConfirmOpen(true);
+            }}
           >
             {restart.isPending ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -461,7 +470,7 @@ function CoreOpsCard({
           <AlertDialogHeader>
             <AlertDialogTitle>{t("restartConfirmTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("restartConfirmBody", { backendName: backendName ?? "" })}
+              {t("restartConfirmBody", { backendName: backendName ?? "?" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

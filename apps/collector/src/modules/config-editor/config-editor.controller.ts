@@ -51,6 +51,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify'
 import { maskYamlSecrets } from './yaml-mask.js';
 import { prepareApply, type ApplyPrepared, type ApplyRejection } from './apply-pipeline.js';
 import { CONFIG_FILE_MAX_BYTES } from './limits.js';
+import { isCoreRestarting } from '../../shared/core-lifecycle.js';
 import type { ConfigVersion } from '../../database/repositories/config-version.repository.js';
 
 interface BackendParams {
@@ -280,6 +281,13 @@ const configEditorController: FastifyPluginAsync = async (fastify: FastifyInstan
       if (inFlight) {
         return reply.status(409).send({ code: 'CONFIG_COMMAND_IN_FLIGHT', commandId: inFlight.command_id });
       }
+      // Reverse half of the single-mutator invariant (M4): a manual core
+      // restart is mid-poll for this backend. Dispatching a write-back now
+      // would race the agent's health gate against a core that is still
+      // coming up. Bounded window (≤15s) — the client just retries.
+      if (isCoreRestarting(backendId)) {
+        return reply.status(409).send({ code: 'CORE_RESTARTING', backendId });
+      }
 
       const body = request.body || {};
       const content = typeof body.content === 'string' ? body.content : '';
@@ -323,6 +331,13 @@ const configEditorController: FastifyPluginAsync = async (fastify: FastifyInstan
       const inFlight = fastify.db.configCommands.getInFlight(backendId, Date.now());
       if (inFlight) {
         return reply.status(409).send({ code: 'CONFIG_COMMAND_IN_FLIGHT', commandId: inFlight.command_id });
+      }
+      // Reverse half of the single-mutator invariant (M4): a manual core
+      // restart is mid-poll for this backend. Dispatching a write-back now
+      // would race the agent's health gate against a core that is still
+      // coming up. Bounded window (≤15s) — the client just retries.
+      if (isCoreRestarting(backendId)) {
+        return reply.status(409).send({ code: 'CORE_RESTARTING', backendId });
       }
 
       // baseHash is derived server-side (the current latest hash), never

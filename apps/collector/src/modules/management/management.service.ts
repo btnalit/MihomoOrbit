@@ -14,6 +14,7 @@ import pLimit from 'p-limit';
 import type { StatsDatabase } from '../db/db.js';
 import type { TopicHub } from '../websocket/topic-hub.js';
 import { getGatewayBaseUrl } from '@mihomo-orbit/shared';
+import { clearCoreRestarting, markCoreRestarting } from '../../shared/core-lifecycle.js';
 
 export interface ResolvedOk {
   ok: true;
@@ -360,15 +361,25 @@ export class ManagementService {
    */
   async restartCore(backendId: number, opts: RestartCoreOpts = {}): Promise<RestartCoreResult> {
     const r = this.requireResolved(backendId);
-    const startedAt = Date.now();
-    const res = await this.upstreamFetch(r, '/restart', { method: 'POST' });
-    await res.json(); // consume the {"status":"ok"} body — see doc comment above
+    // Mark the whole window (POST + recovery poll) so config-editor
+    // apply/rollback refuse to dispatch into a core that is mid-restart —
+    // the reverse half of §2's single-mutator invariant (see
+    // shared/core-lifecycle.ts). Cleared in finally: a thrown POST must
+    // never leave the backend permanently "restarting".
+    markCoreRestarting(backendId);
+    try {
+      const startedAt = Date.now();
+      const res = await this.upstreamFetch(r, '/restart', { method: 'POST' });
+      await res.json(); // consume the {"status":"ok"} body — see doc comment above
 
-    return this.pollUntilRecovered(r, startedAt, {
-      pollIntervalMs: opts.pollIntervalMs ?? CORE_RESTART_POLL_INTERVAL_MS,
-      pollTimeoutMs: opts.pollTimeoutMs ?? CORE_RESTART_POLL_TIMEOUT_MS,
-      probeTimeoutMs: opts.probeTimeoutMs ?? CORE_RESTART_PROBE_TIMEOUT_MS,
-    });
+      return await this.pollUntilRecovered(r, startedAt, {
+        pollIntervalMs: opts.pollIntervalMs ?? CORE_RESTART_POLL_INTERVAL_MS,
+        pollTimeoutMs: opts.pollTimeoutMs ?? CORE_RESTART_POLL_TIMEOUT_MS,
+        probeTimeoutMs: opts.probeTimeoutMs ?? CORE_RESTART_PROBE_TIMEOUT_MS,
+      });
+    } finally {
+      clearCoreRestarting(backendId);
+    }
   }
 
   /**
@@ -515,9 +526,16 @@ export class ManagementService {
       try {
         await this.upstreamFetch(r, '/version', {}, opts.probeTimeoutMs, { expectBody: false });
         return { success: true, recovered: true, recoveryMs: Date.now() - startedAt };
-      } catch {
-        // Expected during the restart window — keep polling until the
-        // deadline, see doc comment above.
+      } catch (err) {
+        // A credentials rejection is not "still restarting" — the same
+        // static headers just succeeded on the POST, so 401/403 here means
+        // the core came back with different auth. Fail fast so the caller
+        // gets the UPSTREAM_UNAUTHORIZED mapping instead of a misleading
+        // "never recovered" after a full 15s spin.
+        const status = (err as { status?: number }).status;
+        if (status === 401 || status === 403) throw err;
+        // Anything else is expected during the restart window — keep
+        // polling until the deadline, see doc comment above.
       }
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
